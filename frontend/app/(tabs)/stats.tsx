@@ -9,6 +9,7 @@ import { COLORS, EMOTION_COLORS } from "../../src/theme";
 import { useAuth } from "../../src/auth";
 import { t } from "../../src/i18n";
 import { Ionicons } from "@expo/vector-icons";
+import { useShareToStories } from "../../src/components/ShareToStories";
 
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -17,6 +18,7 @@ export default function Stats() {
   const [stats, setStats] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
   const router = useRouter();
+  const { share, Renderer: ShareRenderer } = useShareToStories();
 
   const load = useCallback(async () => { try { setStats(await api("/moods/stats")); } catch {} }, []);
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -35,7 +37,26 @@ export default function Stats() {
       <SafeAreaView style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.scroll}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} tintColor="#fff" />}>
-          <Text style={styles.title}>{t("stats.title")}</Text>
+          <View style={styles.topHeader}>
+            <Text style={styles.title}>{t("stats.title")}</Text>
+            <TouchableOpacity
+              testID="share-stats"
+              onPress={() =>
+                share({
+                  kind: "stats",
+                  streak: stats?.streak || 0,
+                  dropsThisWeek: stats?.drops_this_week || 0,
+                  dominant: stats?.dominant || "joy",
+                  distribution: stats?.distribution || {},
+                  userName: user?.name,
+                })
+              }
+              style={styles.shareBtn}
+            >
+              <Ionicons name="share-outline" size={14} color="#fff" />
+              <Text style={styles.shareBtnTxt}>Share</Text>
+            </TouchableOpacity>
+          </View>
 
           <View style={styles.statRow}>
             <View style={styles.statCard} testID="stat-streak">
@@ -109,6 +130,7 @@ export default function Stats() {
           )}
           <View style={{ height: 120 }} />
         </ScrollView>
+        <ShareRenderer />
       </SafeAreaView>
     </View>
   );

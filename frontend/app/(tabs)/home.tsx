@@ -10,6 +10,7 @@ import { api } from "../../src/api";
 import { t } from "../../src/i18n";
 import { COLORS, EMOTION_COLORS } from "../../src/theme";
 import { Ionicons } from "@expo/vector-icons";
+import { useShareToStories } from "../../src/components/ShareToStories";
 
 export default function Home() {
   const router = useRouter();
@@ -17,6 +18,7 @@ export default function Home() {
   const [todayMood, setTodayMood] = useState<any>(null);
   const [feed, setFeed] = useState<{ locked: boolean; items: any[] }>({ locked: true, items: [] });
   const [refreshing, setRefreshing] = useState(false);
+  const { share, Renderer: ShareRenderer } = useShareToStories();
 
   const load = useCallback(async () => {
     try {
@@ -75,7 +77,25 @@ export default function Home() {
             </View>
           ) : (
             <View>
-              <Text style={styles.sectionTitle}>Your mood today</Text>
+              <View style={styles.myMoodHeader}>
+                <Text style={styles.sectionTitle}>Your mood today</Text>
+                <TouchableOpacity
+                  testID="share-my-mood"
+                  onPress={() =>
+                    share({
+                      kind: "mood",
+                      word: todayMood.word,
+                      emotion: todayMood.emotion,
+                      intensity: todayMood.intensity,
+                      userName: user?.name,
+                    })
+                  }
+                  style={styles.shareBtn}
+                >
+                  <Ionicons name="share-outline" size={14} color="#fff" />
+                  <Text style={styles.shareBtnTxt}>Share</Text>
+                </TouchableOpacity>
+              </View>
               <MoodCard mood={{ ...todayMood, author_name: user?.name, author_color: user?.avatar_color }} testIDPrefix="my-mood" />
             </View>
           )}
@@ -106,6 +126,7 @@ export default function Home() {
           )}
           <View style={{ height: 120 }} />
         </ScrollView>
+        <ShareRenderer />
       </SafeAreaView>
     </View>
   );
@@ -124,6 +145,9 @@ const styles = StyleSheet.create({
   ctaSub: { color: COLORS.textSecondary, marginTop: 8 },
   sectionTitle: { color: COLORS.textSecondary, fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12 },
   feedHead: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
+  myMoodHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  shareBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: COLORS.border, marginBottom: 10 },
+  shareBtnTxt: { color: "#fff", fontSize: 12, fontWeight: "600" },
   locked: { padding: 24, borderRadius: 24, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)", alignItems: "center" },
   lockedTxt: { color: COLORS.textSecondary, fontSize: 14, textAlign: "center", marginTop: 8 },
 });

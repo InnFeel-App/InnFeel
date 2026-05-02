@@ -9,7 +9,13 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Record a 10-second voice note for your mood drop.",
+        "NSPhotoLibraryUsageDescription": "Attach a photo to your daily mood drop.",
+        "NSCameraUsageDescription": "Capture a photo for your mood drop.",
+        "LSApplicationQueriesSchemes": ["instagram", "instagram-stories"]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -36,7 +42,20 @@
       ],
       "expo-web-browser",
       "expo-localization",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#EC4899"
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Record a 10-second voice note for your mood drop."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

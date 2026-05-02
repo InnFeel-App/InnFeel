@@ -7,11 +7,25 @@ import { COLORS } from "../src/theme";
 import { t } from "../src/i18n";
 import { Ionicons } from "@expo/vector-icons";
 import * as Localization from "expo-localization";
+import { ensureDailyRandomNotification, clearAllScheduled } from "../src/notifications";
 
 export default function Settings() {
   const router = useRouter();
   const [notif, setNotif] = React.useState(true);
+  const [nextAt, setNextAt] = React.useState<string | null>(null);
   const locale = Localization.getLocales?.()[0]?.languageCode || "en";
+
+  React.useEffect(() => {
+    (async () => {
+      if (notif) {
+        const r = await ensureDailyRandomNotification(9, 21);
+        if (r.when) setNextAt(r.when.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" }));
+      } else {
+        await clearAllScheduled();
+        setNextAt(null);
+      }
+    })();
+  }, [notif]);
 
   return (
     <View style={styles.container} testID="settings-screen">
@@ -29,7 +43,9 @@ export default function Settings() {
             <Ionicons name="notifications-outline" size={20} color="#fff" />
             <View style={{ flex: 1 }}>
               <Text style={styles.rowTitle}>{t("settings.notifications")}</Text>
-              <Text style={styles.rowSub}>Once a day, gently, in your evening.</Text>
+              <Text style={styles.rowSub}>
+                Random time daily between 9h and 21h.{nextAt ? ` Next: ${nextAt}` : ""}
+              </Text>
             </View>
             <Switch testID="notif-toggle" value={notif} onValueChange={setNotif} />
           </View>
