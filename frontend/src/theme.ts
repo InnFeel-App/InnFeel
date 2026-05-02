@@ -1,14 +1,15 @@
+// Bright, funky, vivid emotional palette — like a neon kaleidoscope.
 export const EMOTION_COLORS: Record<string, { hex: string; glow: string; label: string }> = {
-  calm: { hex: "#60A5FA", glow: "rgba(96,165,250,0.45)", label: "Calm" },
-  joy: { hex: "#FDE047", glow: "rgba(253,224,71,0.45)", label: "Joy" },
-  love: { hex: "#F472B6", glow: "rgba(244,114,182,0.45)", label: "Love" },
-  anger: { hex: "#F87171", glow: "rgba(248,113,113,0.45)", label: "Anger" },
-  anxiety: { hex: "#FB923C", glow: "rgba(251,146,60,0.45)", label: "Anxiety" },
-  sadness: { hex: "#818CF8", glow: "rgba(129,140,248,0.45)", label: "Sadness" },
-  focus: { hex: "#2DD4BF", glow: "rgba(45,212,191,0.45)", label: "Focus" },
-  excitement: { hex: "#F97316", glow: "rgba(249,115,22,0.45)", label: "Excitement" },
-  peace: { hex: "#34D399", glow: "rgba(52,211,153,0.45)", label: "Peace" },
-  nostalgia: { hex: "#A78BFA", glow: "rgba(167,139,250,0.45)", label: "Nostalgia" },
+  calm: { hex: "#3B82F6", glow: "rgba(59,130,246,0.7)", label: "Calm" },
+  joy: { hex: "#FACC15", glow: "rgba(250,204,21,0.75)", label: "Joy" },
+  love: { hex: "#EC4899", glow: "rgba(236,72,153,0.75)", label: "Love" },
+  anger: { hex: "#EF4444", glow: "rgba(239,68,68,0.7)", label: "Anger" },
+  anxiety: { hex: "#F59E0B", glow: "rgba(245,158,11,0.7)", label: "Anxiety" },
+  sadness: { hex: "#6366F1", glow: "rgba(99,102,241,0.7)", label: "Sadness" },
+  focus: { hex: "#06D6A0", glow: "rgba(6,214,160,0.75)", label: "Focus" },
+  excitement: { hex: "#FF7A00", glow: "rgba(255,122,0,0.75)", label: "Excitement" },
+  peace: { hex: "#10B981", glow: "rgba(16,185,129,0.7)", label: "Peace" },
+  nostalgia: { hex: "#C026D3", glow: "rgba(192,38,211,0.75)", label: "Nostalgia" },
 };
 
 export const EMOTION_KEYS = Object.keys(EMOTION_COLORS);

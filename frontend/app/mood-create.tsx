@@ -1,8 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Image, Alert, KeyboardAvoidingView, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
+import { Audio } from "expo-av";
+import * as FileSystem from "expo-file-system/legacy";
 import Slider from "@react-native-community/slider";
 import RadialAura from "../src/components/RadialAura";
 import Button from "../src/components/Button";
@@ -11,6 +13,8 @@ import { useAuth } from "../src/auth";
 import { EMOTION_COLORS, COLORS } from "../src/theme";
 import { t } from "../src/i18n";
 import { Ionicons } from "@expo/vector-icons";
+
+const MAX_AUDIO_SECONDS = 10;
 
 export default function MoodCreate() {
   const router = useRouter();
@@ -24,6 +28,81 @@ export default function MoodCreate() {
   const [photo, setPhoto] = useState<string | null>(null);
   const [privacy, setPrivacy] = useState<"friends" | "close" | "private">("friends");
   const [loading, setLoading] = useState(false);
+
+  // Audio recording state (Pro)
+  const [audioB64, setAudioB64] = useState<string | null>(null);
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recSeconds, setRecSeconds] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const soundRef = useRef<Audio.Sound | null>(null);
+  const timerRef = useRef<any>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (soundRef.current) { soundRef.current.unloadAsync().catch(() => {}); }
+    };
+  }, []);
+
+  const startRecording = async () => {
+    try {
+      const perm = await Audio.requestPermissionsAsync();
+      if (!perm.granted) { Alert.alert("Microphone permission", "We need mic access to record a voice note."); return; }
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const rec = new Audio.Recording();
+      await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      await rec.startAsync();
+      setRecording(rec);
+      setIsRecording(true);
+      setRecSeconds(0);
+      setAudioB64(null);
+      timerRef.current = setInterval(() => {
+        setRecSeconds((s) => {
+          if (s + 1 >= MAX_AUDIO_SECONDS) { stopRecording(rec); return MAX_AUDIO_SECONDS; }
+          return s + 1;
+        });
+      }, 1000);
+    } catch (e: any) {
+      Alert.alert("Recording failed", e.message || "Try again.");
+    }
+  };
+
+  const stopRecording = async (recArg?: Audio.Recording) => {
+    const rec = recArg || recording;
+    if (!rec) return;
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    setIsRecording(false);
+    try {
+      await rec.stopAndUnloadAsync();
+      const uri = rec.getURI();
+      if (uri) {
+        const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+        setAudioB64(b64);
+      }
+    } catch {}
+    setRecording(null);
+  };
+
+  const playPreview = async () => {
+    if (!audioB64) return;
+    try {
+      if (soundRef.current) { await soundRef.current.unloadAsync(); soundRef.current = null; }
+      const { sound } = await Audio.Sound.createAsync({ uri: `data:audio/m4a;base64,${audioB64}` });
+      soundRef.current = sound;
+      setPlaying(true);
+      sound.setOnPlaybackStatusUpdate((s: any) => { if (s.didJustFinish) { setPlaying(false); } });
+      await sound.playAsync();
+    } catch (e: any) {
+      Alert.alert("Playback failed", e.message || "");
+      setPlaying(false);
+    }
+  };
+
+  const clearAudio = async () => {
+    if (soundRef.current) { await soundRef.current.unloadAsync().catch(() => {}); soundRef.current = null; }
+    setAudioB64(null); setRecSeconds(0); setPlaying(false);
+  };
 
   const maxIntensity = pro ? 10 : 5;
   const auraColor = EMOTION_COLORS[emotion]?.hex || "#A78BFA";
@@ -45,7 +124,7 @@ export default function MoodCreate() {
           word: word.trim(), emotion,
           intensity: Math.max(1, Math.min(maxIntensity, intensity)),
           photo_b64: photo, text: pro ? note || null : null,
-          audio_b64: null, privacy,
+          audio_b64: pro ? audioB64 : null, privacy,
         },
       });
       await refresh();
@@ -128,11 +207,54 @@ export default function MoodCreate() {
                   style={styles.note} multiline maxLength={280}
                   placeholder="A sentence about how you feel…" placeholderTextColor="#555"
                 />
+
+                <Text style={styles.section}>{t("create.audio")} · {MAX_AUDIO_SECONDS}s</Text>
+                <View style={[styles.audioCard, { borderColor: auraColor + "80" }]}>
+                  {!audioB64 ? (
+                    <TouchableOpacity
+                      testID={isRecording ? "mood-stop-audio" : "mood-record-audio"}
+                      onPress={() => (isRecording ? stopRecording() : startRecording())}
+                      activeOpacity={0.8}
+                      style={[styles.recBtn, { backgroundColor: isRecording ? "#EF4444" : auraColor }]}
+                    >
+                      <Ionicons name={isRecording ? "stop" : "mic"} size={22} color="#000" />
+                      <Text style={styles.recTxt}>
+                        {isRecording ? `Recording… ${recSeconds}s / ${MAX_AUDIO_SECONDS}s` : "Tap to record"}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <View style={styles.audioReadyRow}>
+                      <TouchableOpacity
+                        testID="mood-play-audio"
+                        onPress={playPreview}
+                        style={[styles.playBtn, { backgroundColor: auraColor }]}
+                      >
+                        <Ionicons name={playing ? "pause" : "play"} size={18} color="#000" />
+                      </TouchableOpacity>
+                      <View style={styles.waveformRow}>
+                        {Array.from({ length: 18 }).map((_, i) => (
+                          <View
+                            key={i}
+                            style={{
+                              width: 3, borderRadius: 2, marginHorizontal: 2,
+                              height: 4 + ((i * 7) % 22),
+                              backgroundColor: auraColor, opacity: 0.6 + ((i % 3) * 0.15),
+                            }}
+                          />
+                        ))}
+                      </View>
+                      <Text style={styles.audioDur}>{recSeconds || MAX_AUDIO_SECONDS}s</Text>
+                      <TouchableOpacity testID="mood-clear-audio" onPress={clearAudio} style={styles.clearBtn}>
+                        <Ionicons name="close" size={16} color={COLORS.textSecondary} />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
               </>
             ) : (
               <View style={styles.proLock}>
-                <Ionicons name="sparkles" size={14} color="#FDE047" />
-                <Text style={styles.proLockTxt}>Text notes & audio come with Pro</Text>
+                <Ionicons name="sparkles" size={14} color="#FACC15" />
+                <Text style={styles.proLockTxt}>Text notes & voice notes come with Pro</Text>
               </View>
             )}
 
@@ -181,8 +303,16 @@ const styles = StyleSheet.create({
   photoEmpty: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 6 },
   photoTxt: { color: COLORS.textSecondary },
   note: { backgroundColor: "rgba(255,255,255,0.04)", borderWidth: 1, borderColor: COLORS.border, borderRadius: 16, padding: 14, color: "#fff", minHeight: 80, textAlignVertical: "top" },
-  proLock: { flexDirection: "row", alignItems: "center", gap: 6, padding: 12, borderRadius: 14, backgroundColor: "rgba(253,224,71,0.06)", borderWidth: 1, borderColor: "rgba(253,224,71,0.2)" },
-  proLockTxt: { color: "#FDE047", fontSize: 12 },
+  proLock: { flexDirection: "row", alignItems: "center", gap: 6, padding: 12, borderRadius: 14, backgroundColor: "rgba(250,204,21,0.08)", borderWidth: 1, borderColor: "rgba(250,204,21,0.35)" },
+  proLockTxt: { color: "#FACC15", fontSize: 12 },
+  audioCard: { borderRadius: 18, borderWidth: 1, padding: 14, backgroundColor: "rgba(255,255,255,0.03)" },
+  recBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, paddingVertical: 16, borderRadius: 14 },
+  recTxt: { color: "#000", fontWeight: "700" },
+  audioReadyRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  playBtn: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
+  waveformRow: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", height: 40 },
+  audioDur: { color: COLORS.textSecondary, fontSize: 12, width: 32, textAlign: "right" },
+  clearBtn: { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.06)" },
   privacyRow: { flexDirection: "row", gap: 8 },
   privChip: { flex: 1, paddingVertical: 12, borderRadius: 14, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)", alignItems: "center" },
   privChipActive: { backgroundColor: "rgba(255,255,255,0.12)", borderColor: "#fff" },
