@@ -22,7 +22,7 @@ export default function History() {
       <RadialAura color="#A78BFA" />
       <SafeAreaView style={{ flex: 1 }}>
         <View style={styles.hdr}>
-          <TouchableOpacity testID="history-back" onPress={() => router.back()} style={styles.back}>
+          <TouchableOpacity testID="history-back" onPress={() => { if (router.canGoBack()) router.back(); else router.replace("/(tabs)/profile"); }} style={styles.back}>
             <Ionicons name="chevron-back" size={22} color="#fff" />
           </TouchableOpacity>
           <Text style={styles.title}>{t("history.title")}</Text>

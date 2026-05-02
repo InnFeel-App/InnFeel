@@ -55,7 +55,7 @@ export default function Paywall() {
       <RadialAura color="#FDE047" />
       <SafeAreaView style={{ flex: 1 }}>
         <View style={styles.hdr}>
-          <TouchableOpacity testID="close-paywall" onPress={() => router.back()} style={styles.closeBtn}>
+          <TouchableOpacity testID="close-paywall" onPress={() => { if (router.canGoBack()) router.back(); else router.replace("/(tabs)/profile"); }} style={styles.closeBtn}>
             <Ionicons name="close" size={22} color="#fff" />
           </TouchableOpacity>
         </View>

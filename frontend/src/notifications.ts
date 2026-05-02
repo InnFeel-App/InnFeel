@@ -1,8 +1,15 @@
 import * as Notifications from "expo-notifications";
-import { Platform } from "react-native";
 import { getItem, setItem } from "./storage";
 
 const KEY_LAST_SCHEDULED = "mooddrop_last_notif_scheduled_day";
+const KEY_NOTIF_HOUR = "mooddrop_notif_hour";
+const KEY_NOTIF_MINUTE = "mooddrop_notif_minute";
+
+// Defaults: 19:30 — create an evening ritual (BeReal-style habit time).
+export const DEFAULT_HOUR = 19;
+export const DEFAULT_MINUTE = 30;
+export const WINDOW_MIN_HOUR = 19;
+export const WINDOW_MAX_HOUR = 21;
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -14,10 +21,22 @@ Notifications.setNotificationHandler({
   }),
 });
 
-export async function ensureDailyRandomNotification(
-  startHour = 9,
-  endHour = 21
-): Promise<{ scheduled: boolean; when?: Date }> {
+export async function getNotificationTime(): Promise<{ hour: number; minute: number }> {
+  const h = await getItem(KEY_NOTIF_HOUR);
+  const m = await getItem(KEY_NOTIF_MINUTE);
+  const hour = h !== null && !isNaN(Number(h)) ? Number(h) : DEFAULT_HOUR;
+  const minute = m !== null && !isNaN(Number(m)) ? Number(m) : DEFAULT_MINUTE;
+  return { hour, minute };
+}
+
+export async function setNotificationTime(hour: number, minute: number) {
+  await setItem(KEY_NOTIF_HOUR, String(hour));
+  await setItem(KEY_NOTIF_MINUTE, String(minute));
+  // Force reschedule on next call
+  await setItem(KEY_LAST_SCHEDULED, "");
+}
+
+export async function scheduleDailyReminder(): Promise<{ scheduled: boolean; when?: Date }> {
   try {
     const { granted } = await Notifications.getPermissionsAsync();
     if (!granted) {
@@ -25,31 +44,18 @@ export async function ensureDailyRandomNotification(
       if (!req.granted) return { scheduled: false };
     }
 
-    const todayKey = new Date().toISOString().slice(0, 10);
+    const { hour, minute } = await getNotificationTime();
+
+    const todayKey = `${new Date().toISOString().slice(0, 10)}_${hour}_${minute}`;
     const last = await getItem(KEY_LAST_SCHEDULED);
     if (last === todayKey) {
-      // already scheduled for today
       return { scheduled: true };
     }
 
     // Cancel previous to avoid duplicates
     await Notifications.cancelAllScheduledNotificationsAsync();
 
-    // Pick a random moment in the window for TODAY if still ahead, else for TOMORROW
-    const now = new Date();
-    const target = new Date(now);
-    target.setHours(startHour, 0, 0, 0);
-    const windowStartMs = target.getTime();
-    const windowEndMs = new Date(now).setHours(endHour, 0, 0, 0);
-    let rand = windowStartMs + Math.random() * (windowEndMs - windowStartMs);
-    if (rand <= now.getTime() + 60_000) {
-      // push to tomorrow if today's window has passed
-      const tmr = new Date(windowStartMs + 24 * 3600_000);
-      const tmrEnd = new Date(windowEndMs + 24 * 3600_000).getTime();
-      rand = tmr.getTime() + Math.random() * (tmrEnd - tmr.getTime());
-    }
-    const fireAt = new Date(rand);
-
+    // Schedule a DAILY repeating notification at the chosen hour/minute
     await Notifications.scheduleNotificationAsync({
       content: {
         title: "It's time. ✦",
@@ -57,15 +63,31 @@ export async function ensureDailyRandomNotification(
         data: { kind: "daily_drop" },
       },
       trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.DATE,
-        date: fireAt,
+        type: Notifications.SchedulableTriggerInputTypes.DAILY,
+        hour,
+        minute,
       } as any,
     });
+
+    // compute next fire date for UI preview
+    const now = new Date();
+    const fire = new Date();
+    fire.setHours(hour, minute, 0, 0);
+    if (fire.getTime() <= now.getTime()) fire.setDate(fire.getDate() + 1);
+
     await setItem(KEY_LAST_SCHEDULED, todayKey);
-    return { scheduled: true, when: fireAt };
+    return { scheduled: true, when: fire };
   } catch {
     return { scheduled: false };
   }
+}
+
+// Back-compat alias used from _layout.tsx
+export async function ensureDailyRandomNotification(
+  _startHour?: number,
+  _endHour?: number
+): Promise<{ scheduled: boolean; when?: Date }> {
+  return scheduleDailyReminder();
 }
 
 export async function clearAllScheduled() {

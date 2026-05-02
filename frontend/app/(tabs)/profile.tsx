@@ -1,7 +1,8 @@
 import React from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Image } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import * as ImagePicker from "expo-image-picker";
 import RadialAura from "../../src/components/RadialAura";
 import Button from "../../src/components/Button";
 import { useAuth } from "../../src/auth";
@@ -18,15 +19,47 @@ export default function Profile() {
     try { await api("/dev/toggle-pro", { method: "POST" }); await refresh(); } catch {}
   };
 
+  const changeAvatar = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) { Alert.alert("Permission needed", "We need photo access to update your profile picture."); return; }
+      const r = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.5,
+        base64: true,
+      });
+      if (r.canceled || !r.assets?.[0]?.base64) return;
+      const b64 = r.assets[0].base64;
+      if (b64.length > 2_500_000) {
+        Alert.alert("Image too large", "Please choose a smaller image (< 2 MB).");
+        return;
+      }
+      await api("/profile/avatar", { method: "POST", body: { avatar_b64: b64 } });
+      await refresh();
+      Alert.alert("Updated ✦", "Your profile picture is live.");
+    } catch (e: any) {
+      Alert.alert("Upload failed", e?.message || "Please try again.");
+    }
+  };
+
   return (
     <View style={styles.container} testID="profile-screen">
       <RadialAura color={user?.avatar_color || "#A78BFA"} />
       <SafeAreaView style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.scroll}>
           <View style={styles.header}>
-            <View style={[styles.avatar, { backgroundColor: user?.avatar_color || "#A78BFA" }]}>
-              <Text style={styles.avatarTxt}>{(user?.name || "?").slice(0, 1).toUpperCase()}</Text>
-            </View>
+            <TouchableOpacity testID="change-avatar" onPress={changeAvatar} activeOpacity={0.85}>
+              <View style={[styles.avatar, { backgroundColor: user?.avatar_color || "#A78BFA" }]}>
+                {(user as any)?.avatar_b64 ? (
+                  <Image source={{ uri: `data:image/jpeg;base64,${(user as any).avatar_b64}` }} style={styles.avatarImg} />
+                ) : (
+                  <Text style={styles.avatarTxt}>{(user?.name || "?").slice(0, 1).toUpperCase()}</Text>
+                )}
+              </View>
+              <View style={styles.editDot}>
+                <Ionicons name="camera" size={14} color="#000" />
+              </View>
+            </TouchableOpacity>
             <Text style={styles.name}>{user?.name}</Text>
             <Text style={styles.email}>{user?.email}</Text>
             {user?.pro ? (

@@ -167,7 +167,7 @@ export default function MoodCreate() {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <SafeAreaView style={{ flex: 1 }}>
           <View style={styles.headerRow}>
-            <TouchableOpacity testID="close-create" onPress={() => router.back()} style={styles.closeBtn}>
+            <TouchableOpacity testID="close-create" onPress={() => { if (router.canGoBack()) router.back(); else router.replace("/(tabs)/home"); }} style={styles.closeBtn}>
               <Ionicons name="close" size={22} color="#fff" />
             </TouchableOpacity>
             <Text style={styles.hdr}>Drop your mood</Text>
