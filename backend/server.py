@@ -41,28 +41,39 @@ REFRESH_TOKEN_TTL_DAYS = 30
 
 PRO_PRICE_USD = 4.99  # monthly
 
-# Emotion color palette — core emotions + additions covering common daily moods
+# Emotion color palette — ordered from "best to worst" (positive → neutral → negative)
 EMOTIONS = {
-    "calm":        "#3B82F6",
+    # top: positive & expansive
     "joy":         "#FACC15",
     "happy":       "#FFD166",
     "love":        "#EC4899",
-    "anger":       "#EF4444",
-    "anxiety":     "#F59E0B",
-    "sadness":     "#6366F1",
-    "focus":       "#06D6A0",
     "excitement":  "#FF7A00",
-    "peace":       "#10B981",
-    "nostalgia":   "#C026D3",
-    "tired":       "#94A3B8",
-    "stressed":    "#DC2626",
-    "lonely":      "#64748B",
+    # positive & nurturing
     "grateful":    "#F59E0B",
     "hopeful":     "#38BDF8",
     "inspired":    "#A855F7",
     "confident":   "#FB923C",
+    "motivated":   "#22D3EE",
+    # calm & steady
+    "peace":       "#10B981",
+    "calm":        "#3B82F6",
+    "focus":       "#06D6A0",
+    "nostalgia":   "#C026D3",
+    # low energy / flat
+    "tired":       "#94A3B8",
     "bored":       "#78716C",
+    "unmotivated": "#6B7280",
+    # isolating / sad
+    "lonely":      "#64748B",
+    "sadness":     "#6366F1",
+    # worried / anxious / lost
+    "worried":     "#CA8A04",
+    "anxiety":     "#F59E0B",
+    "lost":        "#475569",
+    # intense negative
+    "stressed":    "#DC2626",
     "overwhelmed": "#B91C1C",
+    "anger":       "#EF4444",
 }
 
 client = AsyncIOMotorClient(MONGO_URL)
@@ -205,9 +216,13 @@ class LoginIn(BaseModel):
 
 
 EMOTION_LITERAL = Literal[
-    "calm", "joy", "happy", "love", "anger", "anxiety", "sadness", "focus",
-    "excitement", "peace", "nostalgia", "tired", "stressed", "lonely",
-    "grateful", "hopeful", "inspired", "confident", "bored", "overwhelmed",
+    "joy", "happy", "love", "excitement",
+    "grateful", "hopeful", "inspired", "confident", "motivated",
+    "peace", "calm", "focus", "nostalgia",
+    "tired", "bored", "unmotivated",
+    "lonely", "sadness",
+    "worried", "anxiety", "lost",
+    "stressed", "overwhelmed", "anger",
 ]
 
 
@@ -1366,6 +1381,46 @@ WELLNESS = {
             "The way out is through — but one step at a time.",
         ],
         "advice": "Write down everything in your head on paper — just brain-dump for 3 minutes. Then circle only the ONE next thing. Do that. Ignore the rest.",
+        "share_cta": False,
+    },
+    "motivated": {
+        "tone": "positive",
+        "quotes": [
+            "Motivation is what gets you started. Habit is what keeps you going. — Jim Rohn",
+            "Act as if what you do makes a difference. It does. — William James",
+            "The secret of getting ahead is getting started. — Mark Twain",
+        ],
+        "advice": "Channel this fire: pick the one task that scared you yesterday and block 25 minutes for it right now. Momentum compounds.",
+        "share_cta": True,
+    },
+    "unmotivated": {
+        "tone": "negative",
+        "quotes": [
+            "You don't have to be great to start, but you have to start to be great. — Zig Ziglar",
+            "Action isn't just the effect of motivation — it's also the cause of it. — Mark Manson",
+            "Start where you are. Use what you have. Do what you can. — Arthur Ashe",
+        ],
+        "advice": "Shrink the task: commit to just 5 minutes of it. No pressure to finish. Almost always, motion unlocks the motivation you're waiting for.",
+        "share_cta": False,
+    },
+    "worried": {
+        "tone": "negative",
+        "quotes": [
+            "Worrying does not take away tomorrow's troubles. It takes away today's peace. — Randy Armstrong",
+            "You wouldn't worry so much what others think if you realized how seldom they do. — Eleanor Roosevelt",
+            "What worries you, masters you. — John Locke",
+        ],
+        "advice": "Name the worry concretely. Ask: is it within my control? If yes — one small action now. If no — schedule a 'worry window' for later and gently let it wait.",
+        "share_cta": False,
+    },
+    "lost": {
+        "tone": "negative",
+        "quotes": [
+            "Not all those who wander are lost. — J.R.R. Tolkien",
+            "When you're lost, the best map is simply your next honest step.",
+            "Sometimes the wrong choices bring us to the right places. — Anonymous",
+        ],
+        "advice": "Pause the big questions. Choose one tiny anchor today: a walk, a call, one page written. Clarity returns through movement, not more thinking.",
         "share_cta": False,
     },
 }
