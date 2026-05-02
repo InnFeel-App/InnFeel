@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Petal Bloom V2: Elegant italic serif "iF" monogram with rainbow-aura dot, soft hairlines -->
+  <defs>
+    <radialGradient id="pA" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#FACC15"/><stop offset="100%" stop-color="#FACC15" stop-opacity="0"/></radialGradient>
+    <radialGradient id="pB" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#EC4899"/><stop offset="100%" stop-color="#EC4899" stop-opacity="0"/></radialGradient>
+    <radialGradient id="pC" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#FF7A00"/><stop offset="100%" stop-color="#FF7A00" stop-opacity="0"/></radialGradient>
+    <radialGradient id="pD" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#22D3EE"/><stop offset="100%" stop-color="#22D3EE" stop-opacity="0"/></radialGradient>
+    <radialGradient id="pE" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#A855F7"/><stop offset="100%" stop-color="#A855F7" stop-opacity="0"/></radialGradient>
+    <radialGradient id="pF" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#10B981"/><stop offset="100%" stop-color="#10B981" stop-opacity="0"/></radialGradient>
+    <radialGradient id="pG" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#3B82F6"/><stop offset="100%" stop-color="#3B82F6" stop-opacity="0"/></radialGradient>
+    <radialGradient id="pH" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#FB923C"/><stop offset="100%" stop-color="#FB923C" stop-opacity="0"/></radialGradient>
+    <radialGradient id="dotGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FACC15"/>
+      <stop offset="33%" stop-color="#EC4899"/>
+      <stop offset="66%" stop-color="#A855F7"/>
+      <stop offset="100%" stop-color="#22D3EE"/>
+    </radialGradient>
+    <filter id="blur"><feGaussianBlur stdDeviation="2"/></filter>
+    <filter id="softGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="1.5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" fill="#050505" rx="96" ry="96"/>
+  <!-- 8 petals -->
+  <g transform="translate(256 256)" filter="url(#blur)" style="mix-blend-mode: screen">
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#pA)" transform="rotate(0)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#pB)" transform="rotate(45)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#pC)" transform="rotate(90)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#pD)" transform="rotate(135)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#pE)" transform="rotate(180)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#pF)" transform="rotate(225)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#pG)" transform="rotate(270)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#pH)" transform="rotate(315)"/>
+  </g>
+
+  <!-- Soft white core -->
+  <circle cx="256" cy="256" r="92" fill="#ffffff" opacity="0.97"/>
+  <circle cx="256" cy="256" r="92" fill="none" stroke="rgba(0,0,0,0.05)" stroke-width="1"/>
+
+  <!-- Elegant italic serif monogram "iF" — Bodoni-style high-contrast hairlines -->
+  <g filter="url(#softGlow)" transform="translate(256 256)">
+    <!-- F with elegant tapered serifs and thin/thick contrast -->
+    <g transform="translate(8 -3)">
+      <!-- main vertical stem of F -->
+      <path d="M -3 -52 L -3 50 L -10 52 L -10 -50 Z" fill="#0a0a0c" />
+      <!-- top horizontal serif of F -->
+      <path d="M -10 -50 L 28 -50 L 30 -42 L -10 -42 Z" fill="#0a0a0c"/>
+      <!-- mid horizontal of F -->
+      <path d="M -10 -8 L 18 -8 L 19 -2 L -10 -2 Z" fill="#0a0a0c"/>
+      <!-- bottom serif foot -->
+      <path d="M -16 50 L 4 50 L 4 56 L -16 56 Z" fill="#0a0a0c"/>
+      <!-- italic flourish -->
+      <path d="M -3 -52 Q 0 -57 6 -55 L 4 -50 Q 1 -52 -3 -50 Z" fill="#0a0a0c"/>
+    </g>
+
+    <!-- italic i sitting before F -->
+    <g transform="translate(-30 -3)">
+      <!-- vertical italic stem of i -->
+      <path d="M -3 -10 L -3 50 L -10 52 L -10 -8 Z" fill="#0a0a0c"/>
+      <!-- bottom serif of i -->
+      <path d="M -16 50 L 4 50 L 4 56 L -16 56 Z" fill="#0a0a0c"/>
+      <!-- the "dot" of i — replaced with a small rainbow-aura circle -->
+      <circle cx="-5" cy="-30" r="9" fill="url(#dotGrad)"/>
+      <circle cx="-5" cy="-30" r="9" fill="none" stroke="rgba(0,0,0,0.15)" stroke-width="0.8"/>
+    </g>
+  </g>
+</svg>
