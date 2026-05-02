@@ -352,6 +352,20 @@ agent_communication:
         No code fixes were applied by testing agent; only test harness + DB cleanup (removing admin's existing daily mood so a fresh drop with music could be simulated within the per-day idempotency rule). All three new tasks marked working=true, needs_retesting=false.
     - agent: "testing"
       message: |
+        Session 7 (post-rebrand to InnFeel) FULL backend regression complete via /app/backend_test.py against the public preview URL.
+        Result: 79/79 checks PASS (100%). Pass rate well above the 95% target.
+          A) Auth — admin@innfeel.app/admin123 → 200 with is_admin:true, pro:true. Legacy admin@mooddrop.app → 401 (migration confirmed). /auth/me admin includes is_admin, pro, pro_source. Fresh registration → 200. Luna login → 200.
+          B) Moods — DELETE /moods/today clean slate ok; admin POST {emotion:'joy', intensity:6, privacy:'private'} (Pro intensity>5) → 200; invalid emotion 'joyful' → 422 (Pydantic Literal); 4 fresh free users posting motivated/unmotivated/worried/lost @ intensity=5 all → 200 (new emotions live in EMOTION_LITERAL); admin re-POST with 'motivated' → 200; GET /moods/today returns the mood; DELETE /moods/today returned deleted:1 then deleted:0 (idempotent).
+          C) Wellness — /wellness/motivated #1 returned source=llm with full payload; #2 returned source=llm-cache (24h cache works). /wellness/lost returned quote+advice. /wellness/joyful (invalid key) → 404 as required.
+          D) Friends + close + feed — /friends rows include is_close. /friends/add luna → 200. POST /friends/close/{luna_id} as Pro admin → 200 with is_close:true. Free user POST /friends/close → 403 'Close friends is a Pro feature'. After luna+admin both dropped, GET /moods/feed admin returned items[] with author_avatar_b64 field present on each item.
+          E) Music — Pro admin /music/search?q=ocean → 200 with 15 tracks, all keys (track_id, name, artist, artwork_url, preview_url, source) present, source=='apple', preview_url is https. Free user /music/search → 403. Legacy /music/tracks → 200 {tracks:[]}.
+          F) Admin — /admin/me admin → {is_admin:true}; non-admin → {is_admin:false}. grant-pro luna 5d → 200; /admin/pro-grants lists 3 grants, includes new active luna grant. Non-admin grant-pro → 403. revoke-pro luna → 200. /admin/users/search?q=luna → 2 matches.
+          G) Stripe — POST /payments/checkout {} → 200 with checkout.stripe.com URL+session_id (origin_url fallback works). {origin_url:'https://example.com'} → 200.
+          H) Messages — /messages/unread-count → {total:int, conversations:int}. Admin POST /messages/with/{luna_id} → 200; luna /messages/conversations shows admin's conversation with unread=1.
+          I) Comments + reactions — luna POST /moods/{admin_mood_id}/comment {text:'Nice aura'} → 200; admin GET /moods/{id}/comments shows luna's comment. luna POST /moods/{id}/react {emoji:'heart'} → 200.
+        NOTE on backend.err.log: a single-shot DuplicateKeyError on the unique email index for admin@innfeel.app appeared during the migration startup phase (the legacy migration tried to rename to a row that already existed; on the next reload the seed/migration block correctly took the "delete legacy + idempotently set admin flags" branch). Backend has been stable thereafter and all 79 regression checks passed against it. No fixes were applied by the testing agent.
+    - agent: "testing"
+      message: |
         Session 4 backend testing complete via /app/backend_test_session4.py against the public preview URL.
         Result: 27/27 checks PASS. All 5 new/changed areas verified end-to-end.
           1) Mood delete & redo — DELETE /moods/today is idempotent (deleted:1 → deleted:0 on re-call), re-POST /moods works after delete (daily block cleared), DELETE /moods/{nonexistent} → 404, admin deleting user_x's private mood → 403 'Not your mood'.

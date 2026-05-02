@@ -22,7 +22,7 @@
       "package": "com.innfeel.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#000000"
+        "backgroundColor": "#FFFFFF"
       },
       "edgeToEdgeEnabled": true
     },
@@ -37,9 +37,9 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 240,
+          "imageWidth": 280,
           "resizeMode": "contain",
-          "backgroundColor": "#050505"
+          "backgroundColor": "#FFFFFF"
         }
       ],
       "expo-web-browser",
