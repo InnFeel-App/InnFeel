@@ -1,0 +1,134 @@
+{
+  "project": "MoodDrop",
+  "theme": "Dark",
+  "archetype": "Archetype 5 (Jewel & Luxury) with Luminous Gradients",
+  "design_philosophy": "A premium, intimate mobile social app. The UI is a dark, minimalist canvas where emotions are the sole source of light and color. We use heavy glassmorphism, luminous radial gradients, and fluid motion to make the app feel alive, empathetic, and premium. The emotional spectrum acts as the primary visual language.",
+  "color_system": {
+    "backgrounds": {
+      "app_base": "#050505",
+      "surface_glass": "rgba(255, 255, 255, 0.03)",
+      "surface_glass_hover": "rgba(255, 255, 255, 0.06)",
+      "panel": "#0A0A0C",
+      "overlay": "rgba(0, 0, 0, 0.6)"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#A1A1AA",
+      "tertiary": "#71717A",
+      "inverse": "#000000"
+    },
+    "borders": {
+      "glass": "rgba(255, 255, 255, 0.08)",
+      "divider": "rgba(255, 255, 255, 0.04)"
+    },
+    "emotions": {
+      "calm": { "hex": "#60A5FA", "name": "Soft Blue", "glow": "rgba(96, 165, 250, 0.3)" },
+      "joy": { "hex": "#FDE047", "name": "Yellow", "glow": "rgba(253, 224, 71, 0.3)" },
+      "love": { "hex": "#F472B6", "name": "Pink", "glow": "rgba(244, 114, 182, 0.3)" },
+      "anger": { "hex": "#F87171", "name": "Red", "glow": "rgba(248, 113, 113, 0.3)" },
+      "anxiety": { "hex": "#FB923C", "name": "Orange-Red", "glow": "rgba(251, 146, 60, 0.3)" },
+      "sadness": { "hex": "#818CF8", "name": "Indigo", "glow": "rgba(129, 140, 248, 0.3)" },
+      "focus": { "hex": "#2DD4BF", "name": "Teal", "glow": "rgba(45, 212, 191, 0.3)" },
+      "excitement": { "hex": "#F97316", "name": "Bright Orange", "glow": "rgba(249, 115, 22, 0.3)" },
+      "peace": { "hex": "#34D399", "name": "Green", "glow": "rgba(52, 211, 153, 0.3)" },
+      "nostalgia": { "hex": "#A78BFA", "name": "Violet", "glow": "rgba(167, 139, 250, 0.3)" }
+    }
+  },
+  "typography": {
+    "fonts": {
+      "heading": "Outfit, sans-serif",
+      "body": "Manrope, sans-serif",
+      "mono": "JetBrains Mono, monospace"
+    },
+    "scales": {
+      "h1": "text-4xl md:text-5xl font-semibold tracking-tight leading-tight",
+      "h2": "text-2xl md:text-3xl font-medium tracking-tight",
+      "h3": "text-xl font-medium tracking-tight",
+      "body_large": "text-lg text-secondary leading-relaxed",
+      "body": "text-base text-secondary leading-relaxed",
+      "small": "text-sm text-tertiary",
+      "overline": "text-xs uppercase tracking-widest text-tertiary font-medium"
+    }
+  },
+  "spacing_and_layout": {
+    "container": "w-full max-w-md mx-auto h-[100dvh] overflow-hidden relative bg-app_base text-white",
+    "padding": "px-6 py-8",
+    "gap": {
+      "tight": "gap-2",
+      "normal": "gap-4",
+      "loose": "gap-8"
+    },
+    "radii": {
+      "card": "rounded-3xl",
+      "button": "rounded-full",
+      "pill": "rounded-full"
+    },
+    "alignment": "Left-align dense text and forms. Center-align hero moments, mood creation radial selectors, and splash screens."
+  },
+  "visual_effects": {
+    "glassmorphism": "bg-white/5 backdrop-blur-2xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.4)]",
+    "mood_glow": "Radial gradient starting with the emotion hex at center (40% opacity), fading to transparent at 70%. Mix-blend-mode: screen.",
+    "noise_texture": "Use an SVG noise overlay (opacity 2-3%) over the main background to prevent banding on dark gradients and add a premium tactile feel.",
+    "luminous_layers": "Multiple overlapping div elements with blur-3xl and low opacity to create the 'kaleidoscope' or 'sunrise' effect."
+  },
+  "components": {
+    "mood_card": {
+      "layout": "Flex column, p-6, rounded-3xl",
+      "background": "Glassmorphism base, with a dynamic radial gradient in the top right corner matching the user's logged emotion.",
+      "typography": "User name in small bold, time in tertiary small. The mood 'word' in H2 (Outfit), accompanied by the intensity slider value.",
+      "interactions": "Hover/Press scales down slightly (scale-95), brightness increases. Long press reveals reactions."
+    },
+    "bottom_navigation": {
+      "layout": "Fixed bottom, w-[90%], mx-auto mb-6 h-16 rounded-full",
+      "style": "Glassmorphism with a slightly darker tint (bg-black/40 backdrop-blur-3xl border border-white/10).",
+      "items": "Icon-only (Lucide icons: Home, Plus/Drop, Friends, User), evenly spaced. Active state has a subtle luminous dot below the icon in white."
+    },
+    "mood_creator": {
+      "layout": "Fullscreen modal takeover.",
+      "visuals": "Massive color wheel or radial dial covering the screen. Background dynamically updates to a glowing aura of the selected emotion in real-time.",
+      "slider": "Intensity 1-5 represented by a minimal, trackless drag interaction (vertical or horizontal) changing the opacity/size of the glow."
+    },
+    "buttons": {
+      "primary": "rounded-full bg-white text-black font-semibold px-8 py-3 hover:bg-gray-200 transition-colors",
+      "secondary": "rounded-full bg-white/10 text-white font-medium px-8 py-3 backdrop-blur-md border border-white/5 hover:bg-white/20 transition-all",
+      "icon": "rounded-full p-3 bg-white/5 border border-white/5 hover:bg-white/10"
+    },
+    "stats_dashboard": {
+      "layout": "Bento grid (Control Room grid style, but rounded and soft).",
+      "elements": "Weekly chart using Shadcn Recharts, streak counter in a square card, dominant mood taking a 2-column span with a massive colored glow."
+    }
+  },
+  "motion_and_interactions": {
+    "page_transitions": "Fade in with a slight upward translation (y: 20 -> 0, opacity 0 -> 1, duration 0.4s).",
+    "feed_stagger": "List items fade in with a 50ms stagger on load.",
+    "microinteractions": "Heart/React buttons have a 'spring' scale effect on tap. Swiping a mood card left/right triggers haptic feedback (if possible in browser/expo) and spring returns."
+  },
+  "testing_attributes": {
+    "requirements": "All interactive elements MUST have data-testid attributes (e.g., data-testid='post-mood-button', data-testid='tab-home', data-testid='mood-slider')."
+  },
+  "icons_library": "lucide-react",
+  "media": {
+    "images": {
+      "splash_background": {
+        "url": "https://static.prod-images.emergentagent.com/jobs/fdaf0f04-e622-424d-a7db-570a9705fa51/images/44fed86d85056fb87c8fd33633be38abf57c07263fd0aebae85c5ac0ebe6af52.png",
+        "description": "Premium dark aesthetic abstract luminous gradient for the splash/onboarding screen."
+      },
+      "stats_color_wheel": {
+        "url": "https://static.prod-images.emergentagent.com/jobs/fdaf0f04-e622-424d-a7db-570a9705fa51/images/1df3d9f5e055436d87268ca165894c03b91ba1ea40224f12b24269de33a63a39.png",
+        "description": "Luminous radial bursts of color for stats dashboard or profile background elements."
+      },
+      "mood_default_background": {
+        "url": "https://images.unsplash.com/photo-1707301398381-d9d9868547f9?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzd8MHwxfHNlYXJjaHwzfHxhYnN0cmFjdCUyMGx1bWlub3VzJTIwZ3JhZGllbnQlMjBibHVyJTIwc29mdCUyMGNvbG9yJTIwYmFja2dyb3VuZHxlbnwwfHx8fDE3Nzc3MDY2NjJ8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Soft gradient blur for generic placeholders or empty state backgrounds."
+      }
+    }
+  },
+  "instructions_to_main_agent": [
+    "Build the application as a mobile-first web app, constrained to max-w-md and h-[100dvh] to simulate an Expo React Native environment in the browser.",
+    "Use standard Tailwind classes for UI styling. Avoid Shadcn Cards/Sections for the main feed—use raw div elements to implement the heavy glassmorphism and custom glowing borders.",
+    "For the daily mood creator flow, build a highly interactive fullscreen view where the background color dynamically changes based on the selected emotion state.",
+    "Utilize lucide-react for all iconography.",
+    "Include the specified data-testid attributes on all interactive elements.",
+    "Implement the 'Locked' feed state beautifully—a frosted glass overlay over blurred feed items with a prominent CTA to 'Drop your mood to unlock'."
+  ]
+}
