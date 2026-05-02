@@ -40,31 +40,58 @@ export default function MoodCreate() {
   const soundRef = useRef<Audio.Sound | null>(null);
   const timerRef = useRef<any>(null);
 
-  // Music track (Pro)
-  const [tracks, setTracks] = useState<any[]>([]);
-  const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
+  // Music track (Pro) — iTunes search
+  const [musicQuery, setMusicQuery] = useState("");
+  const [musicResults, setMusicResults] = useState<any[]>([]);
+  const [musicLoading, setMusicLoading] = useState(false);
+  const [selectedMusic, setSelectedMusic] = useState<any | null>(null);
   const [previewingId, setPreviewingId] = useState<string | null>(null);
   const musicSoundRef = useRef<Audio.Sound | null>(null);
+  const searchTimer = useRef<any>(null);
 
   // Wellness sheet shown after successful drop
   const [wellness, setWellness] = useState<any>(null);
   const { share, Renderer: ShareRenderer } = useShareToStories();
 
+  const runMusicSearch = async (q: string) => {
+    if (!pro) return;
+    const trimmed = q.trim();
+    if (trimmed.length < 2) { setMusicResults([]); return; }
+    setMusicLoading(true);
+    try {
+      const r = await api<{ tracks: any[] }>(`/music/search?q=${encodeURIComponent(trimmed)}`);
+      setMusicResults(r.tracks || []);
+    } catch { setMusicResults([]); }
+    finally { setMusicLoading(false); }
+  };
+
+  // Debounced search as user types
   useEffect(() => {
     if (!pro) return;
-    api<{ tracks: any[] }>("/music/tracks").then((r) => setTracks(r.tracks)).catch(() => {});
-  }, [pro]);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => runMusicSearch(musicQuery), 450);
+    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
+  }, [musicQuery, pro]);
 
   const toggleTrackPreview = async (track: any) => {
     try {
+      // Reset audio mode to playback mode (important on iOS after recording)
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        staysActiveInBackground: false,
+      });
       if (musicSoundRef.current) { await musicSoundRef.current.unloadAsync().catch(() => {}); musicSoundRef.current = null; }
-      if (previewingId === track.id) { setPreviewingId(null); return; }
-      const { sound } = await Audio.Sound.createAsync({ uri: track.url });
+      if (previewingId === track.track_id) { setPreviewingId(null); return; }
+      const { sound } = await Audio.Sound.createAsync({ uri: track.preview_url }, { shouldPlay: true });
       musicSoundRef.current = sound;
-      setPreviewingId(track.id);
+      setPreviewingId(track.track_id);
       sound.setOnPlaybackStatusUpdate((s: any) => { if (s.didJustFinish) setPreviewingId(null); });
-      await sound.playAsync();
-    } catch { setPreviewingId(null); }
+    } catch (e: any) {
+      setPreviewingId(null);
+      Alert.alert("Preview failed", e.message || "Could not play preview");
+    }
   };
 
   useEffect(() => {
@@ -110,6 +137,13 @@ export default function MoodCreate() {
         const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
         setAudioB64(b64);
       }
+      // Reset audio mode so subsequent playback routes to speaker (not earpiece) on iOS
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        staysActiveInBackground: false,
+      });
     } catch {}
     setRecording(null);
   };
@@ -117,12 +151,21 @@ export default function MoodCreate() {
   const playPreview = async () => {
     if (!audioB64) return;
     try {
+      // Reset audio mode to playback mode (important on iOS after recording)
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        staysActiveInBackground: false,
+      });
       if (soundRef.current) { await soundRef.current.unloadAsync(); soundRef.current = null; }
-      const { sound } = await Audio.Sound.createAsync({ uri: `data:audio/m4a;base64,${audioB64}` });
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: `data:audio/m4a;base64,${audioB64}` },
+        { shouldPlay: true, volume: 1.0 },
+      );
       soundRef.current = sound;
       setPlaying(true);
       sound.setOnPlaybackStatusUpdate((s: any) => { if (s.didJustFinish) { setPlaying(false); } });
-      await sound.playAsync();
     } catch (e: any) {
       Alert.alert("Playback failed", e.message || "");
       setPlaying(false);
@@ -175,7 +218,14 @@ export default function MoodCreate() {
           photo_b64: photo, text: pro ? note || null : null,
           audio_b64: pro ? audioB64 : null,
           audio_seconds: pro && audioB64 ? Math.max(1, recSeconds) : null,
-          music_track_id: pro ? selectedTrackId : null,
+          music: pro && selectedMusic ? {
+            track_id: selectedMusic.track_id,
+            name: selectedMusic.name,
+            artist: selectedMusic.artist,
+            artwork_url: selectedMusic.artwork_url,
+            preview_url: selectedMusic.preview_url,
+            source: selectedMusic.source || "apple",
+          } : null,
           privacy,
         },
       });
@@ -310,36 +360,92 @@ export default function MoodCreate() {
                 </View>
 
                 <Text style={styles.section}>Background music · Pro ✦</Text>
+                <View style={styles.musicSearchBox}>
+                  <Ionicons name="search" size={16} color={COLORS.textTertiary} />
+                  <TextInput
+                    testID="music-search"
+                    value={musicQuery}
+                    onChangeText={setMusicQuery}
+                    placeholder="Search Apple Music — title, artist…"
+                    placeholderTextColor="#555"
+                    style={styles.musicSearchInput}
+                    autoCapitalize="none"
+                    returnKeyType="search"
+                    onSubmitEditing={() => runMusicSearch(musicQuery)}
+                  />
+                  {musicQuery ? (
+                    <TouchableOpacity onPress={() => { setMusicQuery(""); setMusicResults([]); }}>
+                      <Ionicons name="close-circle" size={16} color={COLORS.textTertiary} />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+                <Text style={styles.musicSource}>Powered by Apple Music · 30s preview · Spotify coming soon</Text>
+
+                {selectedMusic ? (
+                  <View style={[styles.selectedMusic, { borderColor: auraColor }]}>
+                    {selectedMusic.artwork_url ? (
+                      <Image source={{ uri: selectedMusic.artwork_url }} style={styles.musicArt} />
+                    ) : (
+                      <View style={[styles.musicArt, { backgroundColor: auraColor, alignItems: "center", justifyContent: "center" }]}>
+                        <Ionicons name="musical-notes" size={20} color="#000" />
+                      </View>
+                    )}
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.musicName} numberOfLines={1}>{selectedMusic.name}</Text>
+                      <Text style={styles.musicVibe} numberOfLines={1}>{selectedMusic.artist}</Text>
+                    </View>
+                    <TouchableOpacity
+                      testID="music-preview-selected"
+                      onPress={() => toggleTrackPreview(selectedMusic)}
+                      style={[styles.musicPlay, { backgroundColor: auraColor }]}
+                    >
+                      <Ionicons name={previewingId === selectedMusic.track_id ? "pause" : "play"} size={14} color="#000" />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => setSelectedMusic(null)} style={styles.clearBtn} testID="music-clear-selected">
+                      <Ionicons name="close" size={16} color={COLORS.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+
                 <View style={styles.musicList}>
-                  {tracks.length === 0 ? (
-                    <Text style={styles.musicEmpty}>Loading tracks…</Text>
+                  {musicLoading ? (
+                    <Text style={styles.musicEmpty}>Searching…</Text>
+                  ) : musicQuery.trim().length < 2 ? (
+                    <Text style={styles.musicEmpty}>Type to search tracks ✦</Text>
+                  ) : musicResults.length === 0 ? (
+                    <Text style={styles.musicEmpty}>No results. Try another title or artist.</Text>
                   ) : (
-                    tracks.map((tr) => {
-                      const sel = selectedTrackId === tr.id;
-                      const prv = previewingId === tr.id;
+                    musicResults.slice(0, 8).map((tr) => {
+                      const sel = selectedMusic?.track_id === tr.track_id;
+                      const prv = previewingId === tr.track_id;
                       return (
                         <View
-                          key={tr.id}
-                          testID={`music-track-${tr.id}`}
+                          key={tr.track_id}
+                          testID={`music-track-${tr.track_id}`}
                           style={[styles.musicRow, sel && { borderColor: auraColor, backgroundColor: auraColor + "1A" }]}
                         >
+                          {tr.artwork_url ? (
+                            <Image source={{ uri: tr.artwork_url }} style={styles.musicArt} />
+                          ) : (
+                            <View style={[styles.musicArt, { backgroundColor: auraColor + "55" }]} />
+                          )}
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.musicName} numberOfLines={1}>{tr.name}</Text>
+                            <Text style={styles.musicVibe} numberOfLines={1}>{tr.artist}</Text>
+                          </View>
                           <TouchableOpacity
-                            testID={`music-preview-${tr.id}`}
+                            testID={`music-preview-${tr.track_id}`}
                             onPress={() => toggleTrackPreview(tr)}
                             style={[styles.musicPlay, { backgroundColor: auraColor }]}
                           >
                             <Ionicons name={prv ? "pause" : "play"} size={14} color="#000" />
                           </TouchableOpacity>
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.musicName}>{tr.name}</Text>
-                            <Text style={styles.musicVibe}>{tr.vibe}</Text>
-                          </View>
                           <TouchableOpacity
-                            testID={`music-select-${tr.id}`}
-                            onPress={() => setSelectedTrackId(sel ? null : tr.id)}
+                            testID={`music-select-${tr.track_id}`}
+                            onPress={() => setSelectedMusic(sel ? null : tr)}
                             style={[styles.musicSel, sel && { backgroundColor: auraColor, borderColor: auraColor }]}
                           >
-                            {sel ? <Ionicons name="checkmark" size={14} color="#000" /> : <Text style={styles.musicSelTxt}>Select</Text>}
+                            {sel ? <Ionicons name="checkmark" size={14} color="#000" /> : <Text style={styles.musicSelTxt}>Pick</Text>}
                           </TouchableOpacity>
                         </View>
                       );
@@ -427,12 +533,17 @@ const styles = StyleSheet.create({
   audioDur: { color: COLORS.textSecondary, fontSize: 12, width: 32, textAlign: "right" },
   clearBtn: { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.06)" },
   musicList: { gap: 8 },
+  musicSearchBox: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "rgba(255,255,255,0.05)", borderWidth: 1, borderColor: COLORS.border, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 6 },
+  musicSearchInput: { flex: 1, color: "#fff", fontSize: 14 },
+  musicSource: { color: COLORS.textTertiary, fontSize: 10, marginBottom: 10, marginTop: 2, fontStyle: "italic" },
+  selectedMusic: { flexDirection: "row", alignItems: "center", gap: 10, padding: 10, borderRadius: 16, borderWidth: 1, backgroundColor: "rgba(255,255,255,0.06)", marginBottom: 10 },
+  musicArt: { width: 40, height: 40, borderRadius: 8 },
   musicEmpty: { color: COLORS.textTertiary, fontSize: 12, padding: 10 },
-  musicRow: { flexDirection: "row", alignItems: "center", gap: 12, padding: 12, borderRadius: 16, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)" },
+  musicRow: { flexDirection: "row", alignItems: "center", gap: 10, padding: 10, borderRadius: 16, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)" },
   musicPlay: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" },
-  musicName: { color: "#fff", fontWeight: "600", fontSize: 14 },
+  musicName: { color: "#fff", fontWeight: "600", fontSize: 13 },
   musicVibe: { color: COLORS.textTertiary, fontSize: 11, marginTop: 2 },
-  musicSel: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: COLORS.border },
+  musicSel: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: COLORS.border },
   musicSelTxt: { color: COLORS.textSecondary, fontSize: 11, fontWeight: "600" },
   privacyRow: { flexDirection: "row", gap: 8 },
   privChip: { flex: 1, paddingVertical: 12, borderRadius: 14, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)", alignItems: "center", gap: 4 },

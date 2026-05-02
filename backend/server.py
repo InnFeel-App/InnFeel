@@ -41,31 +41,28 @@ REFRESH_TOKEN_TTL_DAYS = 30
 
 PRO_PRICE_USD = 4.99  # monthly
 
-# Predefined background music library (Pro). Short royalty-free loops.
-MUSIC_TRACKS = [
-    {"id": "warm_glow", "name": "Warm Glow", "vibe": "love · nostalgia", "url": "https://cdn.pixabay.com/download/audio/2022/10/25/audio_946bc6c771.mp3?filename=calm-background-music-121519.mp3", "duration": 20},
-    {"id": "soft_rain", "name": "Soft Rain", "vibe": "calm · peace", "url": "https://cdn.pixabay.com/download/audio/2022/03/24/audio_ff1acc2bd4.mp3?filename=ambient-piano-amp-strings-10711.mp3", "duration": 20},
-    {"id": "sunrise", "name": "Sunrise", "vibe": "joy · excitement", "url": "https://cdn.pixabay.com/download/audio/2022/08/23/audio_d1e4cb0e52.mp3?filename=sunset-vibes-ambient-110241.mp3", "duration": 20},
-    {"id": "midnight", "name": "Midnight", "vibe": "sadness · nostalgia", "url": "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=relaxing-145038.mp3", "duration": 20},
-    {"id": "pulse", "name": "Pulse", "vibe": "focus · anger", "url": "https://cdn.pixabay.com/download/audio/2022/10/30/audio_347111d5e8.mp3?filename=tense-126748.mp3", "duration": 20},
-    {"id": "bloom", "name": "Bloom", "vibe": "love · peace", "url": "https://cdn.pixabay.com/download/audio/2023/06/22/audio_a2fa7f2fd8.mp3?filename=relaxing-mountains-rivers-streams-running-water-18178.mp3", "duration": 20},
-]
-MUSIC_TRACK_IDS = {t["id"] for t in MUSIC_TRACKS}
-
-# Emotion color palette
+# Emotion color palette — core emotions + additions covering common daily moods
 EMOTIONS = {
-    "calm": "#3B82F6",
-    "joy": "#FACC15",
-    "love": "#EC4899",
-    "anger": "#EF4444",
-    "anxiety": "#F59E0B",
-    "sadness": "#6366F1",
-    "focus": "#06D6A0",
-    "excitement": "#FF7A00",
-    "peace": "#10B981",
-    "nostalgia": "#C026D3",
-    "tired": "#94A3B8",
-    "stressed": "#DC2626",
+    "calm":        "#3B82F6",
+    "joy":         "#FACC15",
+    "happy":       "#FFD166",
+    "love":        "#EC4899",
+    "anger":       "#EF4444",
+    "anxiety":     "#F59E0B",
+    "sadness":     "#6366F1",
+    "focus":       "#06D6A0",
+    "excitement":  "#FF7A00",
+    "peace":       "#10B981",
+    "nostalgia":   "#C026D3",
+    "tired":       "#94A3B8",
+    "stressed":    "#DC2626",
+    "lonely":      "#64748B",
+    "grateful":    "#F59E0B",
+    "hopeful":     "#38BDF8",
+    "inspired":    "#A855F7",
+    "confident":   "#FB923C",
+    "bored":       "#78716C",
+    "overwhelmed": "#B91C1C",
 }
 
 client = AsyncIOMotorClient(MONGO_URL)
@@ -198,15 +195,31 @@ class LoginIn(BaseModel):
     password: str
 
 
+EMOTION_LITERAL = Literal[
+    "calm", "joy", "happy", "love", "anger", "anxiety", "sadness", "focus",
+    "excitement", "peace", "nostalgia", "tired", "stressed", "lonely",
+    "grateful", "hopeful", "inspired", "confident", "bored", "overwhelmed",
+]
+
+
+class MusicTrackIn(BaseModel):
+    track_id: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=120)
+    artist: Optional[str] = Field(default=None, max_length=120)
+    artwork_url: Optional[str] = Field(default=None, max_length=500)
+    preview_url: str = Field(min_length=1, max_length=500)
+    source: Literal["apple", "spotify"] = "apple"
+
+
 class MoodDropIn(BaseModel):
     word: str = Field(min_length=1, max_length=30)
-    emotion: Literal["calm", "joy", "love", "anger", "anxiety", "sadness", "focus", "excitement", "peace", "nostalgia", "tired", "stressed"]
+    emotion: EMOTION_LITERAL
     intensity: int = Field(ge=1, le=10)
     photo_b64: Optional[str] = None  # base64 image
     text: Optional[str] = Field(default=None, max_length=280)
     audio_b64: Optional[str] = None  # base64 audio
     audio_seconds: Optional[int] = Field(default=None, ge=1, le=30)
-    music_track_id: Optional[str] = None  # Pro: predefined music track
+    music: Optional[MusicTrackIn] = None  # Pro: track from Apple/Spotify search
     privacy: Literal["friends", "close", "private"] = "friends"
 
 
@@ -384,14 +397,12 @@ async def create_mood(data: MoodDropIn, user: dict = Depends(get_current_user)):
             raise HTTPException(status_code=403, detail="Intensity above 5 is a Pro feature")
         if data.text or data.audio_b64:
             raise HTTPException(status_code=403, detail="Text & audio notes are Pro features")
-        if data.music_track_id:
+        if data.music:
             raise HTTPException(status_code=403, detail="Background music is a Pro feature")
-    if data.music_track_id and data.music_track_id not in MUSIC_TRACK_IDS:
-        raise HTTPException(status_code=400, detail="Unknown music track")
 
     music_obj = None
-    if data.music_track_id:
-        music_obj = next((t for t in MUSIC_TRACKS if t["id"] == data.music_track_id), None)
+    if data.music:
+        music_obj = data.music.model_dump()
 
     mood_id = f"mood_{uuid.uuid4().hex[:12]}"
     doc = {
@@ -407,7 +418,6 @@ async def create_mood(data: MoodDropIn, user: dict = Depends(get_current_user)):
         "audio_b64": data.audio_b64,
         "audio_seconds": data.audio_seconds if data.audio_b64 else None,
         "has_audio": bool(data.audio_b64),
-        "music_track_id": data.music_track_id,
         "music": music_obj,
         "privacy": data.privacy,
         "reactions": [],
@@ -627,9 +637,52 @@ async def stats(user: dict = Depends(get_current_user)):
 # =========================================================================
 # Friends
 # =========================================================================
+@api.get("/music/search")
+async def music_search(q: str, user: dict = Depends(get_current_user)):
+    """Search tracks on Apple's iTunes catalog (free, no auth). Returns tracks with a 30s preview MP3 URL.
+
+    Response: { tracks: [{ track_id, name, artist, artwork_url, preview_url, source }] }
+    """
+    if not is_pro(user):
+        raise HTTPException(status_code=403, detail="Background music is a Pro feature")
+    q = (q or "").strip()
+    if len(q) < 2:
+        return {"tracks": []}
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client_http:
+            r = await client_http.get(
+                "https://itunes.apple.com/search",
+                params={"term": q, "media": "music", "entity": "song", "limit": 20},
+                headers={"User-Agent": "MoodDrop/1.0"},
+            )
+        data = r.json() if r.status_code == 200 else {"results": []}
+    except Exception as e:
+        logger.warning(f"iTunes search failed: {e}")
+        data = {"results": []}
+    results = []
+    for t in data.get("results", []):
+        if not t.get("previewUrl"):
+            continue
+        art = t.get("artworkUrl100") or ""
+        # Upgrade artwork to 300x300 for better quality
+        if art:
+            art = art.replace("100x100bb", "300x300bb")
+        results.append({
+            "track_id": str(t.get("trackId")) if t.get("trackId") else t.get("previewUrl", "")[:48],
+            "name": t.get("trackName") or "",
+            "artist": t.get("artistName") or "",
+            "artwork_url": art,
+            "preview_url": t.get("previewUrl"),
+            "source": "apple",
+        })
+    return {"tracks": results[:15]}
+
+
+# Backward-compat: old endpoint returns empty tracks so legacy clients don't crash
 @api.get("/music/tracks")
-async def music_tracks(user: dict = Depends(get_current_user)):
-    return {"tracks": MUSIC_TRACKS}
+async def music_tracks_legacy(user: dict = Depends(get_current_user)):
+    return {"tracks": []}
 
 
 @api.post("/profile/avatar")
@@ -1032,6 +1085,86 @@ WELLNESS = {
             "When stressed, lower the bar — done is better than perfect.",
         ],
         "advice": "Try the 4-7-8 breath: inhale 4s, hold 7s, exhale 8s — repeat 4 times. Then write the ONE thing that would relieve 80% of the pressure, and do only that.",
+        "share_cta": False,
+    },
+    "happy": {
+        "tone": "positive",
+        "quotes": [
+            "Happiness is when what you think, what you say, and what you do are in harmony. — Gandhi",
+            "The most wasted of days is one without laughter. — E.E. Cummings",
+            "Happiness is a direction, not a place. — Sydney J. Harris",
+        ],
+        "advice": "Anchor this feeling: text one person who contributed to it and thank them — specificity makes it stick.",
+        "share_cta": True,
+    },
+    "lonely": {
+        "tone": "negative",
+        "quotes": [
+            "The loneliest moment is when you've just experienced something wonderful and have nobody to share it with. — Fitzgerald",
+            "You are not alone; your feelings simply arrived before your people did.",
+            "Solitude is where we find ourselves, so we may reach out and find others. — May Sarton",
+        ],
+        "advice": "Reach out to ONE person — send a simple 'thinking of you' — even a small bridge beats a perfect message. Then step outside for 5 minutes of real air.",
+        "share_cta": False,
+    },
+    "grateful": {
+        "tone": "positive",
+        "quotes": [
+            "Gratitude turns what we have into enough. — Melody Beattie",
+            "Acknowledging the good you already have is the foundation for all abundance. — Eckhart Tolle",
+            "Wear gratitude like a cloak, and it will feed every corner of your life. — Rumi",
+        ],
+        "advice": "Write down 3 specific things from today you're grateful for — one person, one sensation, one small win.",
+        "share_cta": True,
+    },
+    "hopeful": {
+        "tone": "positive",
+        "quotes": [
+            "Hope is being able to see that there is light despite all of the darkness. — Desmond Tutu",
+            "Once you choose hope, anything's possible. — Christopher Reeve",
+            "Hope is the thing with feathers that perches in the soul. — Emily Dickinson",
+        ],
+        "advice": "Capture this spark — write one sentence describing the future you're hoping for, and pin it somewhere you'll re-read it tomorrow.",
+        "share_cta": True,
+    },
+    "inspired": {
+        "tone": "positive",
+        "quotes": [
+            "Inspiration exists, but it has to find you working. — Pablo Picasso",
+            "Creativity is intelligence having fun. — Einstein",
+            "The best way to capture inspiration is to act on it immediately.",
+        ],
+        "advice": "Don't wait — give inspiration a body. Open a note, dump the raw idea in 2 minutes, even messy. The muse rewards motion.",
+        "share_cta": True,
+    },
+    "confident": {
+        "tone": "positive",
+        "quotes": [
+            "Confidence comes not from always being right but from not fearing to be wrong. — Peter T. Mcintyre",
+            "You gain strength, courage, and confidence by every experience. — Eleanor Roosevelt",
+            "Trust yourself. You know more than you think you do. — Benjamin Spock",
+        ],
+        "advice": "Use this energy for the one conversation or ask you've been postponing — confident moments have momentum, so cash it in.",
+        "share_cta": False,
+    },
+    "bored": {
+        "tone": "neutral",
+        "quotes": [
+            "Boredom is the feeling that everything is a waste of time; serenity, that nothing is. — Thomas Szasz",
+            "The cure for boredom is curiosity. There is no cure for curiosity. — Dorothy Parker",
+            "A quiet mind is not an empty one — it's a field where new ideas can land.",
+        ],
+        "advice": "Pick a single curiosity to chase for 15 minutes — a topic, a walk, a song rabbit-hole. Boredom is the start of creation, not the end.",
+        "share_cta": False,
+    },
+    "overwhelmed": {
+        "tone": "negative",
+        "quotes": [
+            "You are allowed to be both a masterpiece and a work in progress simultaneously.",
+            "Almost everything will work again if you unplug it for a few minutes — including you. — Anne Lamott",
+            "The way out is through — but one step at a time.",
+        ],
+        "advice": "Write down everything in your head on paper — just brain-dump for 3 minutes. Then circle only the ONE next thing. Do that. Ignore the rest.",
         "share_cta": False,
     },
 }

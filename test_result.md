@@ -109,6 +109,51 @@ user_problem_statement: |
   3) UI refactor: Pro ✦ labels, cleaner MoodCard (Ionicons + text labels, no cryptic emoji)
 
 backend:
+  - task: "iTunes music search endpoint"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "New GET /api/music/search?q=... that queries Apple iTunes search and returns tracks[{track_id, name, artist, artwork_url, preview_url, source:'apple'}]. Pro-only. Short queries (<2 chars) return empty tracks. Legacy /api/music/tracks kept for backward compat returning {tracks: []}."
+        - working: true
+          agent: "testing"
+          comment: "Verified end-to-end via /app/backend_test_session3.py against preview URL. (a) Pro admin q=ocean → 200, 15 tracks, all with track_id/name/artist/artwork_url/preview_url/source=apple, preview_url starts with http. (b) Fresh Free user q=ocean → 403 'Background music is a Pro feature'. (c) q=a → 200 {tracks: []}. (d) Missing q → 422. (e) Legacy /api/music/tracks as Pro → 200 {tracks: []}. No import/reference error for removed MUSIC_TRACKS."
+
+  - task: "Extended emotion palette (20 emotions) on POST /moods"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Added happy, lonely, grateful, hopeful, inspired, confident, bored, overwhelmed to EMOTIONS dict and EMOTION_LITERAL. Colors assigned."
+        - working: true
+          agent: "testing"
+          comment: "For each of the 8 new emotion keys, registered a fresh Free user and posted {word:'test', emotion:<key>, intensity:3, privacy:'private'}. All 8 returned 200 with correct mood_id and emotion echoed back. No Pydantic rejections."
+
+  - task: "Music object on POST /moods (MusicTrackIn)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "MoodDropIn.music is now free-form MusicTrackIn object {track_id, name, artist, artwork_url, preview_url, source} rather than an id lookup; persisted as-is on the mood doc."
+        - working: true
+          agent: "testing"
+          comment: "Pro admin: cleaned today's mood via direct DB, then POST /api/moods with music object → 200; returned mood.music matched input exactly. GET /api/moods/today returned same music object. After Luna also dropped today, admin's /api/moods/feed unlocked and returned items[]. End-to-end persistence of music object confirmed."
+
   - task: "LLM-powered wellness endpoint"
     implemented: true
     working: true
@@ -172,8 +217,9 @@ metadata:
 
 test_plan:
   current_focus:
-    - "LLM-powered wellness endpoint"
-    - "Close Friends management endpoints"
+    - "iTunes music search endpoint"
+    - "Extended emotion palette (20 emotions) on POST /moods"
+    - "Music object on POST /moods (MusicTrackIn)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -181,20 +227,16 @@ test_plan:
 agent_communication:
     - agent: "main"
       message: |
-        Added LLM wellness (gpt-5.2 via emergentintegrations, cached 24h) + close friends backend endpoints.
-        Please test:
-          1) GET /api/wellness/{emotion} for each emotion key returns quote+advice (source=llm or fallback static).
-          2) Twice-calling caches (source=llm-cache on second call).
-          3) POST /api/friends/close/{friend_id} for Free user → 403; for Pro user (admin@mooddrop.app / admin123) → toggles is_close.
-          4) /api/friends response includes is_close field.
-          5) /api/moods/feed filters privacy=close correctly: only authors who marked viewer as close can show close moods.
-        Test credentials in /app/memory/test_credentials.md. Admin is Pro.
+        Session 3: Removed hardcoded MUSIC_TRACKS list. Added iTunes Search (Apple) integration, 
+        expanded emotion palette (now 20 emotions incl. happy, lonely, grateful, hopeful, inspired, 
+        confident, bored, overwhelmed), updated MoodDropIn.music schema (free-form object instead of id lookup).
     - agent: "testing"
       message: |
-        Backend testing complete via /app/backend_test.py against the public preview URL (EXPO_PUBLIC_BACKEND_URL).
-        Results: ALL targeted features pass.
-          • LLM wellness: source=llm on first call; source=llm-cache with identical quote on second call (24h cache verified). Invalid emotion → 404. calm/sadness/anger return non-empty quote+advice. Static fallback exercised once (sadness) and returned valid content — graceful fallback confirmed. NOTE in backend logs: occasional "Budget has been exceeded" from LiteLLM/OpenAI; this is exactly the path that triggers static fallback and the endpoint behaves correctly under that condition.
-          • Close friends: /api/friends includes is_close on every row; POST /api/friends/close/{id} toggles correctly for Pro admin; non-Pro user gets 403 with detail "Close friends is a Pro feature"; GET /api/friends/close lists only close friends.
-          • Privacy=close feed filter: validated end-to-end. With admin's mood at privacy=close and admin->luna NOT close, luna's feed correctly omits admin's mood. After admin marks luna as close, luna's feed includes admin's close mood. (To re-run this on the same day, admin's existing mood for the day must first be removed since /api/moods is idempotent per day.)
-          • Regression: /api/auth/login, /api/auth/me, /api/friends/add, DELETE /api/friends/{id}, /api/moods/today, /api/moods/feed all pass.
-        No fixes were applied to backend code; only test harness adjustments and a one-off DB cleanup of admin's daily mood to simulate fresh privacy=close drop. Both wellness and close-friends tasks marked working=true, needs_retesting=false.
+        Session 3 backend testing complete via /app/backend_test_session3.py against the public preview URL.
+        Result: 30/30 checks PASS.
+          • iTunes music search: Pro admin q=ocean → 200, 15 tracks all with {track_id,name,artist,artwork_url,preview_url,source=apple} and preview_url https. Free user → 403 'Background music is a Pro feature'. q='a' → 200 {tracks:[]}. Missing q → 422. Legacy /api/music/tracks → 200 {tracks:[]} (backward compat confirmed, removed MUSIC_TRACKS var is no longer referenced — backend reloads cleanly, no ImportError).
+          • Extended emotions: registered a fresh Free user per emotion and dropped a private mood for each of [happy, lonely, grateful, hopeful, inspired, confident, bored, overwhelmed] — all 8 returned 200 with correct mood_id.
+          • Music object in mood creation: cleaned admin's today mood via direct DB, then POST /moods with music object → 200 and mood.music identical to input; /moods/today echoes music; after luna dropped, admin's /moods/feed unlocked with items.
+          • Wellness for all 8 new emotions returned source=llm with non-empty quote+advice (LLM cache populated on first call).
+          • Regression: admin login, /auth/me, /friends (all rows carry is_close), POST /friends/close/{luna_id} toggled true→false and back, all pass.
+        No code fixes were applied by testing agent; only test harness + DB cleanup (removing admin's existing daily mood so a fresh drop with music could be simulated within the per-day idempotency rule). All three new tasks marked working=true, needs_retesting=false.

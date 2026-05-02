@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Image, ActivityIndicator } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Audio } from "expo-av";
@@ -17,7 +17,14 @@ type Mood = {
   audio_b64?: string | null;
   has_audio?: boolean;
   audio_seconds?: number | null;
-  music?: { id: string; name: string; url: string; vibe?: string } | null;
+  music?: {
+    track_id?: string;
+    name: string;
+    artist?: string | null;
+    artwork_url?: string | null;
+    preview_url?: string | null;
+    source?: string;
+  } | null;
   music_track_id?: string | null;
   author_name?: string;
   author_color?: string;
@@ -37,13 +44,58 @@ type Props = {
 export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, testIDPrefix = "mood-card" }: Props) {
   const em = EMOTION_COLORS[mood.emotion] || EMOTION_COLORS.calm;
   const soundRef = useRef<Audio.Sound | null>(null);
+  const musicRef = useRef<Audio.Sound | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [musicPlaying, setMusicPlaying] = useState(false);
   const [loadingAudio, setLoadingAudio] = useState(false);
   const [cachedAudio, setCachedAudio] = useState<string | null>(mood.audio_b64 || null);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [reactingKey, setReactingKey] = useState<string | null>(null);
   const hasAudio = !!(mood.has_audio || mood.audio_b64);
   const commentCount = (mood as any).comments?.length || 0;
+
+  const toggleMusicPreview = async () => {
+    if (!mood.music?.preview_url) return;
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        staysActiveInBackground: false,
+      });
+      if (musicPlaying && musicRef.current) {
+        await musicRef.current.pauseAsync();
+        setMusicPlaying(false);
+        return;
+      }
+      if (!musicRef.current) {
+        const { sound } = await Audio.Sound.createAsync(
+          { uri: mood.music.preview_url },
+          { shouldPlay: false, volume: 0.9 },
+        );
+        musicRef.current = sound;
+        sound.setOnPlaybackStatusUpdate((s: any) => {
+          if (s.didJustFinish) {
+            setMusicPlaying(false);
+            sound.setPositionAsync(0).catch(() => {});
+          }
+        });
+      }
+      await musicRef.current.playAsync();
+      setMusicPlaying(true);
+    } catch (e: any) {
+      setMusicPlaying(false);
+      console.warn("[MoodCard music]", e?.message || e);
+    }
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (soundRef.current) { soundRef.current.unloadAsync().catch(() => {}); soundRef.current = null; }
+      if (musicRef.current) { musicRef.current.unloadAsync().catch(() => {}); musicRef.current = null; }
+    };
+  }, []);
 
   const toggleAudio = async () => {
     if (!hasAudio) return;
@@ -53,6 +105,14 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
         setPlaying(false);
         return;
       }
+      // Reset audio mode to playback mode — critical on iOS so sound routes
+      // to speaker (not earpiece) if user recorded earlier in the session.
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        staysActiveInBackground: false,
+      });
       let b64 = cachedAudio;
       if (!b64) {
         setLoadingAudio(true);
@@ -62,7 +122,10 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
         setLoadingAudio(false);
       }
       if (!soundRef.current) {
-        const { sound } = await Audio.Sound.createAsync({ uri: `data:audio/m4a;base64,${b64}` });
+        const { sound } = await Audio.Sound.createAsync(
+          { uri: `data:audio/m4a;base64,${b64}` },
+          { shouldPlay: false, volume: 1.0 },
+        );
         soundRef.current = sound;
         sound.setOnPlaybackStatusUpdate((s: any) => {
           if (s.didJustFinish) {
@@ -73,9 +136,11 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
       }
       await soundRef.current.playAsync();
       setPlaying(true);
-    } catch {
+    } catch (e: any) {
       setLoadingAudio(false);
       setPlaying(false);
+      // Surface clear error instead of silently failing
+      console.warn("[MoodCard audio]", e?.message || e);
     }
   };
 
@@ -113,10 +178,31 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
       </View>
 
       {mood.music ? (
-        <View style={[styles.musicPill, { borderColor: em.hex }]}>
-          <Ionicons name="musical-note" size={12} color={em.hex} />
-          <Text style={styles.musicPillTxt}>{mood.music.name}</Text>
-        </View>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => mood.music?.preview_url && toggleMusicPreview()}
+          style={[styles.musicBanner, { borderColor: em.hex + "80" }]}
+          testID={`music-banner-${mood.mood_id}`}
+        >
+          {mood.music.artwork_url ? (
+            <Image source={{ uri: mood.music.artwork_url }} style={styles.musicArt} />
+          ) : (
+            <View style={[styles.musicArt, { backgroundColor: em.hex, alignItems: "center", justifyContent: "center" }]}>
+              <Ionicons name="musical-notes" size={18} color="#000" />
+            </View>
+          )}
+          <View style={{ flex: 1 }}>
+            <Text style={styles.musicBannerName} numberOfLines={1}>{mood.music.name}</Text>
+            {mood.music.artist ? (
+              <Text style={styles.musicBannerArtist} numberOfLines={1}>{mood.music.artist}</Text>
+            ) : null}
+          </View>
+          {mood.music.preview_url ? (
+            <View style={[styles.musicBannerPlay, { backgroundColor: em.hex }]}>
+              <Ionicons name={musicPlaying ? "pause" : "play"} size={14} color="#000" />
+            </View>
+          ) : null}
+        </TouchableOpacity>
       ) : null}
 
       <Text style={styles.word}>{mood.word}</Text>
@@ -284,6 +370,11 @@ const styles = StyleSheet.create({
   audioLabel: { color: COLORS.textSecondary, fontSize: 11, fontWeight: "600" },
   musicPill: { flexDirection: "row", alignItems: "center", gap: 5, alignSelf: "flex-start", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, borderWidth: 1, backgroundColor: "rgba(0,0,0,0.25)", marginTop: 6, marginBottom: 4 },
   musicPillTxt: { color: "#fff", fontSize: 11, fontWeight: "600" },
+  musicBanner: { flexDirection: "row", alignItems: "center", gap: 10, padding: 10, borderRadius: 16, borderWidth: 1, backgroundColor: "rgba(255,255,255,0.05)", marginTop: 8, marginBottom: 4 },
+  musicArt: { width: 40, height: 40, borderRadius: 8 },
+  musicBannerName: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  musicBannerArtist: { color: "rgba(255,255,255,0.65)", fontSize: 11, marginTop: 2 },
+  musicBannerPlay: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" },
 
   reactWrap: { marginTop: 16, paddingTop: 14, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.08)" },
   sectionLabel: { color: COLORS.textTertiary, fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 },
