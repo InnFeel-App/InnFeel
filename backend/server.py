@@ -9,6 +9,8 @@ import uuid
 import logging
 import bcrypt
 import jwt
+import json
+import hashlib
 from datetime import datetime, timezone, timedelta, date
 from typing import List, Optional, Literal
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, Body
@@ -22,6 +24,7 @@ from emergentintegrations.payments.stripe.checkout import (
     CheckoutStatusResponse,
     CheckoutSessionRequest,
 )
+from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 # =========================================================================
 # Config
@@ -30,6 +33,7 @@ MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "")
+EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_TTL_MINUTES = 60 * 24 * 7  # 7 days for mobile convenience
@@ -243,6 +247,7 @@ async def startup():
     await db.payment_transactions.create_index("session_id", unique=True)
     await db.messages.create_index([("conversation_id", 1), ("at", 1)])
     await db.conversations.create_index("participants")
+    await db.wellness_cache.create_index([("user_id", 1), ("emotion", 1), ("day_key", 1)], unique=True)
     # seed demo admin
     existing = await db.users.find_one({"email": "admin@mooddrop.app"})
     if not existing:
@@ -430,8 +435,22 @@ async def friends_feed(user: dict = Depends(get_current_user)):
     friend_ids = [f["friend_id"] for f in friendships]
     if not friend_ids:
         return {"locked": False, "items": []}
+    # authors who marked me as "close" — they see me for their close-posts
+    close_edges = await db.friendships.find(
+        {"user_id": {"$in": friend_ids}, "friend_id": user["user_id"], "close": True},
+        {"_id": 0, "user_id": 1},
+    ).to_list(1000)
+    close_author_ids = {e["user_id"] for e in close_edges}
     cursor = db.moods.find(
-        {"user_id": {"$in": friend_ids}, "day_key": key, "privacy": {"$ne": "private"}},
+        {
+            "user_id": {"$in": friend_ids},
+            "day_key": key,
+            "privacy": {"$ne": "private"},
+            "$or": [
+                {"privacy": "friends"},
+                {"privacy": "close", "user_id": {"$in": list(close_author_ids)}},
+            ],
+        },
         {"_id": 0, "audio_b64": 0},
     ).sort("created_at", -1)
     items = await cursor.to_list(200)
@@ -623,6 +642,7 @@ async def update_avatar(data: AvatarIn, user: dict = Depends(get_current_user)):
 async def list_friends(user: dict = Depends(get_current_user)):
     fships = await db.friendships.find({"user_id": user["user_id"]}).to_list(500)
     ids = [f["friend_id"] for f in fships]
+    close_map = {f["friend_id"]: bool(f.get("close", False)) for f in fships}
     users = await db.users.find({"user_id": {"$in": ids}}, {"_id": 0, "user_id": 1, "name": 1, "email": 1, "avatar_color": 1, "streak": 1}).to_list(500)
     # Did they drop today?
     key = today_key()
@@ -630,6 +650,38 @@ async def list_friends(user: dict = Depends(get_current_user)):
     drop_set = {m["user_id"] for m in moods}
     for u in users:
         u["dropped_today"] = u["user_id"] in drop_set
+        u["is_close"] = close_map.get(u["user_id"], False)
+    return {"friends": users}
+
+
+@api.post("/friends/close/{friend_id}")
+async def toggle_close_friend(friend_id: str, user: dict = Depends(get_current_user)):
+    # Pro-only feature
+    if not is_pro(user):
+        raise HTTPException(status_code=403, detail="Close friends is a Pro feature")
+    fship = await db.friendships.find_one({"user_id": user["user_id"], "friend_id": friend_id})
+    if not fship:
+        raise HTTPException(status_code=404, detail="Not friends")
+    new_close = not bool(fship.get("close", False))
+    # enforce a sensible cap on close friends
+    if new_close:
+        cnt = await db.friendships.count_documents({"user_id": user["user_id"], "close": True})
+        if cnt >= 15:
+            raise HTTPException(status_code=403, detail="Close friends capped at 15")
+    await db.friendships.update_one(
+        {"user_id": user["user_id"], "friend_id": friend_id},
+        {"$set": {"close": new_close, "close_updated_at": now_utc()}},
+    )
+    return {"ok": True, "is_close": new_close}
+
+
+@api.get("/friends/close")
+async def list_close_friends(user: dict = Depends(get_current_user)):
+    fships = await db.friendships.find({"user_id": user["user_id"], "close": True}).to_list(200)
+    ids = [f["friend_id"] for f in fships]
+    if not ids:
+        return {"friends": []}
+    users = await db.users.find({"user_id": {"$in": ids}}, {"_id": 0, "user_id": 1, "name": 1, "avatar_color": 1}).to_list(200)
     return {"friends": users}
 
 
@@ -990,18 +1042,125 @@ async def wellness_for(emotion: str, user: dict = Depends(get_current_user)):
     if emotion not in WELLNESS:
         raise HTTPException(status_code=404, detail="Unknown emotion")
     pack = WELLNESS[emotion]
-    # Deterministic daily pick per user
-    import hashlib
+    # Deterministic daily pick per user (fallback content)
     seed = hashlib.sha1(f"{user['user_id']}_{emotion}_{today_key()}".encode()).hexdigest()
     idx = int(seed[:8], 16) % len(pack["quotes"])
+    fallback_quote = pack["quotes"][idx]
+    fallback_advice = pack["advice"]
+
+    # Try to fetch LLM-generated personalized wellness for today (24h cache per user+emotion+day)
+    quote = fallback_quote
+    advice = fallback_advice
+    source = "static"
+    day = today_key()
+    if EMERGENT_LLM_KEY:
+        # Find today's mood for context (word, intensity)
+        today_mood = await db.moods.find_one(
+            {"user_id": user["user_id"], "day_key": day},
+            {"_id": 0, "word": 1, "intensity": 1, "emotion": 1},
+        ) or {}
+        cache = await db.wellness_cache.find_one({
+            "user_id": user["user_id"],
+            "emotion": emotion,
+            "day_key": day,
+        })
+        if cache:
+            quote = cache.get("quote", quote)
+            advice = cache.get("advice", advice)
+            source = "llm-cache"
+        else:
+            try:
+                generated = await _generate_wellness_llm(
+                    user_name=user.get("name") or "friend",
+                    emotion=emotion,
+                    tone=pack["tone"],
+                    word=today_mood.get("word"),
+                    intensity=today_mood.get("intensity"),
+                )
+                if generated:
+                    quote = generated.get("quote", quote)
+                    advice = generated.get("advice", advice)
+                    source = "llm"
+                    await db.wellness_cache.update_one(
+                        {"user_id": user["user_id"], "emotion": emotion, "day_key": day},
+                        {"$set": {
+                            "user_id": user["user_id"],
+                            "emotion": emotion,
+                            "day_key": day,
+                            "quote": quote,
+                            "advice": advice,
+                            "created_at": now_utc(),
+                        }},
+                        upsert=True,
+                    )
+            except Exception as e:
+                logging.warning(f"LLM wellness failed, falling back: {e}")
     return {
         "emotion": emotion,
         "tone": pack["tone"],
-        "quote": pack["quotes"][idx],
-        "advice": pack["advice"],
+        "quote": quote,
+        "advice": advice,
         "share_cta": pack.get("share_cta", False),
         "color": EMOTIONS.get(emotion),
+        "source": source,
     }
+
+
+async def _generate_wellness_llm(user_name: str, emotion: str, tone: str, word: Optional[str], intensity: Optional[int]) -> Optional[dict]:
+    """Generate a personalized short wellness quote + actionable advice via LLM, with strict JSON output.
+
+    Returns None on failure.
+    """
+    if not EMERGENT_LLM_KEY:
+        return None
+    session_id = f"wellness_{hashlib.sha1(f'{user_name}_{emotion}_{today_key()}'.encode()).hexdigest()[:16]}"
+    system = (
+        "You are MoodDrop's gentle wellness coach. "
+        "Given a user's emotion and optional mood word, craft a short uplifting message. "
+        "Rules: Return STRICT JSON with keys 'quote' and 'advice'. "
+        "- 'quote': one-sentence poetic reflection (max 120 chars), no author attribution. "
+        "- 'advice': one actionable, concrete tip a person can do in under 3 minutes (max 200 chars), empathetic, no platitudes. "
+        "Never use markdown, quotes, or emoji in the output values. Never wrap in code fences."
+    )
+    prompt = (
+        f"User name: {user_name}. Emotion: {emotion} ({tone}). "
+        f"Mood word: {word or '—'}. Intensity: {intensity if intensity is not None else '—'}/10. "
+        "Respond with ONLY the JSON object."
+    )
+    chat = LlmChat(
+        api_key=EMERGENT_LLM_KEY,
+        session_id=session_id,
+        system_message=system,
+    ).with_model("openai", "gpt-5.2")
+    resp = await chat.send_message(UserMessage(text=prompt))
+    text = (resp or "").strip()
+    # Strip code fences if present
+    if text.startswith("```"):
+        text = text.strip("`")
+        # Remove any leading language tag
+        nl = text.find("\n")
+        if nl != -1:
+            text = text[nl + 1 :]
+        text = text.strip("`").strip()
+    # Find first {...} block
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    try:
+        data = json.loads(text[start : end + 1])
+    except Exception:
+        return None
+    quote = (data.get("quote") or "").strip()
+    advice = (data.get("advice") or "").strip()
+    if not quote or not advice:
+        return None
+    # Safety: truncate
+    if len(quote) > 200:
+        quote = quote[:197] + "…"
+    if len(advice) > 300:
+        advice = advice[:297] + "…"
+    return {"quote": quote, "advice": advice}
 
 
 app.include_router(api)

@@ -232,7 +232,7 @@ export default function MoodCreate() {
               placeholderTextColor="#555" maxLength={30}
             />
 
-            <Text style={styles.section}>{t("create.intensity")} · {intensity}/{maxIntensity}</Text>
+            <Text style={styles.section}>{t("create.intensity")} · {intensity}/{maxIntensity}{!pro ? " · Pro ✦ for 1–10" : ""}</Text>
             <View style={styles.sliderBox}>
               <Slider
                 testID="mood-intensity"
@@ -258,7 +258,7 @@ export default function MoodCreate() {
 
             {pro ? (
               <>
-                <Text style={styles.section}>{t("create.text")}</Text>
+                <Text style={styles.section}>{t("create.text")} · Pro ✦</Text>
                 <TextInput
                   testID="mood-note"
                   value={note} onChangeText={setNote}
@@ -266,7 +266,7 @@ export default function MoodCreate() {
                   placeholder="A sentence about how you feel…" placeholderTextColor="#555"
                 />
 
-                <Text style={styles.section}>{t("create.audio")} · {MAX_AUDIO_SECONDS}s</Text>
+                <Text style={styles.section}>{t("create.audio")} · Pro ✦ · {MAX_AUDIO_SECONDS}s</Text>
                 <View style={[styles.audioCard, { borderColor: auraColor + "80" }]}>
                   {!audioB64 ? (
                     <TouchableOpacity
@@ -356,17 +356,26 @@ export default function MoodCreate() {
 
             <Text style={styles.section}>{t("create.privacy")}</Text>
             <View style={styles.privacyRow}>
-              {(["friends", "close", "private"] as const).map((p) => (
-                <TouchableOpacity
-                  key={p} testID={`privacy-${p}`}
-                  onPress={() => { if (p === "close" && !pro) { Alert.alert("Pro feature", "Close friends is a Pro feature."); return; } setPrivacy(p); }}
-                  style={[styles.privChip, privacy === p && styles.privChipActive]}
-                >
-                  <Text style={[styles.privTxt, privacy === p && { color: "#fff" }]}>
-                    {p === "friends" ? t("create.privacy.friends") : p === "close" ? t("create.privacy.close") : t("create.privacy.private")}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+              {(["friends", "close", "private"] as const).map((p) => {
+                const closeLocked = p === "close" && !pro;
+                return (
+                  <TouchableOpacity
+                    key={p} testID={`privacy-${p}`}
+                    onPress={() => { if (closeLocked) { Alert.alert("Pro feature ✦", "Close friends is a Pro feature."); return; } setPrivacy(p); }}
+                    style={[styles.privChip, privacy === p && styles.privChipActive]}
+                  >
+                    <Text style={[styles.privTxt, privacy === p && { color: "#fff" }]}>
+                      {p === "friends" ? t("create.privacy.friends") : p === "close" ? t("create.privacy.close") : t("create.privacy.private")}
+                    </Text>
+                    {p === "close" ? (
+                      <View style={styles.proBadgeSmall}>
+                        <Ionicons name="sparkles" size={9} color="#FACC15" />
+                        <Text style={styles.proBadgeSmallTxt}>Pro</Text>
+                      </View>
+                    ) : null}
+                  </TouchableOpacity>
+                );
+              })}
             </View>
 
             <View style={{ marginTop: 22 }}>
@@ -426,7 +435,9 @@ const styles = StyleSheet.create({
   musicSel: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: COLORS.border },
   musicSelTxt: { color: COLORS.textSecondary, fontSize: 11, fontWeight: "600" },
   privacyRow: { flexDirection: "row", gap: 8 },
-  privChip: { flex: 1, paddingVertical: 12, borderRadius: 14, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)", alignItems: "center" },
+  privChip: { flex: 1, paddingVertical: 12, borderRadius: 14, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)", alignItems: "center", gap: 4 },
   privChipActive: { backgroundColor: "rgba(255,255,255,0.12)", borderColor: "#fff" },
   privTxt: { color: COLORS.textSecondary, fontWeight: "600", fontSize: 12 },
+  proBadgeSmall: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(250,204,21,0.12)", borderWidth: 1, borderColor: "rgba(250,204,21,0.35)" },
+  proBadgeSmallTxt: { color: "#FACC15", fontSize: 9, fontWeight: "700", letterSpacing: 0.5 },
 });

@@ -14,6 +14,7 @@ type Props = {
     advice: string;
     share_cta: boolean;
     color?: string;
+    source?: string;
   } | null;
   userName?: string;
   onClose: () => void;
@@ -41,6 +42,12 @@ export default function WellnessSheet({ visible, data, userName, onClose, onShar
               <Text style={styles.kickerTxt}>
                 {isPositive ? "KEEP GOING" : data.tone === "negative" ? "BE GENTLE WITH YOURSELF" : "TAKE A MOMENT"}
               </Text>
+              {data.source === "llm" || data.source === "llm-cache" ? (
+                <View style={styles.aiBadge}>
+                  <Ionicons name="sparkles" size={9} color="#FACC15" />
+                  <Text style={styles.aiBadgeTxt}>AI</Text>
+                </View>
+              ) : null}
             </View>
 
             <Text style={styles.headline}>
@@ -75,6 +82,8 @@ const styles = StyleSheet.create({
   kicker: { flexDirection: "row", alignItems: "center", gap: 8 },
   dot: { width: 10, height: 10, borderRadius: 5 },
   kickerTxt: { color: "#fff", fontSize: 11, fontWeight: "800", letterSpacing: 2 },
+  aiBadge: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(250,204,21,0.12)", borderWidth: 1, borderColor: "rgba(250,204,21,0.35)", marginLeft: 4 },
+  aiBadgeTxt: { color: "#FACC15", fontSize: 9, fontWeight: "800", letterSpacing: 1 },
   headline: { color: "#fff", fontSize: 30, fontWeight: "700", letterSpacing: -0.5, marginTop: 12, lineHeight: 36 },
   quoteCard: { padding: 20, borderRadius: 22, borderWidth: 1, backgroundColor: "rgba(255,255,255,0.04)", marginTop: 22 },
   quote: { color: "#fff", fontSize: 18, fontWeight: "500", lineHeight: 26, fontStyle: "italic" },

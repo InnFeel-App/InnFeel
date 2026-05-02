@@ -13,10 +13,14 @@ import { Ionicons } from "@expo/vector-icons";
 export default function Friends() {
   const router = useRouter();
   const { user } = useAuth();
+  const pro = !!user?.pro;
   const [friends, setFriends] = useState<any[]>([]);
   const [email, setEmail] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+
+  const closeCount = friends.filter((f) => f.is_close).length;
 
   const inviteText = `Hey! I'm on MoodDrop — we share our mood once a day in color. Join me: https://mooddrop.app ✦${user?.email ? ` (add me: ${user.email})` : ""}`;
 
@@ -51,6 +55,32 @@ export default function Friends() {
       { text: "Cancel", style: "cancel" },
       { text: "Remove", style: "destructive", onPress: async () => { try { await api(`/friends/${friend_id}`, { method: "DELETE" }); await load(); } catch {} } },
     ]);
+  };
+
+  const toggleClose = async (friend_id: string, currentlyClose: boolean) => {
+    if (!pro) {
+      Alert.alert(
+        "Close friends ✦ Pro",
+        "Mark your inner circle and share moods with just them using the Close privacy option.",
+        [
+          { text: "Later", style: "cancel" },
+          { text: "Upgrade", onPress: () => router.push("/paywall") },
+        ],
+      );
+      return;
+    }
+    // optimistic toggle
+    setTogglingId(friend_id);
+    setFriends((list) => list.map((f) => (f.user_id === friend_id ? { ...f, is_close: !currentlyClose } : f)));
+    try {
+      await api(`/friends/close/${friend_id}`, { method: "POST" });
+    } catch (e: any) {
+      // revert
+      setFriends((list) => list.map((f) => (f.user_id === friend_id ? { ...f, is_close: currentlyClose } : f)));
+      Alert.alert("Oops", e.message || "Could not update close friend");
+    } finally {
+      setTogglingId(null);
+    }
   };
 
   return (
@@ -91,20 +121,49 @@ export default function Friends() {
           </View>
 
           <View style={{ height: 20 }} />
+          <View style={styles.sectionHdr}>
+            <Text style={styles.sectionTxt}>Your circle {friends.length > 0 ? `· ${friends.length}` : ""}</Text>
+            {friends.length > 0 ? (
+              <View style={styles.closeBadge}>
+                <Ionicons name="star" size={11} color="#FACC15" />
+                <Text style={styles.closeBadgeTxt}>{closeCount} close{!pro ? " · Pro ✦" : ""}</Text>
+              </View>
+            ) : null}
+          </View>
           {friends.length === 0 ? (
             <Text style={styles.empty}>No friends yet. Add someone by email to start sharing moods.</Text>
           ) : friends.map((f) => (
-            <View key={f.user_id} style={styles.row} testID={`friend-${f.user_id}`}>
+            <View key={f.user_id} style={[styles.row, f.is_close && styles.rowClose]} testID={`friend-${f.user_id}`}>
               <View style={[styles.avatar, { backgroundColor: f.avatar_color || "#A78BFA" }]}>
                 <Text style={styles.avatarTxt}>{(f.name || "?").slice(0, 1).toUpperCase()}</Text>
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.name}>{f.name}</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Text style={styles.name}>{f.name}</Text>
+                  {f.is_close ? (
+                    <View style={styles.closeTag}>
+                      <Ionicons name="star" size={9} color="#FACC15" />
+                      <Text style={styles.closeTagTxt}>Close</Text>
+                    </View>
+                  ) : null}
+                </View>
                 <Text style={styles.email}>{f.email}</Text>
               </View>
               <View style={[styles.statusPill, f.dropped_today ? styles.pillGreen : styles.pillGray]}>
                 <Text style={styles.pillTxt}>{f.dropped_today ? t("friends.dropped") : t("friends.notDropped")}</Text>
               </View>
+              <TouchableOpacity
+                onPress={() => toggleClose(f.user_id, !!f.is_close)}
+                style={[styles.starBtn, f.is_close && styles.starBtnActive]}
+                testID={`toggle-close-${f.user_id}`}
+                disabled={togglingId === f.user_id}
+              >
+                <Ionicons
+                  name={f.is_close ? "star" : "star-outline"}
+                  size={16}
+                  color={f.is_close ? "#FACC15" : COLORS.textTertiary}
+                />
+              </TouchableOpacity>
               <TouchableOpacity onPress={() => remove(f.user_id)} style={styles.removeBtn} testID={`remove-${f.user_id}`}>
                 <Ionicons name="close" size={18} color={COLORS.textTertiary} />
               </TouchableOpacity>
@@ -130,7 +189,16 @@ const styles = StyleSheet.create({
   inviteBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14, borderRadius: 16 },
   inviteTxt: { color: "#fff", fontWeight: "700", fontSize: 13 },
   empty: { color: COLORS.textSecondary, textAlign: "center", marginTop: 40 },
+  sectionHdr: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
+  sectionTxt: { color: COLORS.textSecondary, fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1 },
+  closeBadge: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: "rgba(250,204,21,0.10)", borderWidth: 1, borderColor: "rgba(250,204,21,0.28)" },
+  closeBadgeTxt: { color: "#FACC15", fontSize: 10, fontWeight: "700" },
   row: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: 20, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)", marginBottom: 10 },
+  rowClose: { borderColor: "rgba(250,204,21,0.45)", backgroundColor: "rgba(250,204,21,0.05)" },
+  closeTag: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(250,204,21,0.15)", borderWidth: 1, borderColor: "rgba(250,204,21,0.35)" },
+  closeTagTxt: { color: "#FACC15", fontSize: 9, fontWeight: "700" },
+  starBtn: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.05)", borderWidth: 1, borderColor: COLORS.border },
+  starBtnActive: { backgroundColor: "rgba(250,204,21,0.12)", borderColor: "rgba(250,204,21,0.45)" },
   avatar: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
   avatarTxt: { color: "#000", fontWeight: "800", fontSize: 16 },
   name: { color: "#fff", fontWeight: "600" },

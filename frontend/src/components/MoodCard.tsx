@@ -41,6 +41,7 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
   const [loadingAudio, setLoadingAudio] = useState(false);
   const [cachedAudio, setCachedAudio] = useState<string | null>(mood.audio_b64 || null);
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [reactingKey, setReactingKey] = useState<string | null>(null);
   const hasAudio = !!(mood.has_audio || mood.audio_b64);
   const commentCount = (mood as any).comments?.length || 0;
 
@@ -52,7 +53,6 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
         setPlaying(false);
         return;
       }
-      // Lazy-load audio from streaming endpoint on first play
       let b64 = cachedAudio;
       if (!b64) {
         setLoadingAudio(true);
@@ -65,13 +65,26 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
         const { sound } = await Audio.Sound.createAsync({ uri: `data:audio/m4a;base64,${b64}` });
         soundRef.current = sound;
         sound.setOnPlaybackStatusUpdate((s: any) => {
-          if (s.didJustFinish) { setPlaying(false); sound.setPositionAsync(0).catch(() => {}); }
+          if (s.didJustFinish) {
+            setPlaying(false);
+            sound.setPositionAsync(0).catch(() => {});
+          }
         });
       }
       await soundRef.current.playAsync();
       setPlaying(true);
-    } catch { setLoadingAudio(false); setPlaying(false); }
+    } catch {
+      setLoadingAudio(false);
+      setPlaying(false);
+    }
   };
+
+  const handleReact = (key: string) => {
+    setReactingKey(key);
+    onReact?.(key);
+    setTimeout(() => setReactingKey(null), 900);
+  };
+
   return (
     <View style={styles.card} testID={`${testIDPrefix}-${mood.mood_id}`}>
       <LinearGradient
@@ -125,10 +138,7 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
       </View>
 
       {mood.photo_b64 ? (
-        <Image
-          source={{ uri: `data:image/jpeg;base64,${mood.photo_b64}` }}
-          style={styles.photo}
-        />
+        <Image source={{ uri: `data:image/jpeg;base64,${mood.photo_b64}` }} style={styles.photo} />
       ) : null}
 
       {mood.text ? <Text style={styles.noteText}>"{mood.text}"</Text> : null}
@@ -165,39 +175,69 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
         </TouchableOpacity>
       ) : null}
 
-
       {onReact ? (
-        <View style={styles.reactRow}>
-          {REACTIONS.map((r) => (
+        <View style={styles.reactWrap}>
+          <Text style={styles.sectionLabel}>React</Text>
+          <View style={styles.reactRow}>
+            {REACTIONS.map((r) => {
+              const active = reactingKey === r.key;
+              return (
+                <TouchableOpacity
+                  key={r.key}
+                  testID={`react-${r.key}-${mood.mood_id}`}
+                  onPress={() => handleReact(r.key)}
+                  activeOpacity={0.8}
+                  style={[
+                    styles.reactBtn,
+                    active && { backgroundColor: em.hex + "22", borderColor: em.hex },
+                  ]}
+                >
+                  <Ionicons
+                    name={r.icon as any}
+                    size={16}
+                    color={active ? em.hex : "#fff"}
+                  />
+                  <Text
+                    style={[
+                      styles.reactLabel,
+                      active && { color: em.hex },
+                    ]}
+                  >
+                    {r.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <View style={styles.actionRow}>
             <TouchableOpacity
-              key={r.key}
-              testID={`react-${r.key}-${mood.mood_id}`}
-              onPress={() => onReact(r.key)}
-              style={styles.reactBtn}
-            >
-              <Text style={styles.reactEmoji}>{r.symbol}</Text>
-            </TouchableOpacity>
-          ))}
-          <TouchableOpacity
-            testID={`comment-${mood.mood_id}`}
-            onPress={() => setCommentsOpen(true)}
-            style={styles.actionBtn}
-          >
-            <Ionicons name="chatbubble-outline" size={14} color="#fff" />
-            {commentCount > 0 ? <Text style={styles.actionCount}>{commentCount}</Text> : null}
-          </TouchableOpacity>
-          {onMessage ? (
-            <TouchableOpacity
-              testID={`message-${mood.mood_id}`}
-              onPress={onMessage}
+              testID={`comment-${mood.mood_id}`}
+              onPress={() => setCommentsOpen(true)}
               style={styles.actionBtn}
+              activeOpacity={0.8}
             >
-              <Ionicons name="paper-plane-outline" size={14} color="#fff" />
+              <Ionicons name="chatbubble-outline" size={15} color="#fff" />
+              <Text style={styles.actionLabel}>Comment{commentCount > 0 ? ` · ${commentCount}` : ""}</Text>
             </TouchableOpacity>
-          ) : null}
-          {mood.reactions && mood.reactions.length > 0 ? (
-            <Text style={styles.reactCount}>{mood.reactions.length}</Text>
-          ) : null}
+            {onMessage ? (
+              <TouchableOpacity
+                testID={`message-${mood.mood_id}`}
+                onPress={onMessage}
+                style={styles.actionBtn}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="paper-plane-outline" size={15} color="#fff" />
+                <Text style={styles.actionLabel}>Message</Text>
+              </TouchableOpacity>
+            ) : null}
+            {mood.reactions && mood.reactions.length > 0 ? (
+              <View style={styles.reactCountPill}>
+                <Ionicons name="heart" size={11} color={em.hex} />
+                <Text style={styles.reactCountTxt}>{mood.reactions.length}</Text>
+              </View>
+            ) : null}
+          </View>
         </View>
       ) : null}
       <CommentsSheet visible={commentsOpen} moodId={mood.mood_id} emotion={mood.emotion} onClose={() => setCommentsOpen(false)} />
@@ -244,10 +284,47 @@ const styles = StyleSheet.create({
   audioLabel: { color: COLORS.textSecondary, fontSize: 11, fontWeight: "600" },
   musicPill: { flexDirection: "row", alignItems: "center", gap: 5, alignSelf: "flex-start", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, borderWidth: 1, backgroundColor: "rgba(0,0,0,0.25)", marginTop: 6, marginBottom: 4 },
   musicPillTxt: { color: "#fff", fontSize: 11, fontWeight: "600" },
-  reactRow: { flexDirection: "row", gap: 8, marginTop: 14, alignItems: "center" },
-  reactBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.06)", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: COLORS.border },
-  reactEmoji: { color: "#fff", fontSize: 16 },
-  actionBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, height: 36, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: COLORS.border },
-  actionCount: { color: "#fff", fontSize: 11, fontWeight: "600" },
-  reactCount: { color: COLORS.textSecondary, marginLeft: 6, fontSize: 12 },
+
+  reactWrap: { marginTop: 16, paddingTop: 14, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.08)" },
+  sectionLabel: { color: COLORS.textTertiary, fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 },
+  reactRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  reactBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    height: 34,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  reactLabel: { color: "#fff", fontSize: 12, fontWeight: "600" },
+
+  actionRow: { flexDirection: "row", gap: 8, marginTop: 12, alignItems: "center", flexWrap: "wrap" },
+  actionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    height: 34,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  actionLabel: { color: "#fff", fontSize: 12, fontWeight: "600" },
+  reactCountPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginLeft: "auto",
+    paddingHorizontal: 10,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  reactCountTxt: { color: "#fff", fontSize: 11, fontWeight: "700" },
 });

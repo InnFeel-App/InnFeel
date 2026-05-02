@@ -28,9 +28,9 @@ export const COLORS = {
 };
 
 export const REACTIONS = [
-  { key: "heart", symbol: "♥" },
-  { key: "fire", symbol: "✦" },
-  { key: "hug", symbol: "❀" },
-  { key: "smile", symbol: "☺" },
-  { key: "sparkle", symbol: "✧" },
-];
+  { key: "heart", icon: "heart", label: "Love" },
+  { key: "fire", icon: "flame", label: "Fire" },
+  { key: "hug", icon: "hand-left", label: "Hug" },
+  { key: "smile", icon: "happy", label: "Smile" },
+  { key: "sparkle", icon: "sparkles", label: "Wow" },
+] as const;
