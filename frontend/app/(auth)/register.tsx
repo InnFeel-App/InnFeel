@@ -39,7 +39,7 @@ export default function Register() {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         <SafeAreaView style={{ flex: 1 }}>
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-            <Text style={styles.brand}>MoodDrop</Text>
+            <Text style={styles.brand}>InnFeel</Text>
             <Text style={styles.title}>{t("auth.createAccount")}</Text>
 
             <View style={styles.field}>
@@ -49,7 +49,7 @@ export default function Register() {
             <View style={styles.field}>
               <Text style={styles.label}>{t("auth.email")}</Text>
               <TextInput testID="reg-email" value={email} onChangeText={setEmail} style={styles.input}
-                autoCapitalize="none" keyboardType="email-address" placeholderTextColor="#555" placeholder="you@mooddrop.app" />
+                autoCapitalize="none" keyboardType="email-address" placeholderTextColor="#555" placeholder="you@innfeel.app" />
             </View>
             <View style={styles.field}>
               <Text style={styles.label}>{t("auth.password")}</Text>

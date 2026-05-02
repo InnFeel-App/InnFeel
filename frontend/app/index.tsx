@@ -18,7 +18,7 @@ export default function Index() {
     <View style={styles.container} testID="splash-screen">
       <RadialAura color="#F472B6" />
       <View style={styles.center}>
-        <Text style={styles.logo}>MoodDrop</Text>
+        <Text style={styles.logo}>InnFeel</Text>
         <Text style={styles.tag}>your emotional world, in color</Text>
         <ActivityIndicator color="#fff" style={{ marginTop: 24 }} />
       </View>

@@ -79,11 +79,11 @@ EMOTIONS = {
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
 
-app = FastAPI(title="MoodDrop API")
+app = FastAPI(title="InnFeel API")
 api = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("mooddrop")
+logger = logging.getLogger("innfeel")
 
 
 # =========================================================================
@@ -235,7 +235,7 @@ class MusicTrackIn(BaseModel):
     source: Literal["apple", "spotify"] = "apple"
 
 
-class MoodDropIn(BaseModel):
+class InnFeelIn(BaseModel):
     word: str = Field(min_length=1, max_length=30)
     emotion: EMOTION_LITERAL
     intensity: int = Field(ge=1, le=10)
@@ -295,13 +295,28 @@ async def startup():
     await db.messages.create_index([("conversation_id", 1), ("at", 1)])
     await db.conversations.create_index("participants")
     await db.wellness_cache.create_index([("user_id", 1), ("emotion", 1), ("day_key", 1)], unique=True)
+    # one-time migration: rename legacy admin@mooddrop.app → admin@innfeel.app
+    legacy_admin = await db.users.find_one({"email": "admin@mooddrop.app"})
+    if legacy_admin:
+        new_admin_exists = await db.users.find_one({"email": "admin@innfeel.app"})
+        if new_admin_exists:
+            # An InnFeel admin was already seeded — just remove the legacy record
+            await db.users.delete_one({"user_id": legacy_admin["user_id"]})
+            logger.info("Removed legacy admin@mooddrop.app (already migrated)")
+        else:
+            await db.users.update_one(
+                {"user_id": legacy_admin["user_id"]},
+                {"$set": {"email": "admin@innfeel.app"}},
+            )
+            logger.info("Migrated admin@mooddrop.app → admin@innfeel.app")
+
     # seed demo admin
-    existing = await db.users.find_one({"email": "admin@mooddrop.app"})
+    existing = await db.users.find_one({"email": "admin@innfeel.app"})
     if not existing:
         uid = f"user_{uuid.uuid4().hex[:12]}"
         await db.users.insert_one({
             "user_id": uid,
-            "email": "admin@mooddrop.app",
+            "email": "admin@innfeel.app",
             "password_hash": hash_password("admin123"),
             "name": "Admin",
             "avatar_color": "#F472B6",
@@ -316,14 +331,14 @@ async def startup():
     else:
         # Ensure admin flag is set on the seeded admin (idempotent)
         await db.users.update_one(
-            {"email": "admin@mooddrop.app"},
+            {"email": "admin@innfeel.app"},
             {"$set": {"is_admin": True, "pro": True}},
         )
     # seed a couple of demo friends so feed is not empty
     for (email, name, color, emotion) in [
-        ("luna@mooddrop.app", "Luna", "#A78BFA", "nostalgia"),
-        ("rio@mooddrop.app", "Rio", "#2DD4BF", "focus"),
-        ("sage@mooddrop.app", "Sage", "#34D399", "peace"),
+        ("luna@innfeel.app", "Luna", "#A78BFA", "nostalgia"),
+        ("rio@innfeel.app", "Rio", "#2DD4BF", "focus"),
+        ("sage@innfeel.app", "Sage", "#34D399", "peace"),
     ]:
         ex = await db.users.find_one({"email": email})
         if not ex:
@@ -452,7 +467,7 @@ async def delete_mood(mood_id: str, user: dict = Depends(get_current_user)):
 
 
 @api.post("/moods")
-async def create_mood(data: MoodDropIn, user: dict = Depends(get_current_user)):
+async def create_mood(data: InnFeelIn, user: dict = Depends(get_current_user)):
     key = today_key()
     existing = await db.moods.find_one({"user_id": user["user_id"], "day_key": key})
     if existing:
@@ -723,7 +738,7 @@ async def music_search(q: str, user: dict = Depends(get_current_user)):
             r = await client_http.get(
                 "https://itunes.apple.com/search",
                 params={"term": q, "media": "music", "entity": "song", "limit": 20},
-                headers={"User-Agent": "MoodDrop/1.0"},
+                headers={"User-Agent": "InnFeel/1.0"},
             )
         data = r.json() if r.status_code == 200 else {"results": []}
     except Exception as e:
@@ -859,7 +874,7 @@ async def create_checkout(data: CheckoutIn, request: Request, user: dict = Depen
         currency="usd",
         success_url=success_url,
         cancel_url=cancel_url,
-        metadata={"user_id": user["user_id"], "product": "mooddrop_pro_monthly"},
+        metadata={"user_id": user["user_id"], "product": "innfeel_pro_monthly"},
     )
     try:
         session = await stripe.create_checkout_session(req)
@@ -871,7 +886,7 @@ async def create_checkout(data: CheckoutIn, request: Request, user: dict = Depen
         "user_id": user["user_id"],
         "amount": PRO_PRICE_USD,
         "currency": "usd",
-        "metadata": {"product": "mooddrop_pro_monthly"},
+        "metadata": {"product": "innfeel_pro_monthly"},
         "payment_status": "initiated",
         "status": "pending",
         "created_at": now_utc(),
@@ -1088,7 +1103,7 @@ async def unread_count(user: dict = Depends(get_current_user)):
 
 @api.get("/")
 async def root():
-    return {"app": "MoodDrop", "version": "1.0"}
+    return {"app": "InnFeel", "version": "1.0"}
 
 
 # =========================================================================
@@ -1504,7 +1519,7 @@ async def _generate_wellness_llm(user_name: str, emotion: str, tone: str, word: 
         return None
     session_id = f"wellness_{hashlib.sha1(f'{user_name}_{emotion}_{today_key()}'.encode()).hexdigest()[:16]}"
     system = (
-        "You are MoodDrop's gentle wellness coach. "
+        "You are InnFeel's gentle wellness coach. "
         "Given a user's emotion and optional mood word, craft a short uplifting message. "
         "Rules: Return STRICT JSON with keys 'quote' and 'advice'. "
         "- 'quote': one-sentence poetic reflection (max 120 chars), no author attribution. "

@@ -1,7 +1,7 @@
 import { setItem, getItem, removeItem } from "./storage";
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || "";
-const TOKEN_KEY = "mooddrop_access_token";
+const TOKEN_KEY = "innfeel_access_token";
 
 export async function saveToken(token: string) {
   await setItem(TOKEN_KEY, token);

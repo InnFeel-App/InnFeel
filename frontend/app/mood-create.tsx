@@ -238,7 +238,7 @@ export default function MoodCreate() {
         router.replace("/(tabs)/home");
       }
     } catch (e: any) {
-      Alert.alert("Oops", e.message || "Could not post your mood");
+      Alert.alert("Oops", e.message || "Could not share your aura");
     } finally { setLoading(false); }
   };
 
@@ -251,7 +251,7 @@ export default function MoodCreate() {
             <TouchableOpacity testID="close-create" onPress={() => { if (router.canGoBack()) router.back(); else router.replace("/(tabs)/home"); }} style={styles.closeBtn}>
               <Ionicons name="close" size={22} color="#fff" />
             </TouchableOpacity>
-            <Text style={styles.hdr}>Drop your mood</Text>
+            <Text style={styles.hdr}>Share your aura</Text>
             <View style={{ width: 40 }} />
           </View>
 

@@ -1,9 +1,9 @@
 import * as Notifications from "expo-notifications";
 import { getItem, setItem } from "./storage";
 
-const KEY_LAST_SCHEDULED = "mooddrop_last_notif_scheduled_day";
-const KEY_NOTIF_HOUR = "mooddrop_notif_hour";
-const KEY_NOTIF_MINUTE = "mooddrop_notif_minute";
+const KEY_LAST_SCHEDULED = "innfeel_last_notif_scheduled_day";
+const KEY_NOTIF_HOUR = "innfeel_notif_hour";
+const KEY_NOTIF_MINUTE = "innfeel_notif_minute";
 
 // Defaults: 19:30 — create an evening ritual (BeReal-style habit time).
 export const DEFAULT_HOUR = 19;
@@ -59,7 +59,7 @@ export async function scheduleDailyReminder(): Promise<{ scheduled: boolean; whe
     await Notifications.scheduleNotificationAsync({
       content: {
         title: "It's time. ✦",
-        body: "Drop your mood in 20 seconds.",
+        body: "Share your aura in 20 seconds.",
         data: { kind: "daily_drop" },
       },
       trigger: {

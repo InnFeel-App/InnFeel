@@ -80,7 +80,7 @@ export default function MessagesInbox() {
               <Ionicons name="chatbubble-ellipses-outline" size={40} color={COLORS.textTertiary} />
               <Text style={styles.emptyTitle}>No messages yet</Text>
               <Text style={styles.empty}>
-                When a friend sends you a message from your drop, it will land here.
+                When a friend sends you a message from your aura, it will land here.
               </Text>
               <TouchableOpacity
                 style={styles.friendsBtn}

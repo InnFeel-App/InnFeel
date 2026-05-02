@@ -200,7 +200,26 @@ frontend:
   - task: "Close Friends toggle UI on /friends"
     - agent: "main"
       message: |
-        Session 4: Addressed four user requests:
+        Session 7: COMPLETE REBRAND from MoodDrop to InnFeel.
+        Changes:
+          - app.json: name "InnFeel", slug "innfeel", scheme "innfeel", bundleId com.innfeel.app, splash dark.
+          - New petal-bloom logo (8 colored petals + cursive "Inn / Feel" Dancing Script in white core) rendered at 1024/512/192/64px and replaces icon.png, adaptive-icon, splash, favicon.
+          - Vocabulary: "drop"→"aura" everywhere user-facing (UI strings, i18n.ts, paywall, onboarding, history, friends, stats, share cards, comments). Brand string "MoodDrop"→"InnFeel" in all source.
+          - Backend: FastAPI title, logger name (now "innfeel"), Stripe metadata "innfeel_pro_monthly", LLM system prompt, error messages.
+          - Migration: legacy admin@mooddrop.app auto-renamed → admin@innfeel.app on first startup (idempotent: deletes the legacy row if a fresh one was already seeded).
+          - Token storage key: mooddrop_access_token → innfeel_access_token (existing logged-in users will need to log back in once).
+        
+        Backend tests to run:
+          1) POST /api/auth/login admin@innfeel.app/admin123 → 200 with is_admin:true.
+          2) POST /api/auth/login admin@mooddrop.app/admin123 → 401 (legacy email no longer works).
+          3) /api/wellness/joy → still works, source field still present.
+          4) /api/payments/checkout → still works (origin_url fallback ok).
+          5) /api/admin/me, /api/admin/grant-pro, /api/admin/pro-grants → still work.
+          6) /api/moods/feed → still returns avatar_b64 and music object.
+          7) /api/music/search?q=ocean → still 200 for Pro admin.
+          8) Regression: /api/friends, /api/messages/conversations, /api/moods/today, DELETE /api/moods/today.
+        
+        Test credentials: admin@innfeel.app / admin123 (Pro+Admin), luna@innfeel.app / demo1234 (Free, demo).
           1) Delete/redo mood: DELETE /api/moods/today + DELETE /api/moods/{mood_id} (owner only). Also clears today's wellness cache.
           2) Admin grant/revoke Pro: POST /api/admin/grant-pro (email, days, note), POST /api/admin/revoke-pro, GET /api/admin/pro-grants, GET /api/admin/users/search, GET /api/admin/me. Requires user.is_admin (seeded on admin@mooddrop.app via startup hook).
           3) Unread inbox endpoint: GET /api/messages/unread-count ({total, conversations}) - powers the new Messages tab badge.

@@ -22,7 +22,7 @@ export default function Friends() {
 
   const closeCount = friends.filter((f) => f.is_close).length;
 
-  const inviteText = `Hey! I'm on MoodDrop — we share our mood once a day in color. Join me: https://mooddrop.app ✦${user?.email ? ` (add me: ${user.email})` : ""}`;
+  const inviteText = `Hey! I'm on InnFeel — we share our mood once a day in color. Join me: https://innfeel.app ✦${user?.email ? ` (add me: ${user.email})` : ""}`;
 
   const inviteWhatsApp = async () => {
     const url = `whatsapp://send?text=${encodeURIComponent(inviteText)}`;
@@ -51,7 +51,7 @@ export default function Friends() {
   };
 
   const remove = (friend_id: string) => {
-    Alert.alert("Remove friend?", "They will no longer see your drops.", [
+    Alert.alert("Remove friend?", "They will no longer see your auras.", [
       { text: "Cancel", style: "cancel" },
       { text: "Remove", style: "destructive", onPress: async () => { try { await api(`/friends/${friend_id}`, { method: "DELETE" }); await load(); } catch {} } },
     ]);
@@ -107,7 +107,7 @@ export default function Friends() {
             </TouchableOpacity>
           </View>
           {err ? <Text style={styles.err}>{err}</Text> : null}
-          <Text style={styles.hint}>Try: luna@mooddrop.app · rio@mooddrop.app · sage@mooddrop.app</Text>
+          <Text style={styles.hint}>Try: luna@innfeel.app · rio@innfeel.app · sage@innfeel.app</Text>
 
           <View style={styles.inviteRow}>
             <TouchableOpacity testID="invite-whatsapp" onPress={inviteWhatsApp} style={[styles.inviteBtn, { backgroundColor: "#25D366" }]}>

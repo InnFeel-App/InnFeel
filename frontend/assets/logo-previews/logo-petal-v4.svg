@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Petal Bloom V4: Cursive "Inn / Feel" handwritten in elegant script — stacked monogram -->
+  <defs>
+    <radialGradient id="rA" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#FACC15"/><stop offset="100%" stop-color="#FACC15" stop-opacity="0"/></radialGradient>
+    <radialGradient id="rB" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#EC4899"/><stop offset="100%" stop-color="#EC4899" stop-opacity="0"/></radialGradient>
+    <radialGradient id="rC" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#FF7A00"/><stop offset="100%" stop-color="#FF7A00" stop-opacity="0"/></radialGradient>
+    <radialGradient id="rD" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#22D3EE"/><stop offset="100%" stop-color="#22D3EE" stop-opacity="0"/></radialGradient>
+    <radialGradient id="rE" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#A855F7"/><stop offset="100%" stop-color="#A855F7" stop-opacity="0"/></radialGradient>
+    <radialGradient id="rF" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#10B981"/><stop offset="100%" stop-color="#10B981" stop-opacity="0"/></radialGradient>
+    <radialGradient id="rG" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#3B82F6"/><stop offset="100%" stop-color="#3B82F6" stop-opacity="0"/></radialGradient>
+    <radialGradient id="rH" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#FB923C"/><stop offset="100%" stop-color="#FB923C" stop-opacity="0"/></radialGradient>
+
+    <linearGradient id="textInk" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0a0a0c"/>
+      <stop offset="100%" stop-color="#1a1a1f"/>
+    </linearGradient>
+
+    <filter id="petBlurC"><feGaussianBlur stdDeviation="2"/></filter>
+
+    <style type="text/css"><![CDATA[
+      .scriptText {
+        font-family: 'Dancing Script', 'Snell Roundhand', 'Apple Chancery', 'Brush Script MT', cursive;
+        font-weight: 700;
+      }
+    ]]></style>
+  </defs>
+
+  <rect width="512" height="512" fill="#050505" rx="96" ry="96"/>
+
+  <!-- 8 petals (background bloom) -->
+  <g transform="translate(256 256)" filter="url(#petBlurC)" style="mix-blend-mode: screen">
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#rA)" transform="rotate(0)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#rB)" transform="rotate(45)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#rC)" transform="rotate(90)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#rD)" transform="rotate(135)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#rE)" transform="rotate(180)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#rF)" transform="rotate(225)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#rG)" transform="rotate(270)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#rH)" transform="rotate(315)"/>
+  </g>
+
+  <!-- White soft core -->
+  <circle cx="256" cy="256" r="105" fill="#ffffff" opacity="0.97"/>
+  <circle cx="256" cy="256" r="105" fill="none" stroke="rgba(0,0,0,0.04)" stroke-width="1"/>
+
+  <!-- Cursive stacked monogram "Inn / Feel" -->
+  <g transform="translate(256 256)">
+    <text x="0" y="-15" text-anchor="middle" class="scriptText" font-size="56" fill="url(#textInk)" letter-spacing="-0.5">Inn</text>
+    <!-- ornamental flourish divider -->
+    <path d="M -38 0 Q -20 -4, 0 0 Q 20 4, 38 0" stroke="#0a0a0c" stroke-width="1.4" fill="none" stroke-linecap="round" opacity="0.55"/>
+    <circle cx="0" cy="0" r="2" fill="#0a0a0c" opacity="0.55"/>
+    <text x="0" y="42" text-anchor="middle" class="scriptText" font-size="56" fill="url(#textInk)" letter-spacing="-0.5">Feel</text>
+  </g>
+</svg>

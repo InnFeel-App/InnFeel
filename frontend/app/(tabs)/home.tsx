@@ -70,7 +70,7 @@ export default function Home() {
           {!todayMood ? (
             <View style={styles.cta}>
               <Text style={styles.ctaTitle}>{t("home.dropToday")}</Text>
-              <Text style={styles.ctaSub}>One drop. Twenty seconds. Unlock your friends' feelings.</Text>
+              <Text style={styles.ctaSub}>One aura. Twenty seconds. Unlock your friends' feelings.</Text>
               <View style={{ marginTop: 16 }}>
                 <Button testID="cta-drop-mood" label={t("home.dropCTA")} onPress={() => router.push("/mood-create")} />
               </View>
@@ -100,7 +100,7 @@ export default function Home() {
                     testID="redo-my-mood"
                     onPress={() =>
                       Alert.alert(
-                        "Redo today's drop?",
+                        "Redo today's aura?",
                         "Your current mood will be deleted and you'll be taken to the drop screen.",
                         [
                           { text: "Cancel", style: "cancel" },

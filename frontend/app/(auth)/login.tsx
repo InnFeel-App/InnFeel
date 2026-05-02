@@ -38,7 +38,7 @@ export default function Login() {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         <SafeAreaView style={{ flex: 1 }}>
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-            <Text style={styles.brand}>MoodDrop</Text>
+            <Text style={styles.brand}>InnFeel</Text>
             <Text style={styles.title}>{t("auth.welcomeBack")}</Text>
             <Text style={styles.sub}>{t("app.tagline")}</Text>
 
@@ -53,7 +53,7 @@ export default function Login() {
                 autoCorrect={false}
                 keyboardType="email-address"
                 placeholderTextColor="#555"
-                placeholder="you@mooddrop.app"
+                placeholder="you@innfeel.app"
               />
             </View>
             <View style={styles.field}>
@@ -81,7 +81,7 @@ export default function Login() {
 
             <View style={styles.hintBox}>
               <Text style={styles.hintTitle}>Demo account</Text>
-              <Text style={styles.hint}>admin@mooddrop.app / admin123</Text>
+              <Text style={styles.hint}>admin@innfeel.app / admin123</Text>
             </View>
           </ScrollView>
         </SafeAreaView>

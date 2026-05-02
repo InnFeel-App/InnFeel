@@ -74,7 +74,7 @@ export default function Settings() {
             <Ionicons name="notifications-outline" size={20} color="#fff" />
             <View style={{ flex: 1 }}>
               <Text style={styles.rowTitle}>Daily reminder</Text>
-              <Text style={styles.rowSub}>Build an evening ritual — one drop a day.</Text>
+              <Text style={styles.rowSub}>Build an evening ritual — one aura a day.</Text>
             </View>
             <Switch testID="notif-toggle" value={notif} onValueChange={setNotif} />
           </View>
@@ -108,11 +108,11 @@ export default function Settings() {
             <Ionicons name="eye-outline" size={20} color="#fff" />
             <View style={{ flex: 1 }}>
               <Text style={styles.rowTitle}>{t("settings.privacy")}</Text>
-              <Text style={styles.rowSub}>Set per-drop when you post.</Text>
+              <Text style={styles.rowSub}>Set per-aura when you post.</Text>
             </View>
           </View>
 
-          <Text style={styles.footer}>MoodDrop 1.0 · made with color</Text>
+          <Text style={styles.footer}>InnFeel 1.0 · made with color</Text>
         </ScrollView>
       </SafeAreaView>
 

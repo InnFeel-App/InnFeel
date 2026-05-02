@@ -107,8 +107,8 @@ const ShareCard = forwardRef<View, Props>(function ShareCard(props, ref) {
         )}
 
         <View style={{ flex: 1 }} />
-        <Text style={styles.footer}>Drop your mood. Unlock the others.</Text>
-        <Text style={styles.footerHandle}>mooddrop.app</Text>
+        <Text style={styles.footer}>Share your aura. Unlock the others.</Text>
+        <Text style={styles.footerHandle}>innfeel.app</Text>
       </View>
     </View>
   );
