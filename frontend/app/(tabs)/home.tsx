@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
 import RadialAura from "../../src/components/RadialAura";
@@ -79,22 +79,53 @@ export default function Home() {
             <View>
               <View style={styles.myMoodHeader}>
                 <Text style={styles.sectionTitle}>Your mood today</Text>
-                <TouchableOpacity
-                  testID="share-my-mood"
-                  onPress={() =>
-                    share({
-                      kind: "mood",
-                      word: todayMood.word,
-                      emotion: todayMood.emotion,
-                      intensity: todayMood.intensity,
-                      userName: user?.name,
-                    })
-                  }
-                  style={styles.shareBtn}
-                >
-                  <Ionicons name="share-outline" size={14} color="#fff" />
-                  <Text style={styles.shareBtnTxt}>Share</Text>
-                </TouchableOpacity>
+                <View style={styles.myMoodActions}>
+                  <TouchableOpacity
+                    testID="share-my-mood"
+                    onPress={() =>
+                      share({
+                        kind: "mood",
+                        word: todayMood.word,
+                        emotion: todayMood.emotion,
+                        intensity: todayMood.intensity,
+                        userName: user?.name,
+                      })
+                    }
+                    style={styles.shareBtn}
+                  >
+                    <Ionicons name="share-outline" size={14} color="#fff" />
+                    <Text style={styles.shareBtnTxt}>Share</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    testID="redo-my-mood"
+                    onPress={() =>
+                      Alert.alert(
+                        "Redo today's drop?",
+                        "Your current mood will be deleted and you'll be taken to the drop screen.",
+                        [
+                          { text: "Cancel", style: "cancel" },
+                          {
+                            text: "Delete & redo",
+                            style: "destructive",
+                            onPress: async () => {
+                              try {
+                                await api("/moods/today", { method: "DELETE" });
+                                setTodayMood(null);
+                                router.push("/mood-create");
+                              } catch (e: any) {
+                                Alert.alert("Failed", e.message || "Could not delete drop");
+                              }
+                            },
+                          },
+                        ],
+                      )
+                    }
+                    style={styles.redoBtn}
+                  >
+                    <Ionicons name="refresh" size={14} color="#fff" />
+                    <Text style={styles.shareBtnTxt}>Redo</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
               <MoodCard mood={{ ...todayMood, author_name: user?.name, author_color: user?.avatar_color }} testIDPrefix="my-mood" />
             </View>
@@ -156,7 +187,9 @@ const styles = StyleSheet.create({
   sectionTitle: { color: COLORS.textSecondary, fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12 },
   feedHead: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
   myMoodHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  shareBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: COLORS.border, marginBottom: 10 },
+  myMoodActions: { flexDirection: "row", gap: 8, marginBottom: 10 },
+  shareBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: COLORS.border },
+  redoBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, backgroundColor: "rgba(239,68,68,0.12)", borderWidth: 1, borderColor: "rgba(239,68,68,0.35)" },
   shareBtnTxt: { color: "#fff", fontSize: 12, fontWeight: "600" },
   locked: { padding: 24, borderRadius: 24, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)", alignItems: "center" },
   lockedTxt: { color: COLORS.textSecondary, fontSize: 14, textAlign: "center", marginTop: 8 },

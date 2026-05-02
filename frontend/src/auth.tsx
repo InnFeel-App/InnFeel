@@ -8,6 +8,8 @@ export type User = {
   avatar_color: string;
   pro: boolean;
   pro_expires_at?: string | null;
+  pro_source?: string | null;
+  is_admin?: boolean;
   friend_count: number;
   streak: number;
   created_at: string;

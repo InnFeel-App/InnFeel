@@ -175,10 +175,19 @@ def sanitize_user(u: dict) -> dict:
         "avatar_b64": u.get("avatar_b64"),
         "pro": is_pro(u),
         "pro_expires_at": u.get("pro_expires_at").isoformat() if isinstance(u.get("pro_expires_at"), datetime) else u.get("pro_expires_at"),
+        "pro_source": u.get("pro_source"),  # e.g. "admin_grant" / "stripe" / "dev"
+        "is_admin": bool(u.get("is_admin", False)),
         "friend_count": u.get("friend_count", 0),
         "streak": u.get("streak", 0),
         "created_at": u.get("created_at").isoformat() if isinstance(u.get("created_at"), datetime) else u.get("created_at"),
     }
+
+
+def require_admin(user: dict = Depends(lambda: None)):
+    # Placeholder to make signature clear; the actual check is inside each admin endpoint
+    # via `user.get("is_admin")` because FastAPI Depends chaining with get_current_user
+    # would otherwise be nested.
+    pass
 
 
 # =========================================================================
@@ -244,7 +253,17 @@ class AddFriendIn(BaseModel):
 
 
 class CheckoutIn(BaseModel):
-    origin_url: str
+    origin_url: Optional[str] = None
+
+
+class AdminGrantProIn(BaseModel):
+    email: EmailStr
+    days: int = Field(ge=1, le=3650, default=30)
+    note: Optional[str] = Field(default=None, max_length=200)
+
+
+class AdminRevokeProIn(BaseModel):
+    email: EmailStr
 
 
 # =========================================================================
@@ -273,11 +292,18 @@ async def startup():
             "avatar_color": "#F472B6",
             "pro": True,
             "pro_expires_at": now_utc() + timedelta(days=365),
+            "is_admin": True,
             "friend_count": 0,
             "streak": 0,
             "created_at": now_utc(),
         })
         logger.info("Seeded admin user")
+    else:
+        # Ensure admin flag is set on the seeded admin (idempotent)
+        await db.users.update_one(
+            {"email": "admin@mooddrop.app"},
+            {"$set": {"is_admin": True, "pro": True}},
+        )
     # seed a couple of demo friends so feed is not empty
     for (email, name, color, emotion) in [
         ("luna@mooddrop.app", "Luna", "#A78BFA", "nostalgia"),
@@ -381,6 +407,33 @@ async def get_today(user: dict = Depends(get_current_user)):
     if mood and isinstance(mood.get("created_at"), datetime):
         mood["created_at"] = mood["created_at"].isoformat()
     return {"mood": mood}
+
+
+@api.delete("/moods/today")
+async def delete_today(user: dict = Depends(get_current_user)):
+    """Delete the user's own mood of today (if any). Lets them retry their drop.
+
+    Also wipes derived daily data: today's wellness cache and today's LLM badge,
+    so the next drop re-triggers a fresh wellness prompt.
+    """
+    key = today_key()
+    result = await db.moods.delete_one({"user_id": user["user_id"], "day_key": key})
+    # Clear today's wellness cache for this user so the next drop triggers a fresh LLM call
+    await db.wellness_cache.delete_many({"user_id": user["user_id"], "day_key": key})
+    return {"ok": True, "deleted": result.deleted_count}
+
+
+@api.delete("/moods/{mood_id}")
+async def delete_mood(mood_id: str, user: dict = Depends(get_current_user)):
+    """Delete a specific mood of the current user (own moods only)."""
+    mood = await db.moods.find_one({"mood_id": mood_id})
+    if not mood:
+        raise HTTPException(status_code=404, detail="Mood not found")
+    if mood["user_id"] != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Not your mood")
+    await db.moods.delete_one({"mood_id": mood_id})
+    await db.wellness_cache.delete_many({"user_id": user["user_id"], "day_key": mood.get("day_key")})
+    return {"ok": True}
 
 
 @api.post("/moods")
@@ -779,7 +832,10 @@ async def create_checkout(data: CheckoutIn, request: Request, user: dict = Depen
     host_url = str(request.base_url)
     webhook_url = f"{host_url.rstrip('/')}/api/webhook/stripe"
     stripe = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
-    origin = data.origin_url.rstrip("/")
+    # Robust origin resolution: use client-provided URL if valid (http/https),
+    # otherwise fall back to the request's own host (ingress preview URL).
+    raw_origin = (data.origin_url or "").strip()
+    origin = raw_origin.rstrip("/") if raw_origin.startswith(("http://", "https://")) else host_url.rstrip("/")
     success_url = f"{origin}/payment-success?session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{origin}/paywall"
     req = CheckoutSessionRequest(
@@ -789,7 +845,11 @@ async def create_checkout(data: CheckoutIn, request: Request, user: dict = Depen
         cancel_url=cancel_url,
         metadata={"user_id": user["user_id"], "product": "mooddrop_pro_monthly"},
     )
-    session = await stripe.create_checkout_session(req)
+    try:
+        session = await stripe.create_checkout_session(req)
+    except Exception as e:
+        logger.exception("Stripe create_checkout failed")
+        raise HTTPException(status_code=502, detail=f"Stripe error: {str(e)[:180]}")
     await db.payment_transactions.insert_one({
         "session_id": session.session_id,
         "user_id": user["user_id"],
@@ -861,13 +921,153 @@ async def stripe_webhook(request: Request):
 async def toggle_pro(user: dict = Depends(get_current_user)):
     currently_pro = is_pro(user)
     if currently_pro:
-        await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"pro": False, "pro_expires_at": None}})
+        await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"pro": False, "pro_expires_at": None, "pro_source": None}})
         return {"pro": False}
     await db.users.update_one(
         {"user_id": user["user_id"]},
-        {"$set": {"pro": True, "pro_expires_at": now_utc() + timedelta(days=30)}},
+        {"$set": {"pro": True, "pro_expires_at": now_utc() + timedelta(days=30), "pro_source": "dev"}},
     )
     return {"pro": True}
+
+
+# =========================================================================
+# Admin — grant/revoke Pro for promo or friends, with expiration
+# =========================================================================
+def _require_admin(user: dict):
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+
+@api.get("/admin/me")
+async def admin_me(user: dict = Depends(get_current_user)):
+    """Returns {is_admin: bool} quickly, no 403 if not admin."""
+    return {"is_admin": bool(user.get("is_admin", False))}
+
+
+@api.post("/admin/grant-pro")
+async def admin_grant_pro(data: AdminGrantProIn, user: dict = Depends(get_current_user)):
+    _require_admin(user)
+    target = await db.users.find_one({"email": data.email.lower()})
+    if not target:
+        raise HTTPException(status_code=404, detail=f"No user with email {data.email}")
+    expires_at = now_utc() + timedelta(days=data.days)
+    await db.users.update_one(
+        {"user_id": target["user_id"]},
+        {"$set": {
+            "pro": True,
+            "pro_expires_at": expires_at,
+            "pro_source": "admin_grant",
+            "pro_granted_by": user["user_id"],
+            "pro_grant_note": data.note,
+        }},
+    )
+    await db.pro_grants.insert_one({
+        "grant_id": f"grant_{uuid.uuid4().hex[:12]}",
+        "granted_to_user_id": target["user_id"],
+        "granted_to_email": target["email"],
+        "granted_to_name": target.get("name", ""),
+        "granted_by_user_id": user["user_id"],
+        "granted_by_email": user["email"],
+        "days": data.days,
+        "expires_at": expires_at,
+        "note": data.note,
+        "created_at": now_utc(),
+        "revoked": False,
+    })
+    return {
+        "ok": True,
+        "user": {
+            "user_id": target["user_id"],
+            "email": target["email"],
+            "name": target.get("name", ""),
+        },
+        "pro_expires_at": expires_at.isoformat(),
+    }
+
+
+@api.post("/admin/revoke-pro")
+async def admin_revoke_pro(data: AdminRevokeProIn, user: dict = Depends(get_current_user)):
+    _require_admin(user)
+    target = await db.users.find_one({"email": data.email.lower()})
+    if not target:
+        raise HTTPException(status_code=404, detail=f"No user with email {data.email}")
+    if target.get("is_admin"):
+        raise HTTPException(status_code=400, detail="Cannot revoke Pro from an admin")
+    await db.users.update_one(
+        {"user_id": target["user_id"]},
+        {"$set": {"pro": False, "pro_expires_at": None, "pro_source": None, "pro_granted_by": None, "pro_grant_note": None}},
+    )
+    await db.pro_grants.update_many(
+        {"granted_to_user_id": target["user_id"], "revoked": False},
+        {"$set": {"revoked": True, "revoked_at": now_utc(), "revoked_by": user["user_id"]}},
+    )
+    return {"ok": True}
+
+
+@api.get("/admin/pro-grants")
+async def admin_list_grants(user: dict = Depends(get_current_user)):
+    """Lists all Pro grants (past + active) the admin has issued. Active ones bubble up first."""
+    _require_admin(user)
+    grants = await db.pro_grants.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    now = now_utc()
+    for g in grants:
+        exp = g.get("expires_at")
+        if isinstance(exp, datetime):
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            g["expires_at"] = exp.isoformat()
+            g["is_active"] = (not g.get("revoked", False)) and exp > now
+            g["days_remaining"] = max(0, (exp - now).days)
+        else:
+            g["is_active"] = False
+            g["days_remaining"] = 0
+        if isinstance(g.get("created_at"), datetime):
+            g["created_at"] = g["created_at"].isoformat()
+        if isinstance(g.get("revoked_at"), datetime):
+            g["revoked_at"] = g["revoked_at"].isoformat()
+    return {"grants": grants}
+
+
+@api.get("/admin/users/search")
+async def admin_search_users(q: str = "", user: dict = Depends(get_current_user)):
+    """Search users by email or name to help admin find a target account."""
+    _require_admin(user)
+    q = (q or "").strip()
+    if len(q) < 2:
+        return {"users": []}
+    import re
+    safe = re.escape(q)
+    cursor = db.users.find(
+        {"$or": [
+            {"email": {"$regex": safe, "$options": "i"}},
+            {"name": {"$regex": safe, "$options": "i"}},
+        ]},
+        {"_id": 0, "user_id": 1, "email": 1, "name": 1, "pro": 1, "pro_expires_at": 1, "pro_source": 1, "is_admin": 1},
+    ).limit(15)
+    users = await cursor.to_list(15)
+    for u in users:
+        if isinstance(u.get("pro_expires_at"), datetime):
+            u["pro_expires_at"] = u["pro_expires_at"].isoformat()
+    return {"users": users}
+
+
+# =========================================================================
+# Unread message count — tiny endpoint for tab bar badge
+# =========================================================================
+@api.get("/messages/unread-count")
+async def unread_count(user: dict = Depends(get_current_user)):
+    convs = await db.conversations.find(
+        {"participants": user["user_id"]},
+        {"_id": 0, "unread": 1}
+    ).to_list(500)
+    total = 0
+    convos_with_unread = 0
+    for c in convs:
+        n = (c.get("unread") or {}).get(user["user_id"], 0) or 0
+        if n > 0:
+            total += n
+            convos_with_unread += 1
+    return {"total": total, "conversations": convos_with_unread}
 
 
 @api.get("/")

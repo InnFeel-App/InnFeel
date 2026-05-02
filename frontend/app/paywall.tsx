@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking, Platform } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
@@ -30,19 +30,34 @@ export default function Paywall() {
     try {
       const origin = process.env.EXPO_PUBLIC_BACKEND_URL || "";
       const res = await api<{ url: string; session_id: string }>("/payments/checkout", { method: "POST", body: { origin_url: origin } });
+      // Fire-and-forget: open the Stripe checkout in a browser session
       await WebBrowser.openBrowserAsync(res.url);
-      // Poll for 10s after returning
-      const poll = async (n: number) => {
-        if (n <= 0) return;
+      // After user returns, poll for up to 20s to detect paid state
+      let paid = false;
+      for (let i = 0; i < 10; i++) {
         try {
           const s = await api<{ payment_status: string }>(`/payments/status/${res.session_id}`);
-          if (s.payment_status === "paid") { await refresh(); Alert.alert("✦ You're Pro!", "All features unlocked."); router.replace("/(tabs)/profile"); return; }
+          if (s.payment_status === "paid") { paid = true; break; }
         } catch {}
-        setTimeout(() => poll(n - 1), 2000);
-      };
-      poll(8);
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      if (paid) {
+        await refresh();
+        Alert.alert("✦ You're Pro!", "All features unlocked.");
+        router.replace("/(tabs)/profile");
+      } else {
+        Alert.alert(
+          "Payment not confirmed",
+          "If you completed payment, pull to refresh your profile in a moment. Otherwise try again.",
+        );
+      }
     } catch (e: any) {
-      Alert.alert("Checkout failed", e.message || "Please try again.");
+      const msg = e?.message || "Please try again.";
+      // Friendlier hint if the common Stripe test-mode error is hit
+      const nice = msg.includes("Not Found") || msg.includes("details not found")
+        ? "Payment provider returned an error. Please try again in a few seconds."
+        : msg;
+      Alert.alert("Checkout failed", nice);
     } finally { setLoading(false); }
   };
 

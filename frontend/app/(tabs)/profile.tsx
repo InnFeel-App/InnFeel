@@ -93,6 +93,20 @@ export default function Profile() {
             <Ionicons name="chevron-forward" size={18} color={COLORS.textTertiary} />
           </TouchableOpacity>
 
+          <TouchableOpacity testID="go-stats" style={styles.link} onPress={() => router.push("/(tabs)/stats")}>
+            <Ionicons name="stats-chart-outline" size={20} color="#fff" />
+            <Text style={styles.linkTxt}>Stats</Text>
+            <Ionicons name="chevron-forward" size={18} color={COLORS.textTertiary} />
+          </TouchableOpacity>
+
+          {user?.is_admin ? (
+            <TouchableOpacity testID="go-admin" style={[styles.link, styles.adminLink]} onPress={() => router.push("/admin" as any)}>
+              <Ionicons name="sparkles" size={20} color="#FDE047" />
+              <Text style={[styles.linkTxt, { color: "#FDE047", fontWeight: "700" }]}>Admin · Grant Pro</Text>
+              <Ionicons name="chevron-forward" size={18} color="#FDE047" />
+            </TouchableOpacity>
+          ) : null}
+
           <View style={{ marginTop: 10, gap: 10 }}>
             {user?.pro ? (
               <View style={styles.proCard}>
@@ -133,6 +147,7 @@ const styles = StyleSheet.create({
   statV: { color: "#fff", fontSize: 28, fontWeight: "700" },
   statK: { color: COLORS.textSecondary, fontSize: 11, marginTop: 2, textTransform: "uppercase", letterSpacing: 1 },
   link: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 16, paddingHorizontal: 16, borderRadius: 18, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)", marginBottom: 10 },
+  adminLink: { borderColor: "rgba(253,224,71,0.35)", backgroundColor: "rgba(253,224,71,0.06)" },
   linkTxt: { color: "#fff", fontSize: 15, flex: 1 },
   proCard: { padding: 16, borderRadius: 20, borderWidth: 1, borderColor: "rgba(253,224,71,0.35)", backgroundColor: "rgba(253,224,71,0.07)", alignItems: "center" },
   proTitle: { color: "#FDE047", fontWeight: "700", fontSize: 18 },
