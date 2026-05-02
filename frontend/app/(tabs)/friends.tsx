@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Alert, RefreshControl, Linking, Share } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import RadialAura from "../../src/components/RadialAura";
 import Button from "../../src/components/Button";
 import { api } from "../../src/api";
@@ -11,6 +11,7 @@ import { t } from "../../src/i18n";
 import { Ionicons } from "@expo/vector-icons";
 
 export default function Friends() {
+  const router = useRouter();
   const { user } = useAuth();
   const [friends, setFriends] = useState<any[]>([]);
   const [email, setEmail] = useState("");

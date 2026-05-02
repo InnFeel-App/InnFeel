@@ -125,7 +125,13 @@ export default function Home() {
             </View>
           ) : (
             feed.items.map((m) => (
-              <MoodCard key={m.mood_id} mood={m} onReact={(e) => react(m.mood_id, e)} testIDPrefix="feed" />
+              <MoodCard
+                key={m.mood_id}
+                mood={m}
+                onReact={(e) => react(m.mood_id, e)}
+                onMessage={() => router.push({ pathname: "/conversation", params: { peer_id: m.user_id } })}
+                testIDPrefix="feed"
+              />
             ))
           )}
           <View style={{ height: 120 }} />

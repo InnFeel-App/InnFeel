@@ -5,6 +5,7 @@ import { Audio } from "expo-av";
 import { Ionicons } from "@expo/vector-icons";
 import { EMOTION_COLORS, COLORS, REACTIONS } from "../theme";
 import { api } from "../api";
+import CommentsSheet from "./CommentsSheet";
 
 type Mood = {
   mood_id: string;
@@ -28,17 +29,20 @@ type Mood = {
 type Props = {
   mood: Mood;
   onReact?: (emoji: string) => void;
+  onMessage?: () => void;
   showAuthor?: boolean;
   testIDPrefix?: string;
 };
 
-export default function MoodCard({ mood, onReact, showAuthor = true, testIDPrefix = "mood-card" }: Props) {
+export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, testIDPrefix = "mood-card" }: Props) {
   const em = EMOTION_COLORS[mood.emotion] || EMOTION_COLORS.calm;
   const soundRef = useRef<Audio.Sound | null>(null);
   const [playing, setPlaying] = useState(false);
   const [loadingAudio, setLoadingAudio] = useState(false);
   const [cachedAudio, setCachedAudio] = useState<string | null>(mood.audio_b64 || null);
+  const [commentsOpen, setCommentsOpen] = useState(false);
   const hasAudio = !!(mood.has_audio || mood.audio_b64);
+  const commentCount = (mood as any).comments?.length || 0;
 
   const toggleAudio = async () => {
     if (!hasAudio) return;
@@ -174,11 +178,29 @@ export default function MoodCard({ mood, onReact, showAuthor = true, testIDPrefi
               <Text style={styles.reactEmoji}>{r.symbol}</Text>
             </TouchableOpacity>
           ))}
+          <TouchableOpacity
+            testID={`comment-${mood.mood_id}`}
+            onPress={() => setCommentsOpen(true)}
+            style={styles.actionBtn}
+          >
+            <Ionicons name="chatbubble-outline" size={14} color="#fff" />
+            {commentCount > 0 ? <Text style={styles.actionCount}>{commentCount}</Text> : null}
+          </TouchableOpacity>
+          {onMessage ? (
+            <TouchableOpacity
+              testID={`message-${mood.mood_id}`}
+              onPress={onMessage}
+              style={styles.actionBtn}
+            >
+              <Ionicons name="paper-plane-outline" size={14} color="#fff" />
+            </TouchableOpacity>
+          ) : null}
           {mood.reactions && mood.reactions.length > 0 ? (
             <Text style={styles.reactCount}>{mood.reactions.length}</Text>
           ) : null}
         </View>
       ) : null}
+      <CommentsSheet visible={commentsOpen} moodId={mood.mood_id} emotion={mood.emotion} onClose={() => setCommentsOpen(false)} />
     </View>
   );
 }
@@ -225,5 +247,7 @@ const styles = StyleSheet.create({
   reactRow: { flexDirection: "row", gap: 8, marginTop: 14, alignItems: "center" },
   reactBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.06)", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: COLORS.border },
   reactEmoji: { color: "#fff", fontSize: 16 },
+  actionBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, height: 36, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: COLORS.border },
+  actionCount: { color: "#fff", fontSize: 11, fontWeight: "600" },
   reactCount: { color: COLORS.textSecondary, marginLeft: 6, fontSize: 12 },
 });

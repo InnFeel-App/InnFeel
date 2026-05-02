@@ -8,6 +8,8 @@ import * as FileSystem from "expo-file-system/legacy";
 import Slider from "@react-native-community/slider";
 import RadialAura from "../src/components/RadialAura";
 import Button from "../src/components/Button";
+import WellnessSheet from "../src/components/WellnessSheet";
+import { useShareToStories } from "../src/components/ShareToStories";
 import { api } from "../src/api";
 import { useAuth } from "../src/auth";
 import { EMOTION_COLORS, COLORS } from "../src/theme";
@@ -43,6 +45,10 @@ export default function MoodCreate() {
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
   const [previewingId, setPreviewingId] = useState<string | null>(null);
   const musicSoundRef = useRef<Audio.Sound | null>(null);
+
+  // Wellness sheet shown after successful drop
+  const [wellness, setWellness] = useState<any>(null);
+  const { share, Renderer: ShareRenderer } = useShareToStories();
 
   useEffect(() => {
     if (!pro) return;
@@ -174,7 +180,13 @@ export default function MoodCreate() {
         },
       });
       await refresh();
-      router.replace("/(tabs)/home");
+      // Fetch wellness quote+advice for the chosen emotion and show the sheet
+      try {
+        const w = await api<any>(`/wellness/${emotion}`);
+        setWellness(w);
+      } catch {
+        router.replace("/(tabs)/home");
+      }
     } catch (e: any) {
       Alert.alert("Oops", e.message || "Could not post your mood");
     } finally { setLoading(false); }
@@ -364,6 +376,14 @@ export default function MoodCreate() {
           </ScrollView>
         </SafeAreaView>
       </KeyboardAvoidingView>
+      <WellnessSheet
+        visible={!!wellness}
+        data={wellness}
+        userName={user?.name}
+        onClose={() => { setWellness(null); router.replace("/(tabs)/home"); }}
+        onShare={() => share({ kind: "mood", word: word.trim(), emotion, intensity, userName: user?.name })}
+      />
+      <ShareRenderer />
     </View>
   );
 }

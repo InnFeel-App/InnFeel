@@ -214,6 +214,14 @@ class ReactionIn(BaseModel):
     emoji: Literal["heart", "fire", "hug", "smile", "sparkle"]
 
 
+class CommentIn(BaseModel):
+    text: str = Field(min_length=1, max_length=300)
+
+
+class MessageIn(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+
+
 class AddFriendIn(BaseModel):
     email: EmailStr
 
@@ -233,6 +241,8 @@ async def startup():
     await db.moods.create_index("created_at")
     await db.friendships.create_index([("user_id", 1), ("friend_id", 1)], unique=True)
     await db.payment_transactions.create_index("session_id", unique=True)
+    await db.messages.create_index([("conversation_id", 1), ("at", 1)])
+    await db.conversations.create_index("participants")
     # seed demo admin
     existing = await db.users.find_one({"email": "admin@mooddrop.app"})
     if not existing:
@@ -458,6 +468,47 @@ async def get_mood_audio(mood_id: str, user: dict = Depends(get_current_user)):
         if not mine:
             raise HTTPException(status_code=403, detail="Drop your mood to unlock")
     return {"audio_b64": mood["audio_b64"], "audio_seconds": mood.get("audio_seconds")}
+
+
+@api.post("/moods/{mood_id}/comment")
+async def add_comment(mood_id: str, data: CommentIn, user: dict = Depends(get_current_user)):
+    mood = await db.moods.find_one({"mood_id": mood_id}, {"_id": 0, "user_id": 1, "day_key": 1, "privacy": 1})
+    if not mood:
+        raise HTTPException(status_code=404, detail="Mood not found")
+    # Author or friend with reciprocity rule
+    if mood["user_id"] != user["user_id"]:
+        if mood.get("privacy") == "private":
+            raise HTTPException(status_code=403, detail="Private mood")
+        fship = await db.friendships.find_one({"user_id": user["user_id"], "friend_id": mood["user_id"]})
+        if not fship:
+            raise HTTPException(status_code=403, detail="Not friends")
+        mine = await db.moods.find_one({"user_id": user["user_id"], "day_key": mood["day_key"]})
+        if not mine:
+            raise HTTPException(status_code=403, detail="Drop your mood to comment")
+    comment = {
+        "comment_id": f"cmt_{uuid.uuid4().hex[:10]}",
+        "user_id": user["user_id"],
+        "name": user.get("name", ""),
+        "avatar_color": user.get("avatar_color", "#A78BFA"),
+        "text": data.text.strip(),
+        "at": now_utc().isoformat(),
+    }
+    await db.moods.update_one({"mood_id": mood_id}, {"$push": {"comments": comment}})
+    return {"ok": True, "comment": comment}
+
+
+@api.get("/moods/{mood_id}/comments")
+async def get_comments(mood_id: str, user: dict = Depends(get_current_user)):
+    mood = await db.moods.find_one({"mood_id": mood_id}, {"_id": 0, "comments": 1, "user_id": 1, "privacy": 1, "day_key": 1})
+    if not mood:
+        raise HTTPException(status_code=404, detail="Mood not found")
+    if mood["user_id"] != user["user_id"]:
+        if mood.get("privacy") == "private":
+            raise HTTPException(status_code=403, detail="Private mood")
+        fship = await db.friendships.find_one({"user_id": user["user_id"], "friend_id": mood["user_id"]})
+        if not fship:
+            raise HTTPException(status_code=403, detail="Not friends")
+    return {"comments": mood.get("comments", [])}
 
 
 @api.post("/moods/{mood_id}/react")
@@ -717,6 +768,240 @@ async def toggle_pro(user: dict = Depends(get_current_user)):
 @api.get("/")
 async def root():
     return {"app": "MoodDrop", "version": "1.0"}
+
+
+# =========================================================================
+# Messaging (1-on-1, polling-based)
+# =========================================================================
+def _conv_id(a: str, b: str) -> str:
+    p = sorted([a, b])
+    return f"conv_{p[0]}_{p[1]}"
+
+
+@api.get("/messages/conversations")
+async def list_conversations(user: dict = Depends(get_current_user)):
+    convs = await db.conversations.find({"participants": user["user_id"]}, {"_id": 0}).to_list(200)
+    other_ids = []
+    for c in convs:
+        for p in c["participants"]:
+            if p != user["user_id"]:
+                other_ids.append(p)
+    others = await db.users.find({"user_id": {"$in": other_ids}}, {"_id": 0, "user_id": 1, "name": 1, "avatar_color": 1, "avatar_b64": 1}).to_list(500)
+    other_map = {u["user_id"]: u for u in others}
+    out = []
+    for c in convs:
+        peer_id = next((p for p in c["participants"] if p != user["user_id"]), None)
+        peer = other_map.get(peer_id, {})
+        out.append({
+            "conversation_id": c["conversation_id"],
+            "peer_id": peer_id,
+            "peer_name": peer.get("name", "Friend"),
+            "peer_avatar_color": peer.get("avatar_color"),
+            "peer_avatar_b64": peer.get("avatar_b64"),
+            "last_text": c.get("last_text"),
+            "last_at": c.get("last_at"),
+            "unread": c.get("unread", {}).get(user["user_id"], 0),
+        })
+    out.sort(key=lambda x: x.get("last_at") or "", reverse=True)
+    return {"conversations": out}
+
+
+@api.get("/messages/with/{peer_id}")
+async def get_messages(peer_id: str, user: dict = Depends(get_current_user)):
+    fship = await db.friendships.find_one({"user_id": user["user_id"], "friend_id": peer_id})
+    if not fship and peer_id != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Not friends")
+    cid = _conv_id(user["user_id"], peer_id)
+    msgs = await db.messages.find({"conversation_id": cid}, {"_id": 0}).sort("at", 1).to_list(500)
+    # mark as read for me
+    await db.conversations.update_one(
+        {"conversation_id": cid},
+        {"$set": {f"unread.{user['user_id']}": 0}},
+    )
+    peer = await db.users.find_one({"user_id": peer_id}, {"_id": 0, "user_id": 1, "name": 1, "avatar_color": 1, "avatar_b64": 1})
+    return {"conversation_id": cid, "peer": peer, "messages": msgs}
+
+
+@api.post("/messages/with/{peer_id}")
+async def send_message(peer_id: str, data: MessageIn, user: dict = Depends(get_current_user)):
+    fship = await db.friendships.find_one({"user_id": user["user_id"], "friend_id": peer_id})
+    if not fship:
+        raise HTTPException(status_code=403, detail="Not friends")
+    cid = _conv_id(user["user_id"], peer_id)
+    now = now_utc()
+    msg = {
+        "message_id": f"msg_{uuid.uuid4().hex[:12]}",
+        "conversation_id": cid,
+        "sender_id": user["user_id"],
+        "sender_name": user.get("name", ""),
+        "text": data.text.strip(),
+        "at": now.isoformat(),
+    }
+    await db.messages.insert_one(dict(msg))
+    await db.conversations.update_one(
+        {"conversation_id": cid},
+        {
+            "$set": {
+                "conversation_id": cid,
+                "participants": sorted([user["user_id"], peer_id]),
+                "last_text": data.text.strip()[:200],
+                "last_at": now.isoformat(),
+            },
+            "$inc": {f"unread.{peer_id}": 1},
+        },
+        upsert=True,
+    )
+    msg.pop("_id", None)
+    return {"ok": True, "message": msg}
+
+
+# =========================================================================
+# Wellness — Quote of the day + advice (mood-aware)
+# =========================================================================
+WELLNESS = {
+    "joy": {
+        "tone": "positive",
+        "quotes": [
+            "Joy is not in things; it is in us. — Richard Wagner",
+            "Find ecstasy in life; the mere sense of living is joy enough. — Emily Dickinson",
+            "Joy multiplies when shared.",
+            "Today is a gift — that's why it's called the present.",
+            "Wherever life plants you, bloom with grace.",
+        ],
+        "advice": "Capture this feeling. Send a kind message to someone who lifts you up — or share your mood card to Stories.",
+        "share_cta": True,
+    },
+    "love": {
+        "tone": "positive",
+        "quotes": [
+            "Love grows by giving. — Elbert Hubbard",
+            "We're all just walking each other home. — Ram Dass",
+            "Love is the only force capable of transforming an enemy into a friend. — MLK",
+            "Where there is love, there is life. — Gandhi",
+        ],
+        "advice": "Tell someone you love them today — even one short message can change their day.",
+        "share_cta": True,
+    },
+    "peace": {
+        "tone": "positive",
+        "quotes": [
+            "Peace begins with a smile. — Mother Teresa",
+            "Within you, there is a stillness and a sanctuary. — Hermann Hesse",
+            "Do not let the behavior of others destroy your inner peace.",
+        ],
+        "advice": "Protect this calm — take 5 quiet minutes alone with no screen before the day continues.",
+        "share_cta": True,
+    },
+    "focus": {
+        "tone": "positive",
+        "quotes": [
+            "Where attention goes, energy flows.",
+            "Focus is the gateway to all thinking. — Edward de Bono",
+            "Concentrate all your thoughts upon the work at hand. — Alexander Graham Bell",
+        ],
+        "advice": "You're in the zone. Block 25 minutes for one important task before anything else.",
+        "share_cta": False,
+    },
+    "excitement": {
+        "tone": "positive",
+        "quotes": [
+            "Energy and persistence conquer all things. — Ben Franklin",
+            "Enthusiasm is the electricity of life. — Gordon Parks",
+            "Don't watch the clock; do what it does. Keep going. — Sam Levenson",
+        ],
+        "advice": "Channel this energy — start that thing you've been postponing. Even 10 minutes counts.",
+        "share_cta": True,
+    },
+    "nostalgia": {
+        "tone": "neutral",
+        "quotes": [
+            "The past beats inside me like a second heart. — John Banville",
+            "Memory is the diary we all carry about with us. — Oscar Wilde",
+            "Nostalgia is a file that removes the rough edges from the good old days.",
+        ],
+        "advice": "Reach out to someone from a fond memory. A short ‘thinking of you’ message means more than you think.",
+        "share_cta": False,
+    },
+    "calm": {
+        "tone": "neutral",
+        "quotes": [
+            "Quiet the mind, and the soul will speak. — Ma Jaya",
+            "Calm is a superpower.",
+            "The world always seems brighter when you've just made something nobody has made before.",
+        ],
+        "advice": "Use this clarity for one decision you've been putting off — even small.",
+        "share_cta": False,
+    },
+    "tired": {
+        "tone": "negative",
+        "quotes": [
+            "Rest when you're weary. Refresh and renew yourself. — Ralph Marston",
+            "Almost everything will work again if you unplug it for a few minutes — including you. — Anne Lamott",
+            "You don't have to see the whole staircase, just take the first step. — MLK",
+        ],
+        "advice": "Try a 10-minute lie-down with eyes closed and no phone. Hydrate. Move your shoulders. Be gentle with yourself today.",
+        "share_cta": False,
+    },
+    "sadness": {
+        "tone": "negative",
+        "quotes": [
+            "Tears are words the heart can't say.",
+            "Even the darkest night will end and the sun will rise. — Victor Hugo",
+            "Sadness flies away on the wings of time. — Jean de La Fontaine",
+        ],
+        "advice": "Try writing for 5 minutes in a notes app — just dump whatever comes. No filter. It often shifts something.",
+        "share_cta": False,
+    },
+    "anger": {
+        "tone": "negative",
+        "quotes": [
+            "For every minute you remain angry, you give up sixty seconds of peace. — Emerson",
+            "Holding on to anger is like grasping a hot coal. — Buddha",
+            "Speak when you are angry — and you will make the best speech you will ever regret. — Ambrose Bierce",
+        ],
+        "advice": "Move your body — 20 jumping jacks, a fast walk, or push-ups. Physical movement processes anger faster than thinking does.",
+        "share_cta": False,
+    },
+    "anxiety": {
+        "tone": "negative",
+        "quotes": [
+            "You don't have to control your thoughts. You just have to stop letting them control you. — Dan Millman",
+            "Worry does not empty tomorrow of its sorrow, it empties today of its strength. — Corrie ten Boom",
+            "Nothing diminishes anxiety faster than action. — Walter Anderson",
+        ],
+        "advice": "Try the 5-4-3-2-1 grounding: name 5 things you see, 4 you can touch, 3 you hear, 2 you smell, 1 you taste. Then text a friend you trust — you don't have to do this alone.",
+        "share_cta": False,
+    },
+    "stressed": {
+        "tone": "negative",
+        "quotes": [
+            "It's not stress that kills us, it's our reaction to it. — Hans Selye",
+            "You don't have to see the whole staircase, just take the first step. — MLK",
+            "When stressed, lower the bar — done is better than perfect.",
+        ],
+        "advice": "Try the 4-7-8 breath: inhale 4s, hold 7s, exhale 8s — repeat 4 times. Then write the ONE thing that would relieve 80% of the pressure, and do only that.",
+        "share_cta": False,
+    },
+}
+
+
+@api.get("/wellness/{emotion}")
+async def wellness_for(emotion: str, user: dict = Depends(get_current_user)):
+    if emotion not in WELLNESS:
+        raise HTTPException(status_code=404, detail="Unknown emotion")
+    pack = WELLNESS[emotion]
+    # Deterministic daily pick per user
+    import hashlib
+    seed = hashlib.sha1(f"{user['user_id']}_{emotion}_{today_key()}".encode()).hexdigest()
+    idx = int(seed[:8], 16) % len(pack["quotes"])
+    return {
+        "emotion": emotion,
+        "tone": pack["tone"],
+        "quote": pack["quotes"][idx],
+        "advice": pack["advice"],
+        "share_cta": pack.get("share_cta", False),
+        "color": EMOTIONS.get(emotion),
+    }
 
 
 app.include_router(api)
