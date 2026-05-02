@@ -10,6 +10,8 @@ export const EMOTION_COLORS: Record<string, { hex: string; glow: string; label: 
   excitement: { hex: "#FF7A00", glow: "rgba(255,122,0,0.75)", label: "Excitement" },
   peace: { hex: "#10B981", glow: "rgba(16,185,129,0.7)", label: "Peace" },
   nostalgia: { hex: "#C026D3", glow: "rgba(192,38,211,0.75)", label: "Nostalgia" },
+  tired: { hex: "#94A3B8", glow: "rgba(148,163,184,0.65)", label: "Tired" },
+  stressed: { hex: "#DC2626", glow: "rgba(220,38,38,0.75)", label: "Stressed" },
 };
 
 export const EMOTION_KEYS = Object.keys(EMOTION_COLORS);

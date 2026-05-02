@@ -131,11 +131,30 @@ export default function MoodCreate() {
   const maxIntensity = pro ? 10 : 5;
   const auraColor = EMOTION_COLORS[emotion]?.hex || "#A78BFA";
 
-  const pick = async () => {
+  const pickFromLibrary = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { Alert.alert("Permission needed", "We need photo access to attach images."); return; }
     const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.6, base64: true });
     if (!r.canceled && r.assets[0]?.base64) setPhoto(r.assets[0].base64);
+  };
+
+  const takePhoto = async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) { Alert.alert("Permission needed", "We need camera access to take photos."); return; }
+    const r = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.6, base64: true });
+    if (!r.canceled && r.assets[0]?.base64) setPhoto(r.assets[0].base64);
+  };
+
+  const pick = () => {
+    Alert.alert(
+      "Add a photo",
+      "Choose where to get the photo from.",
+      [
+        { text: "Take photo", onPress: takePhoto },
+        { text: "Choose from library", onPress: pickFromLibrary },
+        { text: "Cancel", style: "cancel" },
+      ],
+    );
   };
 
   const submit = async () => {

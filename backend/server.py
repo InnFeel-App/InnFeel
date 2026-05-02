@@ -50,16 +50,18 @@ MUSIC_TRACK_IDS = {t["id"] for t in MUSIC_TRACKS}
 
 # Emotion color palette
 EMOTIONS = {
-    "calm": "#60A5FA",
-    "joy": "#FDE047",
-    "love": "#F472B6",
-    "anger": "#F87171",
-    "anxiety": "#FB923C",
-    "sadness": "#818CF8",
-    "focus": "#2DD4BF",
-    "excitement": "#F97316",
-    "peace": "#34D399",
-    "nostalgia": "#A78BFA",
+    "calm": "#3B82F6",
+    "joy": "#FACC15",
+    "love": "#EC4899",
+    "anger": "#EF4444",
+    "anxiety": "#F59E0B",
+    "sadness": "#6366F1",
+    "focus": "#06D6A0",
+    "excitement": "#FF7A00",
+    "peace": "#10B981",
+    "nostalgia": "#C026D3",
+    "tired": "#94A3B8",
+    "stressed": "#DC2626",
 }
 
 client = AsyncIOMotorClient(MONGO_URL)
@@ -194,7 +196,7 @@ class LoginIn(BaseModel):
 
 class MoodDropIn(BaseModel):
     word: str = Field(min_length=1, max_length=30)
-    emotion: Literal["calm", "joy", "love", "anger", "anxiety", "sadness", "focus", "excitement", "peace", "nostalgia"]
+    emotion: Literal["calm", "joy", "love", "anger", "anxiety", "sadness", "focus", "excitement", "peace", "nostalgia", "tired", "stressed"]
     intensity: int = Field(ge=1, le=10)
     photo_b64: Optional[str] = None  # base64 image
     text: Optional[str] = Field(default=None, max_length=280)
