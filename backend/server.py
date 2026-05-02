@@ -386,7 +386,7 @@ async def friends_feed(user: dict = Depends(get_current_user)):
         return {"locked": False, "items": []}
     cursor = db.moods.find(
         {"user_id": {"$in": friend_ids}, "day_key": key, "privacy": {"$ne": "private"}},
-        {"_id": 0, "audio_b64": 0},
+        {"_id": 0},
     ).sort("created_at", -1)
     items = await cursor.to_list(200)
     # attach author info

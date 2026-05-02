@@ -1,6 +1,8 @@
-import React from "react";
+import React, { useRef, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Image } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { Audio } from "expo-av";
+import { Ionicons } from "@expo/vector-icons";
 import { EMOTION_COLORS, COLORS, REACTIONS } from "../theme";
 
 type Mood = {
@@ -10,6 +12,7 @@ type Mood = {
   intensity: number;
   photo_b64?: string | null;
   text?: string | null;
+  audio_b64?: string | null;
   author_name?: string;
   author_color?: string;
   created_at?: string;
@@ -25,6 +28,28 @@ type Props = {
 
 export default function MoodCard({ mood, onReact, showAuthor = true, testIDPrefix = "mood-card" }: Props) {
   const em = EMOTION_COLORS[mood.emotion] || EMOTION_COLORS.calm;
+  const soundRef = useRef<Audio.Sound | null>(null);
+  const [playing, setPlaying] = useState(false);
+
+  const toggleAudio = async () => {
+    if (!mood.audio_b64) return;
+    try {
+      if (playing && soundRef.current) {
+        await soundRef.current.pauseAsync();
+        setPlaying(false);
+        return;
+      }
+      if (!soundRef.current) {
+        const { sound } = await Audio.Sound.createAsync({ uri: `data:audio/m4a;base64,${mood.audio_b64}` });
+        soundRef.current = sound;
+        sound.setOnPlaybackStatusUpdate((s: any) => {
+          if (s.didJustFinish) { setPlaying(false); sound.setPositionAsync(0).catch(() => {}); }
+        });
+      }
+      await soundRef.current.playAsync();
+      setPlaying(true);
+    } catch { setPlaying(false); }
+  };
   return (
     <View style={styles.card} testID={`${testIDPrefix}-${mood.mood_id}`}>
       <LinearGradient
@@ -74,6 +99,33 @@ export default function MoodCard({ mood, onReact, showAuthor = true, testIDPrefi
       ) : null}
 
       {mood.text ? <Text style={styles.noteText}>"{mood.text}"</Text> : null}
+
+      {mood.audio_b64 ? (
+        <TouchableOpacity
+          testID={`audio-play-${mood.mood_id}`}
+          onPress={toggleAudio}
+          activeOpacity={0.85}
+          style={[styles.audioRow, { borderColor: em.hex + "80" }]}
+        >
+          <View style={[styles.audioBtn, { backgroundColor: em.hex }]}>
+            <Ionicons name={playing ? "pause" : "play"} size={16} color="#000" />
+          </View>
+          <View style={styles.audioWaves}>
+            {Array.from({ length: 16 }).map((_, i) => (
+              <View
+                key={i}
+                style={{
+                  width: 3, marginHorizontal: 2, borderRadius: 2,
+                  height: 4 + ((i * 9) % 22),
+                  backgroundColor: em.hex, opacity: playing ? 0.9 : 0.55,
+                }}
+              />
+            ))}
+          </View>
+          <Text style={styles.audioLabel}>Voice note</Text>
+        </TouchableOpacity>
+      ) : null}
+
 
       {onReact ? (
         <View style={styles.reactRow}>
@@ -129,6 +181,10 @@ const styles = StyleSheet.create({
   intensityLabel: { color: COLORS.textTertiary, fontSize: 11, marginLeft: 8 },
   photo: { width: "100%", height: 180, borderRadius: 18, marginTop: 14 },
   noteText: { color: COLORS.textSecondary, fontSize: 14, marginTop: 12, fontStyle: "italic" },
+  audioRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 12, padding: 10, borderRadius: 16, borderWidth: 1, backgroundColor: "rgba(255,255,255,0.04)" },
+  audioBtn: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
+  audioWaves: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", height: 34 },
+  audioLabel: { color: COLORS.textSecondary, fontSize: 11, fontWeight: "600" },
   reactRow: { flexDirection: "row", gap: 8, marginTop: 14, alignItems: "center" },
   reactBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.06)", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: COLORS.border },
   reactEmoji: { color: "#fff", fontSize: 16 },
