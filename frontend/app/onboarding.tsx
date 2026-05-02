@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Dimensions } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Dimensions, Image } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import RadialAura from "../src/components/RadialAura";
@@ -26,7 +26,11 @@ export default function Onboarding() {
       <RadialAura color={slide.color} />
       <SafeAreaView style={{ flex: 1 }}>
         <View style={styles.header}>
-          <Text style={styles.brand}>InnFeel</Text>
+          <Image
+            source={require("../assets/images/icon.png")}
+            style={styles.logo}
+            resizeMode="contain"
+          />
           <TouchableOpacity testID="onboarding-skip" onPress={() => router.replace("/(auth)/login")}>
             <Text style={styles.skip}>{t("cta.skip")}</Text>
           </TouchableOpacity>
@@ -56,8 +60,8 @@ export default function Onboarding() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#050505" },
-  header: { flexDirection: "row", justifyContent: "space-between", padding: 20, alignItems: "center" },
-  brand: { color: "#fff", fontSize: 18, fontWeight: "700" },
+  header: { flexDirection: "row", justifyContent: "space-between", padding: 16, alignItems: "center" },
+  logo: { width: 70, height: 70, borderRadius: 14 },
   skip: { color: "rgba(255,255,255,0.55)", fontSize: 14 },
   content: { flex: 1, paddingHorizontal: 28, justifyContent: "center" },
   dots: { flexDirection: "row", gap: 6, marginBottom: 32 },

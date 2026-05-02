@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, Image } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import RadialAura from "../../src/components/RadialAura";
@@ -65,9 +65,9 @@ export default function Stats() {
               <Text style={styles.statLbl}>{t("home.streak")}</Text>
             </View>
             <View style={styles.statCard} testID="stat-drops">
-              <Ionicons name="water" size={18} color="#60A5FA" />
+              <Image source={require("../../assets/images/icon.png")} style={{ width: 22, height: 22, borderRadius: 6 }} />
               <Text style={styles.statNum}>{stats?.drops_this_week || 0}</Text>
-              <Text style={styles.statLbl}>this week</Text>
+              <Text style={styles.statLbl}>auras this week</Text>
             </View>
           </View>
 

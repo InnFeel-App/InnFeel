@@ -414,7 +414,7 @@ async def logout(response: Response):
 
 
 # =========================================================================
-# Moods
+# Auras
 # =========================================================================
 async def compute_streak(user_id: str) -> int:
     # Single query: fetch distinct day_keys for this user (last 400 days worth), count consecutive days ending today.
@@ -463,9 +463,9 @@ async def delete_mood(mood_id: str, user: dict = Depends(get_current_user)):
     """Delete a specific mood of the current user (own moods only)."""
     mood = await db.moods.find_one({"mood_id": mood_id})
     if not mood:
-        raise HTTPException(status_code=404, detail="Mood not found")
+        raise HTTPException(status_code=404, detail="Aura not found")
     if mood["user_id"] != user["user_id"]:
-        raise HTTPException(status_code=403, detail="Not your mood")
+        raise HTTPException(status_code=403, detail="Not your aura")
     await db.moods.delete_one({"mood_id": mood_id})
     await db.wellness_cache.delete_many({"user_id": user["user_id"], "day_key": mood.get("day_key")})
     return {"ok": True}
@@ -476,7 +476,7 @@ async def create_mood(data: InnFeelIn, user: dict = Depends(get_current_user)):
     key = today_key()
     existing = await db.moods.find_one({"user_id": user["user_id"], "day_key": key})
     if existing:
-        raise HTTPException(status_code=400, detail="You already dropped your mood today. Come back tomorrow!")
+        raise HTTPException(status_code=400, detail="You already shared your aura today. Come back tomorrow!")
 
     pro = is_pro(user)
     # enforce pro-only inputs
@@ -584,7 +584,7 @@ async def get_mood_audio(mood_id: str, user: dict = Depends(get_current_user)):
         # Requester must have posted today to keep reciprocity
         mine = await db.moods.find_one({"user_id": user["user_id"], "day_key": mood["day_key"]})
         if not mine:
-            raise HTTPException(status_code=403, detail="Drop your mood to unlock")
+            raise HTTPException(status_code=403, detail="Share your aura to unlock")
     return {"audio_b64": mood["audio_b64"], "audio_seconds": mood.get("audio_seconds")}
 
 
@@ -592,7 +592,7 @@ async def get_mood_audio(mood_id: str, user: dict = Depends(get_current_user)):
 async def add_comment(mood_id: str, data: CommentIn, user: dict = Depends(get_current_user)):
     mood = await db.moods.find_one({"mood_id": mood_id}, {"_id": 0, "user_id": 1, "day_key": 1, "privacy": 1})
     if not mood:
-        raise HTTPException(status_code=404, detail="Mood not found")
+        raise HTTPException(status_code=404, detail="Aura not found")
     # Author or friend with reciprocity rule
     if mood["user_id"] != user["user_id"]:
         if mood.get("privacy") == "private":
@@ -602,7 +602,7 @@ async def add_comment(mood_id: str, data: CommentIn, user: dict = Depends(get_cu
             raise HTTPException(status_code=403, detail="Not friends")
         mine = await db.moods.find_one({"user_id": user["user_id"], "day_key": mood["day_key"]})
         if not mine:
-            raise HTTPException(status_code=403, detail="Drop your mood to comment")
+            raise HTTPException(status_code=403, detail="Share your aura to comment")
     comment = {
         "comment_id": f"cmt_{uuid.uuid4().hex[:10]}",
         "user_id": user["user_id"],
@@ -619,7 +619,7 @@ async def add_comment(mood_id: str, data: CommentIn, user: dict = Depends(get_cu
 async def get_comments(mood_id: str, user: dict = Depends(get_current_user)):
     mood = await db.moods.find_one({"mood_id": mood_id}, {"_id": 0, "comments": 1, "user_id": 1, "privacy": 1, "day_key": 1})
     if not mood:
-        raise HTTPException(status_code=404, detail="Mood not found")
+        raise HTTPException(status_code=404, detail="Aura not found")
     if mood["user_id"] != user["user_id"]:
         if mood.get("privacy") == "private":
             raise HTTPException(status_code=403, detail="Private mood")
@@ -633,7 +633,7 @@ async def get_comments(mood_id: str, user: dict = Depends(get_current_user)):
 async def react(mood_id: str, data: ReactionIn, user: dict = Depends(get_current_user)):
     mood = await db.moods.find_one({"mood_id": mood_id})
     if not mood:
-        raise HTTPException(status_code=404, detail="Mood not found")
+        raise HTTPException(status_code=404, detail="Aura not found")
     # prevent duplicate from same user
     new_reaction = {"user_id": user["user_id"], "name": user.get("name", ""), "emoji": data.emoji, "at": now_utc().isoformat()}
     await db.moods.update_one(
@@ -786,7 +786,7 @@ async def list_friends(user: dict = Depends(get_current_user)):
     ids = [f["friend_id"] for f in fships]
     close_map = {f["friend_id"]: bool(f.get("close", False)) for f in fships}
     users = await db.users.find({"user_id": {"$in": ids}}, {"_id": 0, "user_id": 1, "name": 1, "email": 1, "avatar_color": 1, "streak": 1}).to_list(500)
-    # Did they drop today?
+    # Did they share an aura today?
     key = today_key()
     moods = await db.moods.find({"user_id": {"$in": ids}, "day_key": key}, {"_id": 0, "user_id": 1}).to_list(500)
     drop_set = {m["user_id"] for m in moods}
@@ -1533,7 +1533,7 @@ async def _generate_wellness_llm(user_name: str, emotion: str, tone: str, word: 
     )
     prompt = (
         f"User name: {user_name}. Emotion: {emotion} ({tone}). "
-        f"Mood word: {word or '—'}. Intensity: {intensity if intensity is not None else '—'}/10. "
+        f"Aura word: {word or '—'}. Intensity: {intensity if intensity is not None else '—'}/10. "
         "Respond with ONLY the JSON object."
     )
     chat = LlmChat(
