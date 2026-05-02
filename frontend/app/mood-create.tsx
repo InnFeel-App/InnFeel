@@ -124,7 +124,9 @@ export default function MoodCreate() {
           word: word.trim(), emotion,
           intensity: Math.max(1, Math.min(maxIntensity, intensity)),
           photo_b64: photo, text: pro ? note || null : null,
-          audio_b64: pro ? audioB64 : null, privacy,
+          audio_b64: pro ? audioB64 : null,
+          audio_seconds: pro && audioB64 ? Math.max(1, recSeconds) : null,
+          privacy,
         },
       });
       await refresh();

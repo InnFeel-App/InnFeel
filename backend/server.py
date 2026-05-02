@@ -187,6 +187,7 @@ class MoodDropIn(BaseModel):
     photo_b64: Optional[str] = None  # base64 image
     text: Optional[str] = Field(default=None, max_length=280)
     audio_b64: Optional[str] = None  # base64 audio
+    audio_seconds: Optional[int] = Field(default=None, ge=1, le=30)
     privacy: Literal["friends", "close", "private"] = "friends"
 
 
@@ -358,6 +359,8 @@ async def create_mood(data: MoodDropIn, user: dict = Depends(get_current_user)):
         "photo_b64": data.photo_b64,
         "text": data.text,
         "audio_b64": data.audio_b64,
+        "audio_seconds": data.audio_seconds if data.audio_b64 else None,
+        "has_audio": bool(data.audio_b64),
         "privacy": data.privacy,
         "reactions": [],
         "created_at": now_utc(),
@@ -386,9 +389,13 @@ async def friends_feed(user: dict = Depends(get_current_user)):
         return {"locked": False, "items": []}
     cursor = db.moods.find(
         {"user_id": {"$in": friend_ids}, "day_key": key, "privacy": {"$ne": "private"}},
-        {"_id": 0},
+        {"_id": 0, "audio_b64": 0},
     ).sort("created_at", -1)
     items = await cursor.to_list(200)
+    # Backfill has_audio flag for older docs that didn't set it explicitly.
+    for it in items:
+        if "has_audio" not in it:
+            it["has_audio"] = False
     # attach author info
     authors = await db.users.find({"user_id": {"$in": friend_ids}}, {"_id": 0, "user_id": 1, "name": 1, "avatar_color": 1}).to_list(1000)
     author_map = {a["user_id"]: a for a in authors}
@@ -399,6 +406,25 @@ async def friends_feed(user: dict = Depends(get_current_user)):
         it["author_name"] = a.get("name", "Friend")
         it["author_color"] = a.get("avatar_color", "#A78BFA")
     return {"locked": False, "items": items}
+
+
+@api.get("/moods/{mood_id}/audio")
+async def get_mood_audio(mood_id: str, user: dict = Depends(get_current_user)):
+    mood = await db.moods.find_one({"mood_id": mood_id}, {"_id": 0, "user_id": 1, "audio_b64": 1, "audio_seconds": 1, "privacy": 1, "day_key": 1})
+    if not mood or not mood.get("audio_b64"):
+        raise HTTPException(status_code=404, detail="No audio")
+    # Authorization: author or friend (unless private)
+    if mood["user_id"] != user["user_id"]:
+        if mood.get("privacy") == "private":
+            raise HTTPException(status_code=403, detail="Private")
+        fship = await db.friendships.find_one({"user_id": user["user_id"], "friend_id": mood["user_id"]})
+        if not fship:
+            raise HTTPException(status_code=403, detail="Not friends")
+        # Requester must have posted today to keep reciprocity
+        mine = await db.moods.find_one({"user_id": user["user_id"], "day_key": mood["day_key"]})
+        if not mine:
+            raise HTTPException(status_code=403, detail="Drop your mood to unlock")
+    return {"audio_b64": mood["audio_b64"], "audio_seconds": mood.get("audio_seconds")}
 
 
 @api.post("/moods/{mood_id}/react")

@@ -1,9 +1,10 @@
 import React, { useRef, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Image } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, Image, ActivityIndicator } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Audio } from "expo-av";
 import { Ionicons } from "@expo/vector-icons";
 import { EMOTION_COLORS, COLORS, REACTIONS } from "../theme";
+import { api } from "../api";
 
 type Mood = {
   mood_id: string;
@@ -13,6 +14,8 @@ type Mood = {
   photo_b64?: string | null;
   text?: string | null;
   audio_b64?: string | null;
+  has_audio?: boolean;
+  audio_seconds?: number | null;
   author_name?: string;
   author_color?: string;
   created_at?: string;
@@ -30,17 +33,29 @@ export default function MoodCard({ mood, onReact, showAuthor = true, testIDPrefi
   const em = EMOTION_COLORS[mood.emotion] || EMOTION_COLORS.calm;
   const soundRef = useRef<Audio.Sound | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [loadingAudio, setLoadingAudio] = useState(false);
+  const [cachedAudio, setCachedAudio] = useState<string | null>(mood.audio_b64 || null);
+  const hasAudio = !!(mood.has_audio || mood.audio_b64);
 
   const toggleAudio = async () => {
-    if (!mood.audio_b64) return;
+    if (!hasAudio) return;
     try {
       if (playing && soundRef.current) {
         await soundRef.current.pauseAsync();
         setPlaying(false);
         return;
       }
+      // Lazy-load audio from streaming endpoint on first play
+      let b64 = cachedAudio;
+      if (!b64) {
+        setLoadingAudio(true);
+        const r = await api<{ audio_b64: string }>(`/moods/${mood.mood_id}/audio`);
+        b64 = r.audio_b64;
+        setCachedAudio(b64);
+        setLoadingAudio(false);
+      }
       if (!soundRef.current) {
-        const { sound } = await Audio.Sound.createAsync({ uri: `data:audio/m4a;base64,${mood.audio_b64}` });
+        const { sound } = await Audio.Sound.createAsync({ uri: `data:audio/m4a;base64,${b64}` });
         soundRef.current = sound;
         sound.setOnPlaybackStatusUpdate((s: any) => {
           if (s.didJustFinish) { setPlaying(false); sound.setPositionAsync(0).catch(() => {}); }
@@ -48,7 +63,7 @@ export default function MoodCard({ mood, onReact, showAuthor = true, testIDPrefi
       }
       await soundRef.current.playAsync();
       setPlaying(true);
-    } catch { setPlaying(false); }
+    } catch { setLoadingAudio(false); setPlaying(false); }
   };
   return (
     <View style={styles.card} testID={`${testIDPrefix}-${mood.mood_id}`}>
@@ -100,7 +115,7 @@ export default function MoodCard({ mood, onReact, showAuthor = true, testIDPrefi
 
       {mood.text ? <Text style={styles.noteText}>"{mood.text}"</Text> : null}
 
-      {mood.audio_b64 ? (
+      {hasAudio ? (
         <TouchableOpacity
           testID={`audio-play-${mood.mood_id}`}
           onPress={toggleAudio}
@@ -108,7 +123,11 @@ export default function MoodCard({ mood, onReact, showAuthor = true, testIDPrefi
           style={[styles.audioRow, { borderColor: em.hex + "80" }]}
         >
           <View style={[styles.audioBtn, { backgroundColor: em.hex }]}>
-            <Ionicons name={playing ? "pause" : "play"} size={16} color="#000" />
+            {loadingAudio ? (
+              <ActivityIndicator size="small" color="#000" />
+            ) : (
+              <Ionicons name={playing ? "pause" : "play"} size={16} color="#000" />
+            )}
           </View>
           <View style={styles.audioWaves}>
             {Array.from({ length: 16 }).map((_, i) => (
@@ -122,7 +141,9 @@ export default function MoodCard({ mood, onReact, showAuthor = true, testIDPrefi
               />
             ))}
           </View>
-          <Text style={styles.audioLabel}>Voice note</Text>
+          <Text style={styles.audioLabel}>
+            {mood.audio_seconds ? `0:${String(mood.audio_seconds).padStart(2, "0")}` : "Voice note"}
+          </Text>
         </TouchableOpacity>
       ) : null}
 
