@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Variant 3: PETAL BLOOM — 8 soft overlapping color petals like a flower -->
+  <defs>
+    <radialGradient id="pA" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#FACC15"/><stop offset="100%" stop-color="#FACC15" stop-opacity="0.0"/></radialGradient>
+    <radialGradient id="pB" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#EC4899"/><stop offset="100%" stop-color="#EC4899" stop-opacity="0.0"/></radialGradient>
+    <radialGradient id="pC" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#FF7A00"/><stop offset="100%" stop-color="#FF7A00" stop-opacity="0.0"/></radialGradient>
+    <radialGradient id="pD" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#22D3EE"/><stop offset="100%" stop-color="#22D3EE" stop-opacity="0.0"/></radialGradient>
+    <radialGradient id="pE" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#A855F7"/><stop offset="100%" stop-color="#A855F7" stop-opacity="0.0"/></radialGradient>
+    <radialGradient id="pF" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#10B981"/><stop offset="100%" stop-color="#10B981" stop-opacity="0.0"/></radialGradient>
+    <radialGradient id="pG" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#3B82F6"/><stop offset="100%" stop-color="#3B82F6" stop-opacity="0.0"/></radialGradient>
+    <radialGradient id="pH" cx="50%" cy="0%" r="80%"><stop offset="0%" stop-color="#FB923C"/><stop offset="100%" stop-color="#FB923C" stop-opacity="0.0"/></radialGradient>
+
+    <filter id="petBlur"><feGaussianBlur stdDeviation="2"/></filter>
+  </defs>
+
+  <rect width="512" height="512" fill="#050505" rx="96" ry="96"/>
+  <g transform="translate(256 256)" filter="url(#petBlur)" style="mix-blend-mode: screen">
+    <!-- 8 petals -->
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#pA)" transform="rotate(0)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#pB)" transform="rotate(45)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#pC)" transform="rotate(90)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#pD)" transform="rotate(135)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#pE)" transform="rotate(180)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#pF)" transform="rotate(225)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#pG)" transform="rotate(270)"/>
+    <ellipse cx="0" cy="-95" rx="80" ry="150" fill="url(#pH)" transform="rotate(315)"/>
+  </g>
+  <!-- Center halo + monogram -->
+  <circle cx="256" cy="256" r="90" fill="#ffffff" opacity="0.98"/>
+  <text x="256" y="285" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-weight="900" font-size="88" fill="#050505" letter-spacing="-6">iF</text>
+</svg>

@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Variant 1: AURA BURST — 24 rays (one per emotion, best→worst) radiating from center -->
+  <defs>
+    <radialGradient id="coreA" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="60%" stop-color="#f8f8f8" stop-opacity="0.98"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.9"/>
+    </radialGradient>
+    <filter id="softGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="512" height="512" fill="#050505" rx="96" ry="96"/>
+
+  <g transform="translate(256 256)" filter="url(#softGlow)">
+    <!-- 24 rays best to worst, each 15° -->
+    <!-- positive warm (top) -->
+    <g transform="rotate(-97.5)">
+      <!-- joy -->
+      <path d="M0,-210 L15,-100 L-15,-100 Z" fill="#FACC15" opacity="0.95"/>
+    </g>
+    <g transform="rotate(-82.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#FFD166" opacity="0.95"/></g>
+    <g transform="rotate(-67.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#EC4899" opacity="0.95"/></g>
+    <g transform="rotate(-52.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#FF7A00" opacity="0.95"/></g>
+    <g transform="rotate(-37.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#F59E0B" opacity="0.95"/></g>
+    <g transform="rotate(-22.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#38BDF8" opacity="0.95"/></g>
+    <g transform="rotate(-7.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#A855F7" opacity="0.95"/></g>
+    <g transform="rotate(7.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#FB923C" opacity="0.95"/></g>
+    <g transform="rotate(22.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#22D3EE" opacity="0.95"/></g>
+    <g transform="rotate(37.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#10B981" opacity="0.95"/></g>
+    <g transform="rotate(52.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#3B82F6" opacity="0.95"/></g>
+    <g transform="rotate(67.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#06D6A0" opacity="0.95"/></g>
+    <g transform="rotate(82.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#C026D3" opacity="0.95"/></g>
+    <g transform="rotate(97.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#94A3B8" opacity="0.85"/></g>
+    <g transform="rotate(112.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#78716C" opacity="0.85"/></g>
+    <g transform="rotate(127.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#6B7280" opacity="0.85"/></g>
+    <g transform="rotate(142.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#64748B" opacity="0.85"/></g>
+    <g transform="rotate(157.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#6366F1" opacity="0.9"/></g>
+    <g transform="rotate(172.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#CA8A04" opacity="0.9"/></g>
+    <g transform="rotate(187.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#F59E0B" opacity="0.9"/></g>
+    <g transform="rotate(202.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#475569" opacity="0.9"/></g>
+    <g transform="rotate(217.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#DC2626" opacity="0.9"/></g>
+    <g transform="rotate(232.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#B91C1C" opacity="0.9"/></g>
+    <g transform="rotate(247.5)"><path d="M0,-210 L15,-100 L-15,-100 Z" fill="#EF4444" opacity="0.9"/></g>
+
+    <!-- Inner white core -->
+    <circle r="95" fill="url(#coreA)"/>
+    <!-- Monogram "iF" -->
+    <text x="0" y="18" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-weight="800" font-size="92" fill="#050505" letter-spacing="-6">iF</text>
+  </g>
+</svg>

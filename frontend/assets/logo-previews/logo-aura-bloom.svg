@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Variant 2: AURA BLOOM — smooth conic gradient halo + monogram -->
+  <defs>
+    <radialGradient id="coreB" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.85"/>
+    </radialGradient>
+
+    <!-- Outer rainbow ring using mask + rotating gradient blocks -->
+    <mask id="ringMask">
+      <rect width="512" height="512" fill="black"/>
+      <circle cx="256" cy="256" r="200" fill="white"/>
+      <circle cx="256" cy="256" r="115" fill="black"/>
+    </mask>
+
+    <filter id="glow2">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="512" height="512" fill="#050505" rx="96" ry="96"/>
+
+  <g mask="url(#ringMask)">
+    <!-- 24 sectors of 15 degrees each — rainbow ring -->
+    <g transform="translate(256 256)">
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(-97.5)" fill="#FACC15"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(-82.5)" fill="#FFD166"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(-67.5)" fill="#EC4899"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(-52.5)" fill="#FF7A00"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(-37.5)" fill="#F59E0B"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(-22.5)" fill="#38BDF8"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(-7.5)" fill="#A855F7"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(7.5)" fill="#FB923C"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(22.5)" fill="#22D3EE"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(37.5)" fill="#10B981"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(52.5)" fill="#3B82F6"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(67.5)" fill="#06D6A0"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(82.5)" fill="#C026D3"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(97.5)" fill="#94A3B8"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(112.5)" fill="#78716C"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(127.5)" fill="#6B7280"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(142.5)" fill="#64748B"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(157.5)" fill="#6366F1"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(172.5)" fill="#CA8A04"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(187.5)" fill="#D97706"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(202.5)" fill="#475569"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(217.5)" fill="#DC2626"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(232.5)" fill="#B91C1C"/>
+      <path d="M0,0 L210,0 A210,210 0 0,1 203,54 Z" transform="rotate(247.5)" fill="#EF4444"/>
+    </g>
+  </g>
+
+  <!-- Center white glyph -->
+  <g filter="url(#glow2)">
+    <circle cx="256" cy="256" r="110" fill="url(#coreB)"/>
+    <text x="256" y="286" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-weight="900" font-size="110" fill="#050505" letter-spacing="-8">iF</text>
+  </g>
+</svg>
