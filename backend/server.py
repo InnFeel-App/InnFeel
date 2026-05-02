@@ -326,13 +326,17 @@ async def logout(response: Response):
 # Moods
 # =========================================================================
 async def compute_streak(user_id: str) -> int:
-    # count consecutive days ending today with a mood drop
+    # Single query: fetch distinct day_keys for this user (last 400 days worth), count consecutive days ending today.
+    cursor = db.moods.find({"user_id": user_id}, {"_id": 0, "day_key": 1}).sort("day_key", -1)
+    rows = await cursor.to_list(400)
+    if not rows:
+        return 0
+    posted_days = {r["day_key"] for r in rows}
     streak = 0
     d = now_utc()
-    for _ in range(365):
+    for _ in range(400):
         key = d.strftime("%Y-%m-%d")
-        found = await db.moods.find_one({"user_id": user_id, "day_key": key})
-        if found:
+        if key in posted_days:
             streak += 1
             d = d - timedelta(days=1)
         else:
@@ -515,8 +519,11 @@ async def stats(user: dict = Depends(get_current_user)):
             since = now_utc() - timedelta(days=days)
             return since
         for days in (30, 90, 365):
-            since = since_d = now_utc() - timedelta(days=days)
-            ms = await db.moods.find({"user_id": user["user_id"], "created_at": {"$gte": since}}, {"_id": 0, "photo_b64": 0, "audio_b64": 0}).to_list(2000)
+            since = now_utc() - timedelta(days=days)
+            ms = await db.moods.find(
+                {"user_id": user["user_id"], "created_at": {"$gte": since}},
+                {"_id": 0, "emotion": 1, "intensity": 1, "created_at": 1},
+            ).to_list(2000)
             d2 = {k: 0 for k in EMOTIONS.keys()}
             intens = []
             for m in ms:

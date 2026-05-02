@@ -105,7 +105,3 @@ const styles = StyleSheet.create({
   proTitle: { color: "#FDE047", fontWeight: "700", fontSize: 18 },
   proSub: { color: COLORS.textSecondary, fontSize: 13, marginTop: 2 },
 });
- backgroundColor: "rgba(253,224,71,0.07)", alignItems: "center" },
-  proTitle: { color: "#FDE047", fontWeight: "700", fontSize: 18 },
-  proSub: { color: COLORS.textSecondary, fontSize: 13, marginTop: 2 },
-});
