@@ -1,16 +1,16 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { setItem, getItem, removeItem } from "./storage";
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || "";
 const TOKEN_KEY = "mooddrop_access_token";
 
 export async function saveToken(token: string) {
-  await AsyncStorage.setItem(TOKEN_KEY, token);
+  await setItem(TOKEN_KEY, token);
 }
 export async function clearToken() {
-  await AsyncStorage.removeItem(TOKEN_KEY);
+  await removeItem(TOKEN_KEY);
 }
 export async function getToken(): Promise<string | null> {
-  return AsyncStorage.getItem(TOKEN_KEY);
+  return getItem(TOKEN_KEY);
 }
 
 export async function api<T = any>(
