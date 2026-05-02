@@ -296,19 +296,24 @@ async def startup():
     await db.conversations.create_index("participants")
     await db.wellness_cache.create_index([("user_id", 1), ("emotion", 1), ("day_key", 1)], unique=True)
     # one-time migration: rename legacy admin@mooddrop.app → admin@innfeel.app
+    # Order-safe: if BOTH rows exist, delete the legacy one first (no rename).
     legacy_admin = await db.users.find_one({"email": "admin@mooddrop.app"})
     if legacy_admin:
         new_admin_exists = await db.users.find_one({"email": "admin@innfeel.app"})
         if new_admin_exists:
-            # An InnFeel admin was already seeded — just remove the legacy record
             await db.users.delete_one({"user_id": legacy_admin["user_id"]})
             logger.info("Removed legacy admin@mooddrop.app (already migrated)")
         else:
-            await db.users.update_one(
-                {"user_id": legacy_admin["user_id"]},
-                {"$set": {"email": "admin@innfeel.app"}},
-            )
-            logger.info("Migrated admin@mooddrop.app → admin@innfeel.app")
+            try:
+                await db.users.update_one(
+                    {"user_id": legacy_admin["user_id"]},
+                    {"$set": {"email": "admin@innfeel.app"}},
+                )
+                logger.info("Migrated admin@mooddrop.app → admin@innfeel.app")
+            except Exception as e:
+                # If a duplicate appeared between read and write, drop legacy and continue.
+                logger.warning(f"Migration rename hit a race ({e}); deleting legacy row.")
+                await db.users.delete_one({"user_id": legacy_admin["user_id"]})
 
     # seed demo admin
     existing = await db.users.find_one({"email": "admin@innfeel.app"})
