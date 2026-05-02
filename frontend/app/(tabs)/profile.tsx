@@ -87,8 +87,10 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#050505" },
   scroll: { padding: 20, paddingTop: 20 },
   header: { alignItems: "center", marginBottom: 24 },
-  avatar: { width: 92, height: 92, borderRadius: 46, alignItems: "center", justifyContent: "center", marginBottom: 12 },
+  avatar: { width: 92, height: 92, borderRadius: 46, alignItems: "center", justifyContent: "center", marginBottom: 12, overflow: "hidden" },
+  avatarImg: { width: 92, height: 92 },
   avatarTxt: { color: "#000", fontWeight: "800", fontSize: 36 },
+  editDot: { position: "absolute", right: 0, bottom: 12, width: 28, height: 28, borderRadius: 14, backgroundColor: "#fff", alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "#050505" },
   name: { color: "#fff", fontSize: 24, fontWeight: "700" },
   email: { color: COLORS.textSecondary, marginTop: 2 },
   proBadge: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 8, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: "rgba(253,224,71,0.15)", borderWidth: 1, borderColor: "rgba(253,224,71,0.4)", borderRadius: 999 },
@@ -100,6 +102,10 @@ const styles = StyleSheet.create({
   link: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 16, paddingHorizontal: 16, borderRadius: 18, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)", marginBottom: 10 },
   linkTxt: { color: "#fff", fontSize: 15, flex: 1 },
   proCard: { padding: 16, borderRadius: 20, borderWidth: 1, borderColor: "rgba(253,224,71,0.35)", backgroundColor: "rgba(253,224,71,0.07)", alignItems: "center" },
+  proTitle: { color: "#FDE047", fontWeight: "700", fontSize: 18 },
+  proSub: { color: COLORS.textSecondary, fontSize: 13, marginTop: 2 },
+});
+ backgroundColor: "rgba(253,224,71,0.07)", alignItems: "center" },
   proTitle: { color: "#FDE047", fontWeight: "700", fontSize: 18 },
   proSub: { color: COLORS.textSecondary, fontSize: 13, marginTop: 2 },
 });

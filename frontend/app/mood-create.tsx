@@ -38,10 +38,34 @@ export default function MoodCreate() {
   const soundRef = useRef<Audio.Sound | null>(null);
   const timerRef = useRef<any>(null);
 
+  // Music track (Pro)
+  const [tracks, setTracks] = useState<any[]>([]);
+  const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
+  const [previewingId, setPreviewingId] = useState<string | null>(null);
+  const musicSoundRef = useRef<Audio.Sound | null>(null);
+
+  useEffect(() => {
+    if (!pro) return;
+    api<{ tracks: any[] }>("/music/tracks").then((r) => setTracks(r.tracks)).catch(() => {});
+  }, [pro]);
+
+  const toggleTrackPreview = async (track: any) => {
+    try {
+      if (musicSoundRef.current) { await musicSoundRef.current.unloadAsync().catch(() => {}); musicSoundRef.current = null; }
+      if (previewingId === track.id) { setPreviewingId(null); return; }
+      const { sound } = await Audio.Sound.createAsync({ uri: track.url });
+      musicSoundRef.current = sound;
+      setPreviewingId(track.id);
+      sound.setOnPlaybackStatusUpdate((s: any) => { if (s.didJustFinish) setPreviewingId(null); });
+      await sound.playAsync();
+    } catch { setPreviewingId(null); }
+  };
+
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       if (soundRef.current) { soundRef.current.unloadAsync().catch(() => {}); }
+      if (musicSoundRef.current) { musicSoundRef.current.unloadAsync().catch(() => {}); }
     };
   }, []);
 
@@ -126,6 +150,7 @@ export default function MoodCreate() {
           photo_b64: photo, text: pro ? note || null : null,
           audio_b64: pro ? audioB64 : null,
           audio_seconds: pro && audioB64 ? Math.max(1, recSeconds) : null,
+          music_track_id: pro ? selectedTrackId : null,
           privacy,
         },
       });
@@ -252,6 +277,44 @@ export default function MoodCreate() {
                     </View>
                   )}
                 </View>
+
+                <Text style={styles.section}>Background music · Pro ✦</Text>
+                <View style={styles.musicList}>
+                  {tracks.length === 0 ? (
+                    <Text style={styles.musicEmpty}>Loading tracks…</Text>
+                  ) : (
+                    tracks.map((tr) => {
+                      const sel = selectedTrackId === tr.id;
+                      const prv = previewingId === tr.id;
+                      return (
+                        <View
+                          key={tr.id}
+                          testID={`music-track-${tr.id}`}
+                          style={[styles.musicRow, sel && { borderColor: auraColor, backgroundColor: auraColor + "1A" }]}
+                        >
+                          <TouchableOpacity
+                            testID={`music-preview-${tr.id}`}
+                            onPress={() => toggleTrackPreview(tr)}
+                            style={[styles.musicPlay, { backgroundColor: auraColor }]}
+                          >
+                            <Ionicons name={prv ? "pause" : "play"} size={14} color="#000" />
+                          </TouchableOpacity>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.musicName}>{tr.name}</Text>
+                            <Text style={styles.musicVibe}>{tr.vibe}</Text>
+                          </View>
+                          <TouchableOpacity
+                            testID={`music-select-${tr.id}`}
+                            onPress={() => setSelectedTrackId(sel ? null : tr.id)}
+                            style={[styles.musicSel, sel && { backgroundColor: auraColor, borderColor: auraColor }]}
+                          >
+                            {sel ? <Ionicons name="checkmark" size={14} color="#000" /> : <Text style={styles.musicSelTxt}>Select</Text>}
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    })
+                  )}
+                </View>
               </>
             ) : (
               <View style={styles.proLock}>
@@ -315,6 +378,14 @@ const styles = StyleSheet.create({
   waveformRow: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", height: 40 },
   audioDur: { color: COLORS.textSecondary, fontSize: 12, width: 32, textAlign: "right" },
   clearBtn: { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.06)" },
+  musicList: { gap: 8 },
+  musicEmpty: { color: COLORS.textTertiary, fontSize: 12, padding: 10 },
+  musicRow: { flexDirection: "row", alignItems: "center", gap: 12, padding: 12, borderRadius: 16, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)" },
+  musicPlay: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" },
+  musicName: { color: "#fff", fontWeight: "600", fontSize: 14 },
+  musicVibe: { color: COLORS.textTertiary, fontSize: 11, marginTop: 2 },
+  musicSel: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: COLORS.border },
+  musicSelTxt: { color: COLORS.textSecondary, fontSize: 11, fontWeight: "600" },
   privacyRow: { flexDirection: "row", gap: 8 },
   privChip: { flex: 1, paddingVertical: 12, borderRadius: 14, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)", alignItems: "center" },
   privChipActive: { backgroundColor: "rgba(255,255,255,0.12)", borderColor: "#fff" },

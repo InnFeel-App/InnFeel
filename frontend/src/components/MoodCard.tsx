@@ -16,8 +16,11 @@ type Mood = {
   audio_b64?: string | null;
   has_audio?: boolean;
   audio_seconds?: number | null;
+  music?: { id: string; name: string; url: string; vibe?: string } | null;
+  music_track_id?: string | null;
   author_name?: string;
   author_color?: string;
+  author_avatar_b64?: string | null;
   created_at?: string;
   reactions?: any[];
 };
@@ -76,8 +79,12 @@ export default function MoodCard({ mood, onReact, showAuthor = true, testIDPrefi
       <View style={styles.headerRow}>
         {showAuthor ? (
           <View style={styles.authorRow}>
-            <View style={[styles.avatar, { backgroundColor: mood.author_color || em.hex }]}>
-              <Text style={styles.avatarTxt}>{(mood.author_name || "?").slice(0, 1).toUpperCase()}</Text>
+            <View style={[styles.avatar, { backgroundColor: mood.author_color || em.hex, overflow: "hidden" }]}>
+              {mood.author_avatar_b64 ? (
+                <Image source={{ uri: `data:image/jpeg;base64,${mood.author_avatar_b64}` }} style={{ width: 32, height: 32 }} />
+              ) : (
+                <Text style={styles.avatarTxt}>{(mood.author_name || "?").slice(0, 1).toUpperCase()}</Text>
+              )}
             </View>
             <Text style={styles.authorName}>{mood.author_name || "You"}</Text>
           </View>
@@ -87,6 +94,13 @@ export default function MoodCard({ mood, onReact, showAuthor = true, testIDPrefi
           <Text style={styles.emotionTxt}>{em.label}</Text>
         </View>
       </View>
+
+      {mood.music ? (
+        <View style={[styles.musicPill, { borderColor: em.hex }]}>
+          <Ionicons name="musical-note" size={12} color={em.hex} />
+          <Text style={styles.musicPillTxt}>{mood.music.name}</Text>
+        </View>
+      ) : null}
 
       <Text style={styles.word}>{mood.word}</Text>
 
@@ -206,6 +220,8 @@ const styles = StyleSheet.create({
   audioBtn: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
   audioWaves: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", height: 34 },
   audioLabel: { color: COLORS.textSecondary, fontSize: 11, fontWeight: "600" },
+  musicPill: { flexDirection: "row", alignItems: "center", gap: 5, alignSelf: "flex-start", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, borderWidth: 1, backgroundColor: "rgba(0,0,0,0.25)", marginTop: 6, marginBottom: 4 },
+  musicPillTxt: { color: "#fff", fontSize: 11, fontWeight: "600" },
   reactRow: { flexDirection: "row", gap: 8, marginTop: 14, alignItems: "center" },
   reactBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.06)", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: COLORS.border },
   reactEmoji: { color: "#fff", fontSize: 16 },

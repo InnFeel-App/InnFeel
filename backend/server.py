@@ -37,6 +37,17 @@ REFRESH_TOKEN_TTL_DAYS = 30
 
 PRO_PRICE_USD = 4.99  # monthly
 
+# Predefined background music library (Pro). Short royalty-free loops.
+MUSIC_TRACKS = [
+    {"id": "warm_glow", "name": "Warm Glow", "vibe": "love · nostalgia", "url": "https://cdn.pixabay.com/download/audio/2022/10/25/audio_946bc6c771.mp3?filename=calm-background-music-121519.mp3", "duration": 20},
+    {"id": "soft_rain", "name": "Soft Rain", "vibe": "calm · peace", "url": "https://cdn.pixabay.com/download/audio/2022/03/24/audio_ff1acc2bd4.mp3?filename=ambient-piano-amp-strings-10711.mp3", "duration": 20},
+    {"id": "sunrise", "name": "Sunrise", "vibe": "joy · excitement", "url": "https://cdn.pixabay.com/download/audio/2022/08/23/audio_d1e4cb0e52.mp3?filename=sunset-vibes-ambient-110241.mp3", "duration": 20},
+    {"id": "midnight", "name": "Midnight", "vibe": "sadness · nostalgia", "url": "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=relaxing-145038.mp3", "duration": 20},
+    {"id": "pulse", "name": "Pulse", "vibe": "focus · anger", "url": "https://cdn.pixabay.com/download/audio/2022/10/30/audio_347111d5e8.mp3?filename=tense-126748.mp3", "duration": 20},
+    {"id": "bloom", "name": "Bloom", "vibe": "love · peace", "url": "https://cdn.pixabay.com/download/audio/2023/06/22/audio_a2fa7f2fd8.mp3?filename=relaxing-mountains-rivers-streams-running-water-18178.mp3", "duration": 20},
+]
+MUSIC_TRACK_IDS = {t["id"] for t in MUSIC_TRACKS}
+
 # Emotion color palette
 EMOTIONS = {
     "calm": "#60A5FA",
@@ -158,6 +169,7 @@ def sanitize_user(u: dict) -> dict:
         "email": u["email"],
         "name": u.get("name", ""),
         "avatar_color": u.get("avatar_color", "#A78BFA"),
+        "avatar_b64": u.get("avatar_b64"),
         "pro": is_pro(u),
         "pro_expires_at": u.get("pro_expires_at").isoformat() if isinstance(u.get("pro_expires_at"), datetime) else u.get("pro_expires_at"),
         "friend_count": u.get("friend_count", 0),
@@ -188,7 +200,12 @@ class MoodDropIn(BaseModel):
     text: Optional[str] = Field(default=None, max_length=280)
     audio_b64: Optional[str] = None  # base64 audio
     audio_seconds: Optional[int] = Field(default=None, ge=1, le=30)
+    music_track_id: Optional[str] = None  # Pro: predefined music track
     privacy: Literal["friends", "close", "private"] = "friends"
+
+
+class AvatarIn(BaseModel):
+    avatar_b64: str = Field(min_length=1)
 
 
 class ReactionIn(BaseModel):
@@ -346,6 +363,14 @@ async def create_mood(data: MoodDropIn, user: dict = Depends(get_current_user)):
             raise HTTPException(status_code=403, detail="Intensity above 5 is a Pro feature")
         if data.text or data.audio_b64:
             raise HTTPException(status_code=403, detail="Text & audio notes are Pro features")
+        if data.music_track_id:
+            raise HTTPException(status_code=403, detail="Background music is a Pro feature")
+    if data.music_track_id and data.music_track_id not in MUSIC_TRACK_IDS:
+        raise HTTPException(status_code=400, detail="Unknown music track")
+
+    music_obj = None
+    if data.music_track_id:
+        music_obj = next((t for t in MUSIC_TRACKS if t["id"] == data.music_track_id), None)
 
     mood_id = f"mood_{uuid.uuid4().hex[:12]}"
     doc = {
@@ -361,6 +386,8 @@ async def create_mood(data: MoodDropIn, user: dict = Depends(get_current_user)):
         "audio_b64": data.audio_b64,
         "audio_seconds": data.audio_seconds if data.audio_b64 else None,
         "has_audio": bool(data.audio_b64),
+        "music_track_id": data.music_track_id,
+        "music": music_obj,
         "privacy": data.privacy,
         "reactions": [],
         "created_at": now_utc(),
@@ -521,6 +548,17 @@ async def stats(user: dict = Depends(get_current_user)):
 # =========================================================================
 # Friends
 # =========================================================================
+@api.get("/music/tracks")
+async def music_tracks(user: dict = Depends(get_current_user)):
+    return {"tracks": MUSIC_TRACKS}
+
+
+@api.post("/profile/avatar")
+async def update_avatar(data: AvatarIn, user: dict = Depends(get_current_user)):
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"avatar_b64": data.avatar_b64}})
+    return {"ok": True}
+
+
 @api.get("/friends")
 async def list_friends(user: dict = Depends(get_current_user)):
     fships = await db.friendships.find({"user_id": user["user_id"]}).to_list(500)

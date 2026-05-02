@@ -1,19 +1,35 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Alert, RefreshControl } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Alert, RefreshControl, Linking, Share } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "expo-router";
 import RadialAura from "../../src/components/RadialAura";
 import Button from "../../src/components/Button";
 import { api } from "../../src/api";
+import { useAuth } from "../../src/auth";
 import { COLORS } from "../../src/theme";
 import { t } from "../../src/i18n";
 import { Ionicons } from "@expo/vector-icons";
 
 export default function Friends() {
+  const { user } = useAuth();
   const [friends, setFriends] = useState<any[]>([]);
   const [email, setEmail] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+
+  const inviteText = `Hey! I'm on MoodDrop — we share our mood once a day in color. Join me: https://mooddrop.app ✦${user?.email ? ` (add me: ${user.email})` : ""}`;
+
+  const inviteWhatsApp = async () => {
+    const url = `whatsapp://send?text=${encodeURIComponent(inviteText)}`;
+    const ok = await Linking.canOpenURL(url);
+    if (ok) { Linking.openURL(url); return; }
+    // Fallback to wa.me universal link
+    Linking.openURL(`https://wa.me/?text=${encodeURIComponent(inviteText)}`);
+  };
+
+  const inviteGeneric = async () => {
+    try { await Share.share({ message: inviteText }); } catch {}
+  };
 
   const load = useCallback(async () => {
     try { const r = await api<any>("/friends"); setFriends(r.friends || []); } catch {}
@@ -62,6 +78,17 @@ export default function Friends() {
           {err ? <Text style={styles.err}>{err}</Text> : null}
           <Text style={styles.hint}>Try: luna@mooddrop.app · rio@mooddrop.app · sage@mooddrop.app</Text>
 
+          <View style={styles.inviteRow}>
+            <TouchableOpacity testID="invite-whatsapp" onPress={inviteWhatsApp} style={[styles.inviteBtn, { backgroundColor: "#25D366" }]}>
+              <Ionicons name="logo-whatsapp" size={18} color="#fff" />
+              <Text style={styles.inviteTxt}>Invite via WhatsApp</Text>
+            </TouchableOpacity>
+            <TouchableOpacity testID="invite-share" onPress={inviteGeneric} style={[styles.inviteBtn, { backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: COLORS.border }]}>
+              <Ionicons name="share-outline" size={18} color="#fff" />
+              <Text style={styles.inviteTxt}>More</Text>
+            </TouchableOpacity>
+          </View>
+
           <View style={{ height: 20 }} />
           {friends.length === 0 ? (
             <Text style={styles.empty}>No friends yet. Add someone by email to start sharing moods.</Text>
@@ -98,6 +125,9 @@ const styles = StyleSheet.create({
   addBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" },
   err: { color: "#F87171", marginTop: 8 },
   hint: { color: COLORS.textTertiary, fontSize: 11, marginTop: 8 },
+  inviteRow: { flexDirection: "row", gap: 10, marginTop: 14 },
+  inviteBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14, borderRadius: 16 },
+  inviteTxt: { color: "#fff", fontWeight: "700", fontSize: 13 },
   empty: { color: COLORS.textSecondary, textAlign: "center", marginTop: 40 },
   row: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: 20, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)", marginBottom: 10 },
   avatar: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
