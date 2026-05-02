@@ -522,7 +522,7 @@ async def friends_feed(user: dict = Depends(get_current_user)):
         if "has_audio" not in it:
             it["has_audio"] = False
     # attach author info
-    authors = await db.users.find({"user_id": {"$in": friend_ids}}, {"_id": 0, "user_id": 1, "name": 1, "avatar_color": 1}).to_list(1000)
+    authors = await db.users.find({"user_id": {"$in": friend_ids}}, {"_id": 0, "user_id": 1, "name": 1, "avatar_color": 1, "avatar_b64": 1}).to_list(1000)
     author_map = {a["user_id"]: a for a in authors}
     for it in items:
         if isinstance(it.get("created_at"), datetime):
@@ -530,6 +530,7 @@ async def friends_feed(user: dict = Depends(get_current_user)):
         a = author_map.get(it["user_id"], {})
         it["author_name"] = a.get("name", "Friend")
         it["author_color"] = a.get("avatar_color", "#A78BFA")
+        it["author_avatar_b64"] = a.get("avatar_b64")
     return {"locked": False, "items": items}
 
 

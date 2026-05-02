@@ -161,9 +161,9 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
       <View style={styles.headerRow}>
         {showAuthor ? (
           <View style={styles.authorRow}>
-            <View style={[styles.avatar, { backgroundColor: mood.author_color || em.hex, overflow: "hidden" }]}>
+            <View style={[styles.avatar, { backgroundColor: mood.author_color || em.hex, overflow: "hidden", borderColor: em.hex + "88" }]}>
               {mood.author_avatar_b64 ? (
-                <Image source={{ uri: `data:image/jpeg;base64,${mood.author_avatar_b64}` }} style={{ width: 32, height: 32 }} />
+                <Image source={{ uri: `data:image/jpeg;base64,${mood.author_avatar_b64}` }} style={{ width: 40, height: 40 }} />
               ) : (
                 <Text style={styles.avatarTxt}>{(mood.author_name || "?").slice(0, 1).toUpperCase()}</Text>
               )}
@@ -343,9 +343,9 @@ const styles = StyleSheet.create({
   },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
   authorRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  avatar: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" },
-  avatarTxt: { color: "#000", fontWeight: "700" },
-  authorName: { color: COLORS.textPrimary, fontWeight: "600" },
+  avatar: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", borderWidth: 2 },
+  avatarTxt: { color: "#000", fontWeight: "700", fontSize: 16 },
+  authorName: { color: COLORS.textPrimary, fontWeight: "600", fontSize: 14 },
   emotionPill: {
     flexDirection: "row",
     alignItems: "center",

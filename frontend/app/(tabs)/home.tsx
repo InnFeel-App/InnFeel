@@ -127,7 +127,15 @@ export default function Home() {
                   </TouchableOpacity>
                 </View>
               </View>
-              <MoodCard mood={{ ...todayMood, author_name: user?.name, author_color: user?.avatar_color }} testIDPrefix="my-mood" />
+              <MoodCard
+                mood={{
+                  ...todayMood,
+                  author_name: user?.name,
+                  author_color: user?.avatar_color,
+                  author_avatar_b64: (user as any)?.avatar_b64,
+                }}
+                testIDPrefix="my-mood"
+              />
             </View>
           )}
 
