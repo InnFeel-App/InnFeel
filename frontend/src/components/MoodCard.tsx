@@ -317,13 +317,30 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
                 <Text style={styles.actionLabel}>Message</Text>
               </TouchableOpacity>
             ) : null}
-            {mood.reactions && mood.reactions.length > 0 ? (
-              <View style={styles.reactCountPill}>
-                <Ionicons name="heart" size={11} color={em.hex} />
-                <Text style={styles.reactCountTxt}>{mood.reactions.length}</Text>
-              </View>
-            ) : null}
           </View>
+
+          {mood.reactions && mood.reactions.length > 0 ? (
+            <View style={styles.reactBreakdownRow}>
+              {(() => {
+                const counts: Record<string, number> = {};
+                for (const r of mood.reactions) {
+                  counts[r.emoji] = (counts[r.emoji] || 0) + 1;
+                }
+                return REACTIONS
+                  .filter((r) => counts[r.key])
+                  .map((r) => (
+                    <View key={r.key} style={[styles.reactCountChip, { borderColor: em.hex + "55" }]}>
+                      <Ionicons name={r.icon as any} size={12} color={em.hex} />
+                      <Text style={styles.reactCountChipTxt}>{counts[r.key]}</Text>
+                    </View>
+                  ));
+              })()}
+              <Text style={styles.reactSummaryTxt} numberOfLines={1}>
+                {mood.reactions.slice(0, 3).map((r: any) => r.name).filter(Boolean).join(", ")}
+                {mood.reactions.length > 3 ? ` +${mood.reactions.length - 3}` : ""}
+              </Text>
+            </View>
+          ) : null}
         </View>
       ) : null}
       <CommentsSheet visible={commentsOpen} moodId={mood.mood_id} emotion={mood.emotion} onClose={() => setCommentsOpen(false)} />
@@ -418,4 +435,17 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   reactCountTxt: { color: "#fff", fontSize: 11, fontWeight: "700" },
+  reactBreakdownRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 10 },
+  reactCountChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderWidth: 1,
+  },
+  reactCountChipTxt: { color: "#fff", fontSize: 11, fontWeight: "700" },
+  reactSummaryTxt: { color: COLORS.textTertiary, fontSize: 11, marginLeft: 4, flex: 1 },
 });

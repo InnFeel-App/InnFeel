@@ -94,8 +94,16 @@ def now_utc() -> datetime:
 
 
 def today_key(d: Optional[datetime] = None) -> str:
+    """Return the key for the current "aura day".
+
+    An aura day runs from 12:00 UTC to 12:00 UTC the next day — so an aura
+    posted at 2 PM Monday is still visible until noon Tuesday. This gives
+    users a full ~24h window, aligned with a noon daily reminder.
+    """
     d = d or now_utc()
-    return d.strftime("%Y-%m-%d")
+    # shift 12h back: so before noon UTC we're still "yesterday's day"
+    anchor = d - timedelta(hours=12)
+    return anchor.strftime("%Y-%m-%d")
 
 
 def hash_password(pw: str) -> str:
@@ -295,6 +303,8 @@ async def startup():
     await db.messages.create_index([("conversation_id", 1), ("at", 1)])
     await db.conversations.create_index("participants")
     await db.wellness_cache.create_index([("user_id", 1), ("emotion", 1), ("day_key", 1)], unique=True)
+    await db.activity.create_index([("user_id", 1), ("at", -1)])
+    await db.activity.create_index([("user_id", 1), ("read", 1)])
     # one-time migration: rename legacy admin@mooddrop.app → admin@innfeel.app
     # Order-safe: if BOTH rows exist, delete the legacy one first (no rename).
     legacy_admin = await db.users.find_one({"email": "admin@mooddrop.app"})
@@ -612,6 +622,24 @@ async def add_comment(mood_id: str, data: CommentIn, user: dict = Depends(get_cu
         "at": now_utc().isoformat(),
     }
     await db.moods.update_one({"mood_id": mood_id}, {"$push": {"comments": comment}})
+    # Record activity item for the aura owner (unless they're commenting on their own)
+    if mood["user_id"] != user["user_id"]:
+        await db.activity.insert_one({
+            "activity_id": f"act_{uuid.uuid4().hex[:12]}",
+            "user_id": mood["user_id"],
+            "from_user_id": user["user_id"],
+            "from_name": user.get("name", ""),
+            "from_avatar_color": user.get("avatar_color", "#A78BFA"),
+            "from_avatar_b64": user.get("avatar_b64"),
+            "kind": "comment",
+            "text": data.text.strip()[:140],
+            "mood_id": mood_id,
+            "mood_word": mood.get("word", ""),
+            "mood_emotion": mood.get("emotion", ""),
+            "mood_color": mood.get("color"),
+            "at": now_utc(),
+            "read": False,
+        })
     return {"ok": True, "comment": comment}
 
 
@@ -634,13 +662,68 @@ async def react(mood_id: str, data: ReactionIn, user: dict = Depends(get_current
     mood = await db.moods.find_one({"mood_id": mood_id})
     if not mood:
         raise HTTPException(status_code=404, detail="Aura not found")
-    # prevent duplicate from same user
-    new_reaction = {"user_id": user["user_id"], "name": user.get("name", ""), "emoji": data.emoji, "at": now_utc().isoformat()}
+    # prevent duplicate from same user (replace previous reaction)
+    new_reaction = {"user_id": user["user_id"], "name": user.get("name", ""), "emoji": data.emoji, "at": now_utc()}
     await db.moods.update_one(
         {"mood_id": mood_id},
         {"$pull": {"reactions": {"user_id": user["user_id"]}}}
     )
     await db.moods.update_one({"mood_id": mood_id}, {"$push": {"reactions": new_reaction}})
+
+    # Record activity item so the author sees who reacted
+    if mood["user_id"] != user["user_id"]:  # don't notify self-reactions
+        await db.activity.insert_one({
+            "activity_id": f"act_{uuid.uuid4().hex[:12]}",
+            "user_id": mood["user_id"],                # the recipient (aura owner)
+            "from_user_id": user["user_id"],
+            "from_name": user.get("name", ""),
+            "from_avatar_color": user.get("avatar_color", "#A78BFA"),
+            "from_avatar_b64": user.get("avatar_b64"),
+            "kind": "reaction",
+            "emoji": data.emoji,
+            "mood_id": mood_id,
+            "mood_word": mood.get("word", ""),
+            "mood_emotion": mood.get("emotion", ""),
+            "mood_color": mood.get("color"),
+            "at": now_utc(),
+            "read": False,
+        })
+
+    # Return a fresh aggregated breakdown so the client can rerender without refetch
+    fresh = await db.moods.find_one({"mood_id": mood_id}, {"_id": 0, "reactions": 1})
+    return {"ok": True, "reactions": fresh.get("reactions", []) if fresh else []}
+
+
+@api.get("/activity")
+async def activity_feed(user: dict = Depends(get_current_user), limit: int = 50):
+    """Activity feed — reactions and comments someone else made on YOUR auras.
+
+    Returns newest first, capped at `limit` items.
+    """
+    cursor = db.activity.find({"user_id": user["user_id"]}, {"_id": 0}).sort("at", -1).limit(limit)
+    items = await cursor.to_list(limit)
+    unread = 0
+    for it in items:
+        if isinstance(it.get("at"), datetime):
+            it["at"] = it["at"].isoformat()
+        if not it.get("read", False):
+            unread += 1
+    return {"items": items, "unread": unread}
+
+
+@api.get("/activity/unread-count")
+async def activity_unread_count(user: dict = Depends(get_current_user)):
+    """Lightweight endpoint for the tab/home badge."""
+    n = await db.activity.count_documents({"user_id": user["user_id"], "read": False})
+    return {"unread": n}
+
+
+@api.post("/activity/mark-read")
+async def activity_mark_read(user: dict = Depends(get_current_user)):
+    await db.activity.update_many(
+        {"user_id": user["user_id"], "read": False},
+        {"$set": {"read": True}},
+    )
     return {"ok": True}
 
 

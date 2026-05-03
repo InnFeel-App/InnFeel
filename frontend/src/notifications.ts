@@ -5,10 +5,11 @@ const KEY_LAST_SCHEDULED = "innfeel_last_notif_scheduled_day";
 const KEY_NOTIF_HOUR = "innfeel_notif_hour";
 const KEY_NOTIF_MINUTE = "innfeel_notif_minute";
 
-// Defaults: 19:30 — create an evening ritual (BeReal-style habit time).
-export const DEFAULT_HOUR = 19;
-export const DEFAULT_MINUTE = 30;
-export const WINDOW_MIN_HOUR = 19;
+// Defaults: 12:00 (noon) — auras run noon→noon, so this gives users a full
+// day to drop and see their friends' auras (rather than a short evening window).
+export const DEFAULT_HOUR = 12;
+export const DEFAULT_MINUTE = 0;
+export const WINDOW_MIN_HOUR = 8;
 export const WINDOW_MAX_HOUR = 21;
 
 Notifications.setNotificationHandler({

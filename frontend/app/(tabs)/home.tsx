@@ -41,10 +41,29 @@ export default function Home() {
 
   const react = async (mood_id: string, emoji: string) => {
     try {
-      await api(`/moods/${mood_id}/react`, { method: "POST", body: { emoji } });
-      await load();
+      const r = await api<{ reactions: any[] }>(`/moods/${mood_id}/react`, { method: "POST", body: { emoji } });
+      setFeed((f) => ({
+        ...f,
+        items: f.items.map((m) => (m.mood_id === mood_id ? { ...m, reactions: r.reactions || [] } : m)),
+      }));
+      setTodayMood((tm: any) => (tm && tm.mood_id === mood_id ? { ...tm, reactions: r.reactions || [] } : tm));
     } catch {}
   };
+
+  // Activity bell (reactions/comments on MY auras)
+  const [activityUnread, setActivityUnread] = useState(0);
+  useEffect(() => {
+    let live = true;
+    const poll = async () => {
+      try {
+        const r = await api<{ unread: number }>("/activity/unread-count");
+        if (live) setActivityUnread(r.unread || 0);
+      } catch {}
+    };
+    poll();
+    const id = setInterval(poll, 15000);
+    return () => { live = false; clearInterval(id); };
+  }, []);
 
   const auraColor = todayMood ? EMOTION_COLORS[todayMood.emotion]?.hex || "#A78BFA" : "#A78BFA";
 
@@ -61,9 +80,23 @@ export default function Home() {
               <Text style={styles.hello}>Hello, {user?.name?.split(" ")[0] || "there"}</Text>
               <Text style={styles.dateTxt}>{new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</Text>
             </View>
-            <View style={styles.streak} testID="home-streak">
-              <Ionicons name="flame" size={16} color="#F97316" />
-              <Text style={styles.streakNum}>{user?.streak || 0}</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <TouchableOpacity
+                testID="activity-bell"
+                onPress={() => router.push("/activity" as any)}
+                style={styles.bellBtn}
+              >
+                <Ionicons name="notifications-outline" size={18} color="#fff" />
+                {activityUnread > 0 ? (
+                  <View style={styles.bellBadge}>
+                    <Text style={styles.bellBadgeTxt}>{activityUnread > 9 ? "9+" : activityUnread}</Text>
+                  </View>
+                ) : null}
+              </TouchableOpacity>
+              <View style={styles.streak} testID="home-streak">
+                <Ionicons name="flame" size={16} color="#F97316" />
+                <Text style={styles.streakNum}>{user?.streak || 0}</Text>
+              </View>
             </View>
           </View>
 
@@ -189,6 +222,9 @@ const styles = StyleSheet.create({
   dateTxt: { color: COLORS.textSecondary, fontSize: 13, marginTop: 2 },
   streak: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.04)" },
   streakNum: { color: "#fff", fontWeight: "700" },
+  bellBtn: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: COLORS.border, position: "relative" },
+  bellBadge: { position: "absolute", top: -3, right: -3, minWidth: 16, height: 16, paddingHorizontal: 4, borderRadius: 8, backgroundColor: "#EC4899", alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "#050505" },
+  bellBadgeTxt: { color: "#fff", fontSize: 9, fontWeight: "800" },
   cta: { padding: 24, borderRadius: 28, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.04)", marginBottom: 24 },
   ctaTitle: { color: "#fff", fontSize: 28, fontWeight: "700", letterSpacing: -0.5 },
   ctaSub: { color: COLORS.textSecondary, marginTop: 8 },
