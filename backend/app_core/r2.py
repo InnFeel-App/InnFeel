@@ -23,6 +23,10 @@ R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "")
 R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
 R2_BUCKET = os.environ.get("R2_BUCKET", "")
 R2_ENDPOINT_URL = os.environ.get("R2_ENDPOINT_URL", "")
+# Optional: custom domain for cleaner signed URLs (e.g. https://cdn.innfeel.app).
+# When set, every generated GET URL is host-rewritten to use this base. R2 validates
+# the S3v4 signature against BOTH the S3 endpoint and the connected custom hostname.
+R2_PUBLIC_BASE_URL = os.environ.get("R2_PUBLIC_BASE_URL", "").rstrip("/")
 try:
     R2_PRESIGN_TTL = int(os.environ.get("R2_PRESIGN_TTL_SECONDS", "86400"))
 except Exception:
@@ -90,11 +94,28 @@ def generate_get_url(key: str, expires: Optional[int] = None) -> Optional[str]:
     if not c or not key:
         return None
     try:
-        return c.generate_presigned_url(
+        url = c.generate_presigned_url(
             "get_object",
             Params={"Bucket": R2_BUCKET, "Key": key},
             ExpiresIn=int(expires or R2_PRESIGN_TTL),
         )
+        # If a custom domain (CNAME) is configured, rewrite the hostname. R2 accepts
+        # S3v4-signed requests on the connected custom hostname too.
+        if R2_PUBLIC_BASE_URL:
+            try:
+                from urllib.parse import urlparse, urlunparse
+                parsed = urlparse(url)
+                base = urlparse(R2_PUBLIC_BASE_URL)
+                # Replace scheme + netloc; keep path + query (signature) intact.
+                # Strip the leading bucket segment from the path (path-style → virtual-hosted style).
+                path = parsed.path
+                if path.startswith(f"/{R2_BUCKET}/"):
+                    path = path[len(R2_BUCKET) + 1:]
+                rewritten = urlunparse((base.scheme or "https", base.netloc, path, "", parsed.query, ""))
+                return rewritten
+            except Exception as e:
+                logger.warning(f"R2 URL rewrite failed ({e}); returning original")
+        return url
     except Exception as e:
         logger.warning(f"R2 generate_get_url failed ({key}): {e}")
         return None
