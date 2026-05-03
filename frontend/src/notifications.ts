@@ -1,5 +1,9 @@
 import * as Notifications from "expo-notifications";
+import * as Device from "expo-device";
+import Constants from "expo-constants";
+import { Platform } from "react-native";
 import { getItem, setItem } from "./storage";
+import { api } from "./api";
 
 /**
  * Notification preferences — per-category toggles.
@@ -46,6 +50,85 @@ Notifications.setNotificationHandler({
     shouldShowList: true,
   }),
 });
+
+const KEY_PUSH_TOKEN = "innfeel_expo_push_token";
+
+/**
+ * Register for Expo push notifications and send the token to the backend.
+ * Safe to call repeatedly — only sends to backend when the token changes.
+ * Returns the token (or null on web/sim/denied).
+ */
+export async function registerForPushNotificationsAsync(): Promise<string | null> {
+  try {
+    // Web has no native push in Expo Go/dev; skip.
+    if (Platform.OS === "web") return null;
+    // Simulator / non-physical devices cannot receive push.
+    if (!Device.isDevice) return null;
+
+    // Android requires a channel to render notifications properly.
+    if (Platform.OS === "android") {
+      try {
+        await Notifications.setNotificationChannelAsync("default", {
+          name: "default",
+          importance: Notifications.AndroidImportance.MAX,
+          sound: "default",
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: "#EC4899",
+        });
+        for (const chan of ["reminder", "reaction", "message", "friend"]) {
+          await Notifications.setNotificationChannelAsync(chan, {
+            name: chan,
+            importance: Notifications.AndroidImportance.HIGH,
+            sound: "default",
+          });
+        }
+      } catch {}
+    }
+
+    // Permission
+    const ok = await ensurePermission();
+    if (!ok) return null;
+
+    // Resolve the Expo projectId from EAS config / manifest if set; fall back to undefined.
+    const projectId =
+      (Constants as any)?.expoConfig?.extra?.eas?.projectId ||
+      (Constants as any)?.easConfig?.projectId ||
+      undefined;
+
+    let tokenData;
+    try {
+      tokenData = await Notifications.getExpoPushTokenAsync(
+        projectId ? { projectId } : undefined
+      );
+    } catch {
+      // Expo Go without a projectId can still return a legacy token, but may error on some SDKs.
+      return null;
+    }
+    const token = tokenData?.data || null;
+    if (!token) return null;
+
+    // Avoid re-posting the same token more than once.
+    const cached = await getItem(KEY_PUSH_TOKEN);
+    if (cached !== token) {
+      try {
+        await api("/notifications/register-token", {
+          method: "POST",
+          body: { token, platform: Platform.OS },
+        });
+        await setItem(KEY_PUSH_TOKEN, token);
+      } catch {
+        // If backend rejected (e.g. offline), we'll retry next boot.
+      }
+    }
+    return token;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearCachedPushToken() {
+  try { await setItem(KEY_PUSH_TOKEN, ""); } catch {}
+}
 
 export async function getCategoryEnabled(cat: NotifCategory): Promise<boolean> {
   const v = await getItem(CAT_KEYS[cat]);

@@ -322,10 +322,59 @@ backend_session4:
           agent: "testing"
           comment: "Regression pass: admin /auth/me includes is_admin:true and pro_source key (None because the admin seed grants Pro via startup, not via admin_grant). /friends returns is_close on each row (admin friend with luna). /wellness/joy returns source=llm with non-empty quote+advice."
 
+backend_session9:
+  - task: "Push notifications: register/unregister/prefs/test endpoints"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "All 8 sub-checks PASS via /app/backend_test_session9.py. POST /notifications/register-token (token+platform) → 200 {ok:true}. GET /notifications/prefs default returns {reminder:true, reaction:true, message:true, friend:true}. POST /notifications/prefs {reaction:false} → 200 {ok:true}; subsequent GET shows reaction:false. Re-enabled reaction afterwards (state restored). POST /notifications/test → 200 {ok:true} (fake token, but server still answered). POST /notifications/unregister-token → 200 {ok:true}."
+
+  - task: "send_push side-effect wiring (response shapes unchanged)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "All 4 endpoints with new fire-and-forget push triggers preserved their response shape exactly: POST /moods/{id}/react → 200 {ok:true, reactions:[...]} (0.11s); POST /moods/{id}/comment → 200 {ok:true, comment:{comment_id, user_id, name, avatar_color, text, at}} (0.18s); POST /messages/with/{peer_id} → 200 {ok:true, message:{message_id, conversation_id, sender_id, sender_name, text, at}} (0.12s); POST /friends/add → 200 {ok:true, friend:{user_id, name, email, avatar_color}} (0.11s, no blocking despite Expo push call). All response shapes match the contract."
+
+  - task: "Pro analytics — /moods/stats range_30/90/365 + insights"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "Pro admin /moods/stats 200 with range_30, range_90, range_365 each containing {count:int, distribution:dict, avg_intensity:number, volatility:number}; insights:[list of strings] (2 entries on admin). Regression keys (by_weekday, distribution, dominant, dominant_color, streak, drops_this_week) all present. Fresh free user /moods/stats → 200 with basic keys only (streak, drops_this_week, dominant, dominant_color, distribution, by_weekday) and NO range_* / insights. No 500 on free user."
+
+  - task: "Session 9 regression sweep — auth/moods/friends/wellness/music/admin/payments"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "All regression checks PASS: admin login + luna login → 200, /auth/me admin shows is_admin:true & pro:true, /moods/today, /moods/feed (1 item after both posted), /friends, /friends/close/{luna_id} toggles, /wellness/joy returns source=llm with quote+advice, /music/search?q=ocean (admin Pro) returns non-empty tracks, /admin/me admin → {is_admin:true}, /admin/users/search?q=luna → 2 matches, /payments/checkout {} → 200 with checkout.stripe.com URL."
+
 metadata:
   created_by: "main_agent"
-  version: "1.2"
-  test_sequence: 3
+  version: "1.3"
+  test_sequence: 4
   run_ui: false
 
 test_plan:
@@ -333,6 +382,51 @@ test_plan:
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Session 9 FULL backend regression complete via /app/backend_test_session9.py against the public preview URL.
+        Result: 44/44 checks PASS (100%, well above the 95% target).
+        
+        A) Push notifications endpoints (8/8 PASS):
+           • POST /notifications/register-token {token, platform:"ios"} → 200 {ok:true}
+           • GET /notifications/prefs (default) → 200 {prefs:{reminder:true, reaction:true, message:true, friend:true}}
+           • POST /notifications/prefs {reaction:false} → 200 {ok:true}; subsequent GET shows reaction:false; re-enabled afterwards (state restored).
+           • POST /notifications/test → 200 {ok:true} — endpoint responds correctly even with a fake token (server-side push call attempted; backend log confirms a "Pruned DeviceNotRegistered token" entry, which is the correct cleanup behavior of send_push).
+           • POST /notifications/unregister-token → 200 {ok:true}.
+        
+        B) Side-effect wiring — ALL response shapes preserved (4/4 PASS):
+           • POST /moods/{id}/react → 200 {ok:true, reactions:[...]} (0.11s)
+           • POST /moods/{id}/comment → 200 {ok:true, comment:{comment_id, user_id, name, avatar_color, text, at}} (0.18s)
+           • POST /messages/with/{peer_id} → 200 {ok:true, message:{message_id, conversation_id, sender_id, sender_name, text, at}} (0.12s)
+           • POST /friends/add → 200 {ok:true, friend:{user_id, name, email, avatar_color}} (0.11s — fire-and-forget push to Expo did NOT block the response).
+        
+        C) Pro analytics (/moods/stats) (12/12 PASS):
+           • Pro admin response includes range_30, range_90, range_365, each with {count:int, distribution:dict, avg_intensity:number, volatility:number}; insights:[list of strings] (2 entries on admin).
+           • All regression keys still present: by_weekday, distribution, dominant, dominant_color, streak, drops_this_week.
+           • Fresh free user → 200 with basic shape only (no range_30/90/365, no insights). NO 500.
+        
+        D) Regression sweep (12/12 PASS):
+           • /auth/login admin + luna → 200; /auth/me admin → is_admin:true, pro:true.
+           • /moods/today, /moods/feed (after both posted, 1 item visible), /friends (with is_close), /friends/close/{luna_id} toggles.
+           • /wellness/joy → 200 source=llm with quote+advice; /music/search?q=ocean (admin Pro) → 200 with non-empty tracks.
+           • /admin/me admin → {is_admin:true}; /admin/users/search?q=luna → 2 matches.
+           • /payments/checkout {} → 200 with checkout.stripe.com URL (origin_url fallback works).
+        
+        Backend logs clean — no 500s, no exceptions. The "Pruned DeviceNotRegistered token" log confirms send_push correctly handles invalid Expo tokens. No code fixes were applied by the testing agent.
+
+    - agent: "main"
+      message: |
+        Session 9 backend + frontend updates (please run a full sanity-check regression):
+          A) Server-side push notifications (Expo Push) are now active server-side:
+             • /api/notifications/register-token (POST) — clients POST {token, platform}. Already existed, should stay 200.
+             • send_push() helper in server.py now fires on: react, add_comment, send_message (new), add_friend (new).
+             • /api/notifications/prefs GET/POST, /api/notifications/test POST, /api/notifications/unregister-token POST — should all still work.
+          B) Critical: please verify send_message and add_friend endpoints still return the same JSON they did before (we only added a fire-and-forget push; response shape must be unchanged).
+          C) Localization: new `innfeel_locale_override` storage key on client — no backend impact, but please do a broad regression to confirm no endpoint regressed.
+          D) Pro analytics: the stats endpoint already returns range_30/90/365. Please reconfirm Pro response contains range_30, range_90, range_365 with keys count, distribution, avg_intensity, volatility; and insights array.
+        Use admin@innfeel.app / admin123 as admin, and luna@innfeel.app / demo1234 as the non-admin demo user.
 
 agent_communication:
     - agent: "main"

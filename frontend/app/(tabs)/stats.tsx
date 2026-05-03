@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, Image } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -12,11 +12,24 @@ import { Ionicons } from "@expo/vector-icons";
 import { useShareToStories } from "../../src/components/ShareToStories";
 
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const RANGES: { key: 30 | 90 | 365; label: string }[] = [
+  { key: 30, label: "30d" },
+  { key: 90, label: "90d" },
+  { key: 365, label: "1y" },
+];
+
+function volatilityLabel(v: number): string {
+  if (v <= 1.2) return "Steady";
+  if (v <= 2.2) return "Balanced";
+  if (v <= 3.2) return "Variable";
+  return "Turbulent";
+}
 
 export default function Stats() {
   const { user } = useAuth();
   const [stats, setStats] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [range, setRange] = useState<30 | 90 | 365>(30);
   const router = useRouter();
   const { share, Renderer: ShareRenderer } = useShareToStories();
 
@@ -30,6 +43,21 @@ export default function Stats() {
   const maxDow = Math.max(1, ...Object.values(stats?.by_weekday || {}).map((v: any) => Number(v)));
   const distEntries = Object.entries(stats?.distribution || {}).filter(([, v]) => Number(v) > 0);
   const distTotal = distEntries.reduce((a, [, v]) => a + Number(v), 0) || 1;
+
+  const rangeData = stats?.[`range_${range}`];
+  const rangeTop = useMemo(() => {
+    const d = rangeData?.distribution || {};
+    const entries = Object.entries(d).filter(([, v]) => Number(v) > 0);
+    entries.sort((a: any, b: any) => b[1] - a[1]);
+    const total = entries.reduce((a, [, v]) => a + Number(v), 0) || 1;
+    return entries.slice(0, 5).map(([key, count]) => ({
+      key,
+      count: Number(count),
+      pct: Math.round((Number(count) / total) * 100),
+      color: EMOTION_COLORS[key]?.hex || "#888",
+      label: EMOTION_COLORS[key]?.label || key,
+    }));
+  }, [rangeData]);
 
   return (
     <View style={styles.container} testID="stats-screen">
@@ -117,9 +145,63 @@ export default function Stats() {
           {pro && stats?.insights ? (
             <>
               <Text style={styles.section}>{t("stats.insights")}</Text>
+
+              {/* Range selector */}
+              <View style={styles.rangeRow}>
+                {RANGES.map((r) => {
+                  const active = range === r.key;
+                  return (
+                    <TouchableOpacity
+                      key={r.key}
+                      testID={`range-${r.key}`}
+                      onPress={() => setRange(r.key)}
+                      style={[styles.rangePill, active && { backgroundColor: domColor + "22", borderColor: domColor }]}
+                    >
+                      <Text style={[styles.rangeTxt, active && { color: "#fff", fontWeight: "700" }]}>{r.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Metrics grid */}
+              <View style={styles.metricsRow}>
+                <View style={styles.metricCard}>
+                  <Ionicons name="sparkles" size={16} color={domColor} />
+                  <Text style={styles.metricNum}>{rangeData?.count || 0}</Text>
+                  <Text style={styles.metricLbl}>auras</Text>
+                </View>
+                <View style={styles.metricCard}>
+                  <Ionicons name="flash-outline" size={16} color="#FACC15" />
+                  <Text style={styles.metricNum}>{(rangeData?.avg_intensity ?? 0).toFixed(1)}</Text>
+                  <Text style={styles.metricLbl}>avg intensity</Text>
+                </View>
+                <View style={styles.metricCard}>
+                  <Ionicons name="pulse-outline" size={16} color="#EC4899" />
+                  <Text style={styles.metricNum}>{(rangeData?.volatility ?? 0).toFixed(1)}</Text>
+                  <Text style={styles.metricLbl}>{volatilityLabel(rangeData?.volatility ?? 0)}</Text>
+                </View>
+              </View>
+
+              {/* Top 5 moods over selected range */}
+              {rangeTop.length > 0 && (
+                <View style={styles.rangeCard}>
+                  <Text style={styles.rangeCardHdr}>Top moods · last {range === 365 ? "year" : `${range} days`}</Text>
+                  {rangeTop.map((r) => (
+                    <View key={r.key} style={styles.distRow}>
+                      <View style={[styles.distDot, { backgroundColor: r.color }]} />
+                      <Text style={styles.distLabel}>{r.label}</Text>
+                      <View style={styles.distTrack}>
+                        <View style={[styles.distFill, { width: `${r.pct}%`, backgroundColor: r.color }]} />
+                      </View>
+                      <Text style={styles.distPct}>{r.pct}%</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* AI-ish insight sentences */}
               <View style={styles.insights}>
                 {stats.insights.map((i: string, k: number) => <Text key={k} style={styles.insight}>✦ {i}</Text>)}
-                <Text style={styles.subInsight}>30-day avg intensity: {stats.range_30?.avg_intensity} · volatility: {stats.range_30?.volatility}</Text>
               </View>
             </>
           ) : (
@@ -167,4 +249,13 @@ const styles = StyleSheet.create({
   subInsight: { color: COLORS.textTertiary, fontSize: 12, marginTop: 6 },
   proCta: { padding: 20, borderRadius: 22, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.04)", gap: 12, alignItems: "center", marginTop: 14 },
   proTxt: { color: COLORS.textSecondary, textAlign: "center" },
+  rangeRow: { flexDirection: "row", gap: 8, marginBottom: 12 },
+  rangePill: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)" },
+  rangeTxt: { color: COLORS.textSecondary, fontSize: 13, fontWeight: "600" },
+  metricsRow: { flexDirection: "row", gap: 8, marginBottom: 12 },
+  metricCard: { flex: 1, padding: 14, borderRadius: 18, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)", alignItems: "flex-start", gap: 4 },
+  metricNum: { color: "#fff", fontSize: 22, fontWeight: "700", marginTop: 2 },
+  metricLbl: { color: COLORS.textSecondary, fontSize: 11 },
+  rangeCard: { padding: 14, borderRadius: 20, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)", marginBottom: 12, gap: 8 },
+  rangeCardHdr: { color: COLORS.textSecondary, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.2, fontWeight: "700", marginBottom: 4 },
 });

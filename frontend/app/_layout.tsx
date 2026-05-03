@@ -1,10 +1,11 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "../src/auth";
-import { ensureDailyRandomNotification } from "../src/notifications";
+import { ensureDailyRandomNotification, registerForPushNotificationsAsync } from "../src/notifications";
+import { loadLocaleOverride } from "../src/i18n";
 
 function NotificationScheduler() {
   const { user } = useAuth();
@@ -12,12 +13,22 @@ function NotificationScheduler() {
     if (user) {
       // Fire-and-forget: schedule the daily aura reminders (noon + 19:30 safety-net).
       ensureDailyRandomNotification().catch(() => {});
+      // Register the Expo push token with the backend so server-side notifications
+      // (reactions, comments, messages, friend adds) can reach this device.
+      registerForPushNotificationsAsync().catch(() => {});
     }
   }, [user]);
   return null;
 }
 
 export default function RootLayout() {
+  const [localeReady, setLocaleReady] = useState(false);
+  useEffect(() => {
+    // Preload the saved locale override before first render of screens so UI strings are correct.
+    loadLocaleOverride().finally(() => setLocaleReady(true));
+  }, []);
+  // We don't block on the locale — if it's slow, first frame uses device default; strings update on change.
+  void localeReady;
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: "#050505" }}>
       <SafeAreaProvider>

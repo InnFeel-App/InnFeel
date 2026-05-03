@@ -1072,6 +1072,13 @@ async def add_friend(data: AddFriendIn, user: dict = Depends(get_current_user)):
             pass
     fc = await db.friendships.count_documents({"user_id": user["user_id"]})
     await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"friend_count": fc}})
+    # Notify the newly added friend
+    await send_push(
+        target["user_id"], "friend",
+        "New friend on InnFeel ✨",
+        f"{user.get('name', 'Someone')} added you as a friend",
+        {"route": "/(tabs)/friends", "from_user_id": user["user_id"], "kind": "friend"},
+    )
     return {"ok": True, "friend": {"user_id": target["user_id"], "name": target["name"], "email": target["email"], "avatar_color": target.get("avatar_color")}}
 
 
@@ -1415,6 +1422,13 @@ async def send_message(peer_id: str, data: MessageIn, user: dict = Depends(get_c
             "$inc": {f"unread.{peer_id}": 1},
         },
         upsert=True,
+    )
+    # Push notification to the recipient
+    await send_push(
+        peer_id, "message",
+        f"{user.get('name', 'Someone')} sent you a message",
+        data.text.strip()[:120],
+        {"route": "/conversation", "peer_id": user["user_id"], "kind": "message"},
     )
     msg.pop("_id", None)
     return {"ok": True, "message": msg}

@@ -1,10 +1,18 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch } from "react-native";
+import React, { useEffect, useMemo, useState } from "react";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Modal, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import RadialAura from "../src/components/RadialAura";
 import { COLORS } from "../src/theme";
-import { t } from "../src/i18n";
+import {
+  t,
+  useI18n,
+  LANGUAGE_OPTIONS,
+  LocaleCode,
+  setLocaleOverride,
+  currentLocale,
+  loadLocaleOverride,
+} from "../src/i18n";
 import { Ionicons } from "@expo/vector-icons";
 import * as Localization from "expo-localization";
 import {
@@ -25,52 +33,72 @@ type PrefRow = {
   sub: string;
 };
 
-const ROWS: PrefRow[] = [
-  {
-    key: "reminder",
-    icon: "sparkles",
-    color: "#FACC15",
-    title: "Daily aura reminder",
-    sub: `At ${String(REMINDER_NOON_HOUR).padStart(2, "0")}:${String(REMINDER_NOON_MINUTE).padStart(2, "0")} · backup at ${String(REMINDER_EVENING_HOUR).padStart(2, "0")}:${String(REMINDER_EVENING_MINUTE).padStart(2, "0")} if you haven't shared yet`,
-  },
-  {
-    key: "reaction",
-    icon: "heart",
-    color: "#EC4899",
-    title: "Reactions & comments",
-    sub: "When friends react or comment on your aura",
-  },
-  {
-    key: "message",
-    icon: "chatbubble",
-    color: "#38BDF8",
-    title: "Direct messages",
-    sub: "When a friend sends you a private message",
-  },
-  {
-    key: "friend",
-    icon: "people",
-    color: "#A855F7",
-    title: "Friend activity",
-    sub: "When someone adds you as a friend",
-  },
-];
-
 export default function Settings() {
   const router = useRouter();
+  useI18n(); // re-render on locale change
   const [prefs, setPrefs] = useState<Record<NotifCategory, boolean>>({
     reminder: true, reaction: true, message: true, friend: true,
   });
-  const locale = Localization.getLocales?.()[0]?.languageCode || "en";
+  const [langOpen, setLangOpen] = useState(false);
+  const [overrideCode, setOverrideCode] = useState<LocaleCode | null>(null);
+  const deviceLocale = (Localization.getLocales?.()[0]?.languageCode || "en").toLowerCase();
 
   useEffect(() => {
-    (async () => setPrefs(await getAllPrefs()))();
+    (async () => {
+      setPrefs(await getAllPrefs());
+      const ov = await loadLocaleOverride();
+      setOverrideCode(ov);
+    })();
   }, []);
 
   const toggle = async (cat: NotifCategory, value: boolean) => {
     setPrefs((p) => ({ ...p, [cat]: value }));
     await setCategoryEnabled(cat, value);
   };
+
+  const pickLocale = async (code: LocaleCode | null) => {
+    setOverrideCode(code);
+    await setLocaleOverride(code);
+    setLangOpen(false);
+  };
+
+  const currentLangLabel = useMemo(() => {
+    if (!overrideCode) return `${t("settings.language.auto")} · ${deviceLocale.toUpperCase()}`;
+    const opt = LANGUAGE_OPTIONS.find((o) => o.code === overrideCode);
+    return opt ? opt.native : overrideCode.toUpperCase();
+  }, [overrideCode, deviceLocale]);
+
+  // Localized notif rows (rebuild on locale change)
+  const ROWS: PrefRow[] = [
+    {
+      key: "reminder",
+      icon: "sparkles",
+      color: "#FACC15",
+      title: t("settings.notifications"),
+      sub: `${String(REMINDER_NOON_HOUR).padStart(2, "0")}:${String(REMINDER_NOON_MINUTE).padStart(2, "0")} · backup ${String(REMINDER_EVENING_HOUR).padStart(2, "0")}:${String(REMINDER_EVENING_MINUTE).padStart(2, "0")}`,
+    },
+    {
+      key: "reaction",
+      icon: "heart",
+      color: "#EC4899",
+      title: "Reactions & comments",
+      sub: "When friends react or comment on your aura",
+    },
+    {
+      key: "message",
+      icon: "chatbubble",
+      color: "#38BDF8",
+      title: "Direct messages",
+      sub: "When a friend sends you a private message",
+    },
+    {
+      key: "friend",
+      icon: "people",
+      color: "#A855F7",
+      title: "Friend activity",
+      sub: "When someone adds you as a friend",
+    },
+  ];
 
   return (
     <View style={styles.container} testID="settings-screen">
@@ -113,15 +141,21 @@ export default function Settings() {
 
           <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Other</Text>
 
-          <View style={styles.row}>
+          <TouchableOpacity
+            testID="settings-language-row"
+            style={styles.row}
+            onPress={() => setLangOpen(true)}
+            activeOpacity={0.8}
+          >
             <View style={[styles.iconBox, { backgroundColor: "rgba(56,189,248,0.15)", borderColor: "rgba(56,189,248,0.35)" }]}>
               <Ionicons name="globe-outline" size={18} color="#38BDF8" />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.rowTitle}>{t("settings.language")}</Text>
-              <Text style={styles.rowSub}>Auto · device: {locale.toUpperCase()}</Text>
+              <Text style={styles.rowSub}>{currentLangLabel}</Text>
             </View>
-          </View>
+            <Ionicons name="chevron-forward" size={18} color={COLORS.textSecondary} />
+          </TouchableOpacity>
 
           <View style={styles.row}>
             <View style={[styles.iconBox, { backgroundColor: "rgba(167,139,250,0.15)", borderColor: "rgba(167,139,250,0.35)" }]}>
@@ -136,6 +170,49 @@ export default function Settings() {
           <Text style={styles.footer}>InnFeel 1.0 · made with color</Text>
         </ScrollView>
       </SafeAreaView>
+
+      {/* Language picker */}
+      <Modal
+        visible={langOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setLangOpen(false)}
+      >
+        <Pressable style={styles.backdrop} onPress={() => setLangOpen(false)}>
+          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.sheetHdr}>
+              <Text style={styles.sheetTitle}>{t("settings.language")}</Text>
+              <TouchableOpacity onPress={() => setLangOpen(false)}>
+                <Ionicons name="close" size={22} color="#fff" />
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              testID="lang-auto"
+              style={[styles.langRow, overrideCode === null && styles.langRowActive]}
+              onPress={() => pickLocale(null)}
+            >
+              <Text style={styles.langLabel}>{t("settings.language.auto")}</Text>
+              <Text style={styles.langSub}>{deviceLocale.toUpperCase()}</Text>
+              {overrideCode === null && <Ionicons name="checkmark-circle" size={20} color="#22D3EE" />}
+            </TouchableOpacity>
+            {LANGUAGE_OPTIONS.map((opt) => {
+              const active = overrideCode === opt.code;
+              return (
+                <TouchableOpacity
+                  key={opt.code}
+                  testID={`lang-${opt.code}`}
+                  style={[styles.langRow, active && styles.langRowActive]}
+                  onPress={() => pickLocale(opt.code)}
+                >
+                  <Text style={styles.langLabel}>{opt.native}</Text>
+                  <Text style={styles.langSub}>{opt.label}</Text>
+                  {active && <Ionicons name="checkmark-circle" size={20} color="#22D3EE" />}
+                </TouchableOpacity>
+              );
+            })}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -153,4 +230,13 @@ const styles = StyleSheet.create({
   rowTitle: { color: "#fff", fontSize: 15, fontWeight: "600" },
   rowSub: { color: COLORS.textSecondary, fontSize: 12, marginTop: 3, lineHeight: 16 },
   footer: { color: COLORS.textTertiary, textAlign: "center", marginTop: 30, fontSize: 12 },
+
+  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" },
+  sheet: { backgroundColor: "#0B0B0F", borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 18, paddingBottom: 32, borderWidth: 1, borderColor: COLORS.border },
+  sheetHdr: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
+  sheetTitle: { color: "#fff", fontSize: 17, fontWeight: "700" },
+  langRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 14, paddingHorizontal: 14, borderRadius: 14, borderWidth: 1, borderColor: "transparent", marginBottom: 6 },
+  langRowActive: { backgroundColor: "rgba(34,211,238,0.08)", borderColor: "rgba(34,211,238,0.35)" },
+  langLabel: { color: "#fff", fontSize: 15, fontWeight: "600", flex: 1 },
+  langSub: { color: COLORS.textSecondary, fontSize: 12, marginRight: 10 },
 });
