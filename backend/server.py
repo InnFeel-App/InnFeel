@@ -289,6 +289,18 @@ class AdminRevokeProIn(BaseModel):
     email: EmailStr
 
 
+class PushTokenIn(BaseModel):
+    token: str = Field(min_length=10, max_length=200)
+    platform: Optional[Literal["ios", "android", "web"]] = None
+
+
+class NotifPrefsIn(BaseModel):
+    reminder: Optional[bool] = None
+    reaction: Optional[bool] = None
+    message: Optional[bool] = None
+    friend: Optional[bool] = None
+
+
 # =========================================================================
 # Startup
 # =========================================================================
@@ -640,6 +652,12 @@ async def add_comment(mood_id: str, data: CommentIn, user: dict = Depends(get_cu
             "at": now_utc(),
             "read": False,
         })
+        await send_push(
+            mood["user_id"], "reaction",
+            f"{user.get('name', 'Someone')} commented on your aura",
+            data.text.strip()[:100],
+            {"route": "/activity", "mood_id": mood_id, "kind": "comment"},
+        )
     return {"ok": True, "comment": comment}
 
 
@@ -688,6 +706,13 @@ async def react(mood_id: str, data: ReactionIn, user: dict = Depends(get_current
             "at": now_utc(),
             "read": False,
         })
+        # Push notification to aura owner
+        await send_push(
+            mood["user_id"], "reaction",
+            f"{user.get('name', 'Someone')} reacted to your aura ✨",
+            f"They sent a {data.emoji} on your \"{mood.get('word', 'aura')}\"",
+            {"route": "/activity", "mood_id": mood_id, "kind": "reaction"},
+        )
 
     # Return a fresh aggregated breakdown so the client can rerender without refetch
     fresh = await db.moods.find_one({"mood_id": mood_id}, {"_id": 0, "reactions": 1})
@@ -725,6 +750,122 @@ async def activity_mark_read(user: dict = Depends(get_current_user)):
         {"$set": {"read": True}},
     )
     return {"ok": True}
+
+
+# =========================================================================
+# Push notifications (Expo Push)
+# =========================================================================
+EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
+
+
+async def send_push(target_user_id: str, category: str, title: str, body: str, data: Optional[dict] = None) -> bool:
+    """Fire an Expo Push notification to a user if they have a token and the category is enabled.
+
+    `category` is one of: reaction, message, friend, reminder.
+    Respects the recipient's notif_prefs (all default ON).
+    """
+    try:
+        target = await db.users.find_one({"user_id": target_user_id}, {"_id": 0, "push_token": 1, "notif_prefs": 1})
+        if not target:
+            return False
+        token = target.get("push_token")
+        if not token:
+            return False
+        prefs = target.get("notif_prefs") or {}
+        if prefs.get(category) is False:
+            return False
+        import httpx
+        payload = {
+            "to": token,
+            "title": title,
+            "body": body,
+            "data": data or {},
+            "sound": "default",
+            "priority": "high",
+            "channelId": category,
+        }
+        async with httpx.AsyncClient(timeout=6.0) as client_http:
+            r = await client_http.post(EXPO_PUSH_URL, json=payload, headers={"Accept": "application/json", "Content-Type": "application/json"})
+        ok = r.status_code == 200
+        if not ok:
+            logger.warning(f"Expo push non-200: {r.status_code} {r.text[:120]}")
+        else:
+            # If the token is invalid, Expo returns a "details.error" in response — we can prune later.
+            try:
+                body_json = r.json()
+                tickets = body_json.get("data") or []
+                if isinstance(tickets, dict):
+                    tickets = [tickets]
+                for t in tickets:
+                    if isinstance(t, dict) and t.get("status") == "error" and (t.get("details") or {}).get("error") == "DeviceNotRegistered":
+                        await db.users.update_one({"user_id": target_user_id}, {"$unset": {"push_token": "", "push_platform": ""}})
+                        logger.info(f"Pruned DeviceNotRegistered token for {target_user_id}")
+            except Exception:
+                pass
+        return ok
+    except Exception as e:
+        logger.warning(f"send_push failed: {e}")
+        return False
+
+
+@api.post("/notifications/register-token")
+async def register_push_token(data: PushTokenIn, user: dict = Depends(get_current_user)):
+    """Save the Expo push token for this user (replaces any previous)."""
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {
+            "push_token": data.token,
+            "push_platform": data.platform or "unknown",
+            "push_registered_at": now_utc(),
+        }},
+    )
+    return {"ok": True}
+
+
+@api.post("/notifications/unregister-token")
+async def unregister_push_token(user: dict = Depends(get_current_user)):
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$unset": {"push_token": "", "push_platform": ""}},
+    )
+    return {"ok": True}
+
+
+@api.get("/notifications/prefs")
+async def get_notif_prefs(user: dict = Depends(get_current_user)):
+    """All categories default to True if not explicitly set."""
+    cur = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0, "notif_prefs": 1})
+    prefs = (cur or {}).get("notif_prefs") or {}
+    return {"prefs": {
+        "reminder": prefs.get("reminder", True),
+        "reaction": prefs.get("reaction", True),
+        "message": prefs.get("message", True),
+        "friend": prefs.get("friend", True),
+    }}
+
+
+@api.post("/notifications/prefs")
+async def set_notif_prefs(data: NotifPrefsIn, user: dict = Depends(get_current_user)):
+    update = {}
+    for cat in ("reminder", "reaction", "message", "friend"):
+        v = getattr(data, cat)
+        if v is not None:
+            update[f"notif_prefs.{cat}"] = bool(v)
+    if update:
+        await db.users.update_one({"user_id": user["user_id"]}, {"$set": update})
+    return {"ok": True}
+
+
+@api.post("/notifications/test")
+async def test_push(user: dict = Depends(get_current_user)):
+    """Send a test push to the authenticated user — useful to verify their token."""
+    ok = await send_push(
+        user["user_id"], "reminder",
+        "InnFeel test ✦",
+        "If you see this, push notifications are working!",
+        {"kind": "test"},
+    )
+    return {"ok": ok}
 
 
 @api.get("/moods/history")
