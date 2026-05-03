@@ -378,11 +378,170 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "Backend refactor: auth + account split into routes/ modules"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Session 13 Cloudflare R2 migration sanity COMPLETE — 58/58 PASS (100%, target 90%).
+        Harness: /app/backend_test.py vs https://charming-wescoff-8.preview.emergentagent.com/api.
+
+        NEW ENDPOINT /api/media/upload-url — fully verified:
+          • mood_photo as admin → 200 with {url, method:"PUT", key, headers:{"Content-Type"}, expires_in:900}
+          • mood_video as FRESH FREE user → 402 "Video auras are a Pro feature"
+          • mood_video as Pro admin → 200
+          • mood_photo with content_type "application/x-php" → 400 "Unsupported photo type"
+          • Key shape: media/<kind>/<user_id>/<uuid>.<ext>; URL is the R2 endpoint.
+
+        ROUND-TRIP — verified end-to-end:
+          • presigned PUT → R2 (200), POST /moods with photo_key → 200, mood.photo_url is signed,
+            GET /moods/today returns photo_url, GET signed URL → 200 with the JPEG bytes back.
+
+        /api/media/delete:
+          • Own object key → 200 {ok:true}
+          • Foreign user-prefix key → 403 "Not your object"
+
+        MESSAGES + AVATAR + MOOD AUDIO with R2:
+          • luna /messages/with/{hello_id} {photo_key} → 200; message.photo_url signed; GET messages returns photo_url.
+          • POST /profile/avatar {avatar_key} → 200; /auth/me user.avatar_url is a signed R2 URL.
+          • POST /moods {audio_key} + GET /moods/{id}/audio → 200 {audio_seconds, audio_url} (no audio_b64).
+
+        REGRESSION SWEEP — all 200:
+          /auth/me, /account/export, /moods/today + /feed + /stats (Pro range_30/90/365),
+          /friends + /friends/leaderboard, /badges, /messages/conversations + /messages/unread-count,
+          /admin/me + /admin/users/search + /admin/pro-grants, /iap/status + /sync + /webhook,
+          /payments/checkout (origin_url fallback OK), /music/search?q=ocean (14 Apple iTunes tracks),
+          /wellness/joy (source=llm), /notifications/prefs GET+POST.
+
+        PURGE DAEMON: backend.err.log shows
+          "[purge] {'moods_deleted': 0, 'r2_objects_deleted': 0, 'users_checked': 51}" on every boot.
+          ERROR count in backend.err.log: 0. Only expected operational warnings (Spotify owner premium
+          expired — unrelated since /music/search uses Apple iTunes).
+
+        HARNESS NOTE: Initial run reported 3 spurious "FAIL"s because /auth/me now returns sanitize_user(user)
+        directly (not wrapped in {"user": ...}). The harness was patched to read r.json() directly.
+        No backend code was modified by the testing agent.
+
+backend_session13_test_summary:
+  - task: "R2 migration sanity test (session 13)"
+    implemented: true
+    working: true
+    file: "/app/backend_test.py"
+    status: "58/58 PASS — full R2 round-trip + regression sweep clean."
+
+
+backend_session13:
+  - task: "Cloudflare R2 media storage + signed URLs + purge daemon + Pro-only video"
+    implemented: true
+    working: true
+    file: "/app/backend/app_core/r2.py, /app/backend/routes/media.py, /app/backend/server.py, /app/backend/scripts/migrate_media_to_r2.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Session 13 Cloudflare R2 migration sanity COMPLETE — 58/58 PASS (100%, target was 90%).
+            Harness: /app/backend_test.py (httpx). Backend URL: https://charming-wescoff-8.preview.emergentagent.com/api.
+
+            1) /api/media/upload-url — full validation matrix verified:
+              · {kind:"mood_photo", content_type:"image/jpeg"} as admin → 200 with {url, method:"PUT", key, headers:{"Content-Type":"image/jpeg"}, expires_in:900}.
+              · key shape `media/mood_photo/<user_id>/<uuid>.jpg`, url is the R2 endpoint, method=PUT, headers echo Content-Type, expires_in=900.
+              · {kind:"mood_video", content_type:"video/mp4"} as FRESH FREE user → 402 "Video auras are a Pro feature".
+              · Same as Pro admin → 200 with valid signed URL.
+              · {kind:"mood_photo", content_type:"application/x-php"} → 400 "Unsupported photo type".
+
+            2) Round-trip upload + mood with photo_key:
+              · presigned PUT → R2 with JPEG magic bytes (b"\xff\xd8\xff\xe0\x00\x10JFIF...") → 200.
+              · POST /api/moods with {emotion:"joy", intensity:3, photo_key:<key>} → 200; response.mood.photo_url is a fresh signed URL containing X-Amz-Signature.
+              · GET /api/moods/today → mood.photo_url populated with the same key (different signature).
+              · GETting the signed URL → 200 and bytes start with the JPEG magic (round-trip integrity verified).
+
+            3) /api/media/delete:
+              · Deleting one's own key → 200 {ok:true}.
+              · POSTing a key under a foreign user_id prefix → 403 "Not your object".
+
+            4) Messages with R2 (luna → hello):
+              · luna /api/media/upload-url {kind:"msg_photo"} → 200; PUT bytes → 200.
+              · POST /api/messages/with/{hello_user_id} {photo_key:<key>} → 200; response.message.photo_url is signed.
+              · GET /api/messages/with/{hello_user_id} → 200 with messages[].photo_url populated for R2-backed messages.
+
+            5) Avatar with R2:
+              · /api/media/upload-url kind:"avatar" → 200; PUT → 200; POST /api/profile/avatar {avatar_key} → 200.
+              · GET /api/auth/me → user.avatar_url populated with a signed R2 URL (X-Amz-Signature present).
+
+            6) Mood audio with R2:
+              · POST /api/moods with audio_key → 200.
+              · GET /api/moods/{mood_id}/audio → 200 with {audio_seconds, audio_url}; NO audio_b64 in the payload (R2 path verified).
+
+            7) REGRESSION SWEEP (all 200):
+              /auth/me, /account/export, /moods/today, /moods/feed, /moods/stats (Pro range_30/90/365),
+              /friends, /friends/leaderboard, /badges, /messages/conversations, /messages/unread-count,
+              /admin/me, /admin/users/search, /admin/pro-grants, /iap/status, /iap/sync, /iap/webhook,
+              /payments/checkout (origin_url fallback), /music/search?q=ocean (14 Apple iTunes tracks),
+              /wellness/joy (source=llm), /notifications/prefs GET+POST.
+
+            8) Purge daemon:
+              · backend.err.log shows "[purge] {'moods_deleted': 0, 'r2_objects_deleted': 0, 'users_checked': 51}" on each boot — daemon is running.
+              · ERROR count in backend.err.log: 0. Only expected warnings (Spotify 403 owner premium expired — unrelated; Apple iTunes path used).
+
+            HARNESS NOTE: Initial run had 3 "FAIL"s from the harness reading r.json().get("user", {}) on /auth/me — but /auth/me now returns the user object directly (sanitize_user(user)), so the harness was patched to use r.json() directly. No backend fix; the 3 "failures" were reading the wrong shape. After the harness fix, 58/58 PASS.
+
+            CONCLUSION: R2 migration is fully working. All keys/URLs are signed, kind validation enforces Pro-only video, content-type whitelist active, ownership checks on /media/delete, R2 round-trip integrity confirmed, and the purge daemon runs on startup.
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Full migration from base64-in-Mongo to Cloudflare R2 with signed URLs.
+              · app_core/r2.py: boto3-based R2 client (S3v4 signatures) — upload_bytes, generate_get_url (24h TTL),
+                generate_put_url (15 min), delete_object, make_key helper, is_enabled guard.
+              · routes/media.py: POST /api/media/upload-url {kind, content_type, ext?} → signed PUT URL + key.
+                Kinds: mood_photo, mood_audio, mood_video (Pro-only via 402), msg_photo, msg_audio, avatar.
+                Content-type whitelist (jpg/png/webp/heic/m4a/mp3/mp4/mov/etc).
+              · server.py:
+                  - Mood create accepts photo_key/video_key/audio_key alongside legacy _b64.
+                  - Video auras gate on is_pro → 402 if Free user sends video.
+                  - Message send accepts photo_key/audio_key.
+                  - /auth/me + /moods/today + /moods/feed + /messages/with/{peer} + /messages/conversations
+                    + /moods/{mood_id}/audio all return signed URLs (photo_url, video_url, audio_url,
+                    avatar_url, author_avatar_url, peer_avatar_url) when keys exist.
+                  - Avatar upload accepts avatar_key; sanitize_user returns avatar_url.
+                  - Purge daemon: background asyncio.create_task loops every 24h, deletes moods > 90 days
+                    for non-Pro users + removes R2 objects.
+              · scripts/migrate_media_to_r2.py: one-shot migration tool, idempotent, sniffs content types
+                from magic bytes. Already ran once on live DB: migrated 1 avatar + 1 mood photo + 1 mood audio
+                + 1 message photo + 1 message audio.
+              · .env: added R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET,
+                R2_ENDPOINT_URL, R2_PRESIGN_TTL_SECONDS=86400.
+              · Tested end-to-end: R2 upload/list/delete/signed URL all succeed with user's credentials.
+            Please run a focused backend regression:
+              1) POST /api/media/upload-url {kind:'mood_photo', content_type:'image/jpeg'} as hello@ → 200 with {url, method:'PUT', key, headers:{Content-Type}, expires_in:900}.
+              2) Same call with kind:'mood_video' as FREE user → 402 'Video auras are a Pro feature'.
+              3) Same call with kind:'mood_video' as Pro user (hello@) → 200.
+              4) Upload a small PNG to the signed URL via curl PUT (binary) → 200.
+              5) Fetch GET signed URL → 200 with Content-Type preserved.
+              6) POST /api/moods with {photo_key:<key>, emotion:'joy', intensity:3} → 200 and response.mood.photo_url is populated with a signed GET url.
+              7) GET /api/moods/today → 200, mood.photo_url populated.
+              8) GET /api/moods/feed → 200, items[*].photo_url populated for R2-backed moods.
+              9) POST /api/media/delete {key:<key under own user prefix>} → 200 {ok:true}; same with someone else's key → 403.
+              10) Regression sanity: all previous endpoints still 200 (login, /auth/me, /moods CRUD, /friends, /messages, /badges, /admin/*, /iap/*, /payments/*, /music/search, /wellness/joy, /notifications/prefs).
+              11) Confirm purge daemon is running (startup logs show '[purge] {...users_checked:...}').
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Session 13: Cloudflare R2 migration complete. server.py now ~1940 lines (added purge daemon).
+          · Backend: new routes/media.py + app_core/r2.py. All media endpoints now accept keys and return signed URLs.
+          · Admin user migrated admin@innfeel.app → hello@innfeel.app (Apple Custom Domain only allows hello/support/noreply).
+          · Frontend: new src/media.ts helper. mood-create/conversation/profile all upload to R2 via presigned PUT.
+            Image compression via expo-image-manipulator (JPEG q=0.7 / avatars q=0.8). Video locked to Pro users.
+          · Migration script: already moved existing base64 media to R2 (1 avatar, 2 photos, 2 audios).
+          · Purge daemon: every 24h deletes moods > 90 days for Free users + their R2 objects.
+        Please test the new /media/upload-url endpoint + full regression. Login creds unchanged:
+        hello@innfeel.app / admin123, luna@innfeel.app / demo1234.
 
 backend_session12:
   - task: "Refactor: move /auth/* and /account/* endpoints to /app/backend/routes/"

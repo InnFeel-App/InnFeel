@@ -11,6 +11,7 @@ import { Audio } from "expo-av";
 import RadialAura from "../src/components/RadialAura";
 import { api } from "../src/api";
 import { useAuth } from "../src/auth";
+import { uploadMedia } from "../src/media";
 import { COLORS } from "../src/theme";
 
 const REACTIONS: { key: "heart" | "thumb" | "fire" | "laugh" | "wow" | "sad"; emoji: string }[] = [
@@ -84,12 +85,11 @@ export default function Conversation() {
       const res = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
-        quality: 0.65,
-        base64: true,
+        quality: 0.9,
       });
-      if (res.canceled || !res.assets?.[0]?.base64) return;
-      const b64 = res.assets[0].base64;
-      await api(`/messages/with/${peer_id}`, { method: "POST", body: { photo_b64: b64 } });
+      if (res.canceled || !res.assets?.[0]?.uri) return;
+      const key = await uploadMedia("msg_photo", res.assets[0].uri, "image/jpeg");
+      await api(`/messages/with/${peer_id}`, { method: "POST", body: { photo_key: key } });
       await load();
     } catch (e: any) {
       Alert.alert("Couldn't attach photo", e?.message || "Try again.");
@@ -135,19 +135,25 @@ export default function Conversation() {
         staysActiveInBackground: false,
       });
       if (!uri) return;
-      // Fetch the audio file and base64-encode it
-      const resp = await fetch(uri);
-      const blob = await resp.blob();
-      const b64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onerror = () => reject(new Error("Read failed"));
-        reader.onloadend = () => {
-          const s = (reader.result as string) || "";
-          resolve(s.split(",")[1] || "");
-        };
-        reader.readAsDataURL(blob);
-      });
-      await api(`/messages/with/${peer_id}`, { method: "POST", body: { audio_b64: b64, audio_seconds: Math.max(1, secs) } });
+      // Upload to R2 via presigned URL, then send the message with photo_key/audio_key
+      try {
+        const key = await uploadMedia("msg_audio", uri, "audio/m4a", { compress: false });
+        await api(`/messages/with/${peer_id}`, { method: "POST", body: { audio_key: key, audio_seconds: Math.max(1, secs) } });
+      } catch (e: any) {
+        // Fallback: base64-encode and send inline if R2 upload fails
+        const resp = await fetch(uri);
+        const blob = await resp.blob();
+        const b64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () => reject(new Error("Read failed"));
+          reader.onloadend = () => {
+            const s = (reader.result as string) || "";
+            resolve(s.split(",")[1] || "");
+          };
+          reader.readAsDataURL(blob);
+        });
+        await api(`/messages/with/${peer_id}`, { method: "POST", body: { audio_b64: b64, audio_seconds: Math.max(1, secs) } });
+      }
       await load();
     } catch (e: any) {
       Alert.alert("Couldn't send voice note", e?.message || "Try again.");
@@ -190,12 +196,13 @@ export default function Conversation() {
         shouldDuckAndroid: true,
         staysActiveInBackground: false,
       });
-      if (!m?.audio_b64) {
+      if (!m?.audio_b64 && !m?.audio_url) {
         Alert.alert("Voice note unavailable", "This message has no audio data.");
         return;
       }
+      const sourceUri = m.audio_url ? m.audio_url : `data:audio/m4a;base64,${m.audio_b64}`;
       const { sound } = await Audio.Sound.createAsync(
-        { uri: `data:audio/m4a;base64,${m.audio_b64}` },
+        { uri: sourceUri },
         { shouldPlay: true, volume: 1.0 },
       );
       soundRef.current = sound;
@@ -276,14 +283,14 @@ export default function Conversation() {
                     testID={`msg-${item.message_id}`}
                     style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}
                   >
-                    {!!item.photo_b64 && (
+                    {(!!item.photo_url || !!item.photo_b64) && (
                       <Image
-                        source={{ uri: `data:image/jpeg;base64,${item.photo_b64}` }}
+                        source={{ uri: item.photo_url || `data:image/jpeg;base64,${item.photo_b64}` }}
                         style={styles.attachImg}
                         resizeMode="cover"
                       />
                     )}
-                    {!!item.audio_b64 && (
+                    {(!!item.audio_url || !!item.audio_b64) && (
                       <TouchableOpacity onPress={() => playAudio(item)} style={styles.audioRow}>
                         <Ionicons
                           name={playingId === item.message_id ? "pause-circle" : "play-circle"}

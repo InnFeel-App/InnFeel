@@ -8,6 +8,7 @@ import uuid
 import logging
 import json
 import hashlib
+import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, Body
@@ -145,12 +146,38 @@ async def startup():
 
 
 # =========================================================================
-# Auth + Account endpoints — extracted to /app/backend/routes/auth.py & account.py
+# Auth + Account + Media endpoints — extracted to /app/backend/routes/
 # =========================================================================
 from routes.auth import router as auth_router
 from routes.account import router as account_router
+from routes.media import router as media_router
+from app_core import r2 as _r2
 api.include_router(auth_router)
 api.include_router(account_router)
+api.include_router(media_router)
+
+
+def _attach_url(doc: dict, key_field: str, url_field: str) -> dict:
+    """Populate url_field on a doc by signing key_field if present. Mutates + returns doc."""
+    if not isinstance(doc, dict):
+        return doc
+    k = doc.get(key_field)
+    if k:
+        url = _r2.generate_get_url(k)
+        if url:
+            doc[url_field] = url
+    return doc
+
+
+def resolve_media(doc: dict) -> dict:
+    """Attach signed URLs for any R2 object keys on the doc."""
+    if not isinstance(doc, dict):
+        return doc
+    _attach_url(doc, "photo_key", "photo_url")
+    _attach_url(doc, "video_key", "video_url")
+    _attach_url(doc, "audio_key", "audio_url")
+    _attach_url(doc, "avatar_key", "avatar_url")
+    return doc
 
 
 # =========================================================================
@@ -181,6 +208,8 @@ async def get_today(user: dict = Depends(get_current_user)):
     mood = await db.moods.find_one({"user_id": user["user_id"], "day_key": key}, {"_id": 0})
     if mood and isinstance(mood.get("created_at"), datetime):
         mood["created_at"] = mood["created_at"].isoformat()
+    if mood:
+        resolve_media(mood)
     return {"mood": mood}
 
 
@@ -219,14 +248,18 @@ async def create_mood(data: InnFeelIn, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="You already shared your aura today. Come back tomorrow!")
 
     pro = is_pro(user)
+    has_audio = bool(data.audio_b64 or data.audio_key)
+    has_video = bool(data.video_b64 or data.video_key)
     # enforce pro-only inputs
     if not pro:
         if data.intensity > 5:
             raise HTTPException(status_code=403, detail="Intensity above 5 is a Pro feature")
-        if data.text or data.audio_b64:
+        if data.text or has_audio:
             raise HTTPException(status_code=403, detail="Text & audio notes are Pro features")
         if data.music:
             raise HTTPException(status_code=403, detail="Background music is a Pro feature")
+        if has_video:
+            raise HTTPException(status_code=402, detail="Video auras are a Pro feature")
 
     music_obj = None
     if data.music:
@@ -241,14 +274,18 @@ async def create_mood(data: InnFeelIn, user: dict = Depends(get_current_user)):
         "emotion": data.emotion,
         "color": EMOTIONS[data.emotion],
         "intensity": data.intensity,
-        "photo_b64": data.photo_b64,
-        "video_b64": data.video_b64,
-        "video_seconds": min(10, data.video_seconds) if data.video_b64 and data.video_seconds else (10 if data.video_b64 else None),
-        "has_video": bool(data.video_b64),
+        # R2-first: prefer keys, keep _b64 for legacy clients during migration
+        "photo_key": data.photo_key,
+        "photo_b64": data.photo_b64 if not data.photo_key else None,
+        "video_key": data.video_key,
+        "video_b64": data.video_b64 if not data.video_key else None,
+        "video_seconds": min(10, data.video_seconds) if has_video and data.video_seconds else (10 if has_video else None),
+        "has_video": has_video,
         "text": data.text,
-        "audio_b64": data.audio_b64,
-        "audio_seconds": data.audio_seconds if data.audio_b64 else None,
-        "has_audio": bool(data.audio_b64),
+        "audio_key": data.audio_key,
+        "audio_b64": data.audio_b64 if not data.audio_key else None,
+        "audio_seconds": data.audio_seconds if has_audio else None,
+        "has_audio": has_audio,
         "music": music_obj,
         "privacy": data.privacy,
         "reactions": [],
@@ -261,6 +298,7 @@ async def create_mood(data: InnFeelIn, user: dict = Depends(get_current_user)):
     doc.pop("_id", None)
     if isinstance(doc.get("created_at"), datetime):
         doc["created_at"] = doc["created_at"].isoformat()
+    resolve_media(doc)
     return {"mood": doc, "streak": streak}
 
 
@@ -300,7 +338,7 @@ async def friends_feed(user: dict = Depends(get_current_user)):
         if "has_audio" not in it:
             it["has_audio"] = False
     # attach author info
-    authors = await db.users.find({"user_id": {"$in": friend_ids}}, {"_id": 0, "user_id": 1, "name": 1, "avatar_color": 1, "avatar_b64": 1}).to_list(1000)
+    authors = await db.users.find({"user_id": {"$in": friend_ids}}, {"_id": 0, "user_id": 1, "name": 1, "avatar_color": 1, "avatar_b64": 1, "avatar_key": 1}).to_list(1000)
     author_map = {a["user_id"]: a for a in authors}
     for it in items:
         if isinstance(it.get("created_at"), datetime):
@@ -309,13 +347,17 @@ async def friends_feed(user: dict = Depends(get_current_user)):
         it["author_name"] = a.get("name", "Friend")
         it["author_color"] = a.get("avatar_color", "#A78BFA")
         it["author_avatar_b64"] = a.get("avatar_b64")
+        if a.get("avatar_key"):
+            it["author_avatar_url"] = _r2.generate_get_url(a["avatar_key"])
+        # R2: attach signed URLs for any stored object keys (photo/video/audio)
+        resolve_media(it)
     return {"locked": False, "items": items}
 
 
 @api.get("/moods/{mood_id}/audio")
 async def get_mood_audio(mood_id: str, user: dict = Depends(get_current_user)):
-    mood = await db.moods.find_one({"mood_id": mood_id}, {"_id": 0, "user_id": 1, "audio_b64": 1, "audio_seconds": 1, "privacy": 1, "day_key": 1})
-    if not mood or not mood.get("audio_b64"):
+    mood = await db.moods.find_one({"mood_id": mood_id}, {"_id": 0, "user_id": 1, "audio_b64": 1, "audio_key": 1, "audio_seconds": 1, "privacy": 1, "day_key": 1})
+    if not mood or not (mood.get("audio_b64") or mood.get("audio_key")):
         raise HTTPException(status_code=404, detail="No audio")
     # Authorization: author or friend (unless private)
     if mood["user_id"] != user["user_id"]:
@@ -328,7 +370,12 @@ async def get_mood_audio(mood_id: str, user: dict = Depends(get_current_user)):
         mine = await db.moods.find_one({"user_id": user["user_id"], "day_key": mood["day_key"]})
         if not mine:
             raise HTTPException(status_code=403, detail="Share your aura to unlock")
-    return {"audio_b64": mood["audio_b64"], "audio_seconds": mood.get("audio_seconds")}
+    out = {"audio_seconds": mood.get("audio_seconds")}
+    if mood.get("audio_key"):
+        out["audio_url"] = _r2.generate_get_url(mood["audio_key"])
+    if mood.get("audio_b64"):
+        out["audio_b64"] = mood["audio_b64"]
+    return out
 
 
 @api.post("/moods/{mood_id}/comment")
@@ -806,7 +853,16 @@ async def music_search(q: str, user: dict = Depends(get_current_user)):
 
 @api.post("/profile/avatar")
 async def update_avatar(data: AvatarIn, user: dict = Depends(get_current_user)):
-    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"avatar_b64": data.avatar_b64}})
+    update = {}
+    if data.avatar_key:
+        update["avatar_key"] = data.avatar_key
+        update["avatar_b64"] = None  # prefer R2
+    elif data.avatar_b64:
+        update["avatar_b64"] = data.avatar_b64
+        update["avatar_key"] = None
+    else:
+        raise HTTPException(status_code=400, detail="Provide avatar_key or avatar_b64")
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": update})
     return {"ok": True}
 
 
@@ -1301,13 +1357,13 @@ async def list_conversations(user: dict = Depends(get_current_user)):
         for p in c["participants"]:
             if p != user["user_id"]:
                 other_ids.append(p)
-    others = await db.users.find({"user_id": {"$in": other_ids}}, {"_id": 0, "user_id": 1, "name": 1, "avatar_color": 1, "avatar_b64": 1}).to_list(500)
+    others = await db.users.find({"user_id": {"$in": other_ids}}, {"_id": 0, "user_id": 1, "name": 1, "avatar_color": 1, "avatar_b64": 1, "avatar_key": 1}).to_list(500)
     other_map = {u["user_id"]: u for u in others}
     out = []
     for c in convs:
         peer_id = next((p for p in c["participants"] if p != user["user_id"]), None)
         peer = other_map.get(peer_id, {})
-        out.append({
+        row = {
             "conversation_id": c["conversation_id"],
             "peer_id": peer_id,
             "peer_name": peer.get("name", "Friend"),
@@ -1316,7 +1372,10 @@ async def list_conversations(user: dict = Depends(get_current_user)):
             "last_text": c.get("last_text"),
             "last_at": c.get("last_at"),
             "unread": c.get("unread", {}).get(user["user_id"], 0),
-        })
+        }
+        if peer.get("avatar_key"):
+            row["peer_avatar_url"] = _r2.generate_get_url(peer["avatar_key"])
+        out.append(row)
     out.sort(key=lambda x: x.get("last_at") or "", reverse=True)
     return {"conversations": out}
 
@@ -1328,12 +1387,17 @@ async def get_messages(peer_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Not friends")
     cid = _conv_id(user["user_id"], peer_id)
     msgs = await db.messages.find({"conversation_id": cid}, {"_id": 0}).sort("at", 1).to_list(500)
+    # Attach R2 signed URLs for any object keys on each message
+    for m in msgs:
+        resolve_media(m)
     # mark as read for me
     await db.conversations.update_one(
         {"conversation_id": cid},
         {"$set": {f"unread.{user['user_id']}": 0}},
     )
-    peer = await db.users.find_one({"user_id": peer_id}, {"_id": 0, "user_id": 1, "name": 1, "avatar_color": 1, "avatar_b64": 1})
+    peer = await db.users.find_one({"user_id": peer_id}, {"_id": 0, "user_id": 1, "name": 1, "avatar_color": 1, "avatar_b64": 1, "avatar_key": 1})
+    if peer:
+        resolve_media(peer)
     return {"conversation_id": cid, "peer": peer, "messages": msgs}
 
 
@@ -1343,8 +1407,10 @@ async def send_message(peer_id: str, data: MessageIn, user: dict = Depends(get_c
     if not fship:
         raise HTTPException(status_code=403, detail="Not friends")
     text = (data.text or "").strip()
+    has_photo = bool(data.photo_b64 or data.photo_key)
+    has_audio = bool(data.audio_b64 or data.audio_key)
     # Must have at least one kind of content
-    if not text and not data.photo_b64 and not data.audio_b64:
+    if not text and not has_photo and not has_audio:
         raise HTTPException(status_code=400, detail="Empty message")
     cid = _conv_id(user["user_id"], peer_id)
     now = now_utc()
@@ -1354,15 +1420,17 @@ async def send_message(peer_id: str, data: MessageIn, user: dict = Depends(get_c
         "sender_id": user["user_id"],
         "sender_name": user.get("name", ""),
         "text": text,
-        "photo_b64": data.photo_b64,
-        "audio_b64": data.audio_b64,
-        "audio_seconds": data.audio_seconds,
+        "photo_key": data.photo_key,
+        "photo_b64": data.photo_b64 if not data.photo_key else None,
+        "audio_key": data.audio_key,
+        "audio_b64": data.audio_b64 if not data.audio_key else None,
+        "audio_seconds": data.audio_seconds if has_audio else None,
         "reactions": [],
         "at": now.isoformat(),
     }
     await db.messages.insert_one(dict(msg))
     # last_text preview: prefer text, else hint at media
-    preview = text[:200] if text else ("📷 Photo" if data.photo_b64 else "🎙 Voice note")
+    preview = text[:200] if text else ("📷 Photo" if has_photo else "🎙 Voice note")
     await db.conversations.update_one(
         {"conversation_id": cid},
         {
@@ -1376,6 +1444,8 @@ async def send_message(peer_id: str, data: MessageIn, user: dict = Depends(get_c
         },
         upsert=True,
     )
+    # Attach signed URLs for the return payload so the sender can preview immediately
+    resolve_media(msg)
     # Push notification to the recipient
     push_body = text[:120] if text else ("Sent you a photo" if data.photo_b64 else "Sent you a voice note")
     await send_push(
@@ -1826,3 +1896,53 @@ app.add_middleware(
 @app.on_event("shutdown")
 async def shutdown():
     client.close()
+
+
+# =========================================================================
+# Free-tier purge job — deletes moods older than 90 days for non-Pro users.
+# Runs once per day in the background. Also cleans the corresponding R2 objects.
+# =========================================================================
+FREE_RETENTION_DAYS = 90
+
+
+async def _purge_old_free_media_once() -> dict:
+    cutoff = now_utc() - timedelta(days=FREE_RETENTION_DAYS)
+    stats = {"moods_deleted": 0, "r2_objects_deleted": 0, "users_checked": 0}
+    # Find all non-Pro users (or whose Pro expired)
+    async for u in db.users.find({}, {"_id": 0, "user_id": 1, "pro": 1, "pro_expires_at": 1}):
+        stats["users_checked"] += 1
+        if is_pro(u):
+            continue
+        uid = u.get("user_id")
+        old_cursor = db.moods.find(
+            {"user_id": uid, "created_at": {"$lt": cutoff}},
+            {"_id": 0, "mood_id": 1, "photo_key": 1, "video_key": 1, "audio_key": 1},
+        )
+        old_ids = []
+        async for m in old_cursor:
+            old_ids.append(m["mood_id"])
+            for fld in ("photo_key", "video_key", "audio_key"):
+                k = m.get(fld)
+                if k and _r2.delete_object(k):
+                    stats["r2_objects_deleted"] += 1
+        if old_ids:
+            r = await db.moods.delete_many({"mood_id": {"$in": old_ids}})
+            stats["moods_deleted"] += r.deleted_count
+    logger.info(f"[purge] {stats}")
+    return stats
+
+
+async def _purge_daemon():
+    while True:
+        try:
+            await _purge_old_free_media_once()
+        except Exception as e:
+            logger.warning(f"[purge] failed: {e}")
+        # Sleep 24h
+        await asyncio.sleep(24 * 60 * 60)
+
+
+@app.on_event("startup")
+async def _boot_purge_daemon():
+    asyncio.create_task(_purge_daemon())
+

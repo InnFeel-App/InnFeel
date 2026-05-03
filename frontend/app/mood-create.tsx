@@ -4,7 +4,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { Audio } from "expo-av";
-import * as FileSystem from "expo-file-system/legacy";
 import Slider from "@react-native-community/slider";
 import RadialAura from "../src/components/RadialAura";
 import Button from "../src/components/Button";
@@ -15,6 +14,7 @@ import { api } from "../src/api";
 import { useAuth } from "../src/auth";
 import { EMOTION_COLORS, COLORS } from "../src/theme";
 import { t } from "../src/i18n";
+import { uploadMedia } from "../src/media";
 import { Ionicons } from "@expo/vector-icons";
 
 const MAX_AUDIO_SECONDS = 10;
@@ -28,13 +28,15 @@ export default function MoodCreate() {
   const [word, setWord] = useState("");
   const [intensity, setIntensity] = useState(3);
   const [note, setNote] = useState("");
-  const [photo, setPhoto] = useState<string | null>(null);
-  const [video, setVideo] = useState<{ b64: string; seconds: number } | null>(null);
+  // Photo / video: keep local preview URI + uploaded R2 key (preferred). photoB64 is a fallback for legacy clients
+  const [photo, setPhoto] = useState<{ uri: string; key?: string } | null>(null);
+  const [video, setVideo] = useState<{ uri: string; key?: string; seconds: number } | null>(null);
   const [privacy, setPrivacy] = useState<"friends" | "close" | "private">("friends");
   const [loading, setLoading] = useState(false);
 
-  // Audio recording state (Pro)
-  const [audioB64, setAudioB64] = useState<string | null>(null);
+  // Audio recording state (Pro) — local URI of the recording
+  const [audioUri, setAudioUri] = useState<string | null>(null);
+  const [audioKey, setAudioKey] = useState<string | null>(null);
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recSeconds, setRecSeconds] = useState(0);
@@ -136,8 +138,15 @@ export default function MoodCreate() {
       await rec.stopAndUnloadAsync();
       const uri = rec.getURI();
       if (uri) {
-        const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-        setAudioB64(b64);
+        setAudioUri(uri);
+        // Upload to R2 immediately
+        try {
+          const key = await uploadMedia("mood_audio", uri, "audio/m4a", { compress: false });
+          setAudioKey(key);
+        } catch (e: any) {
+          // Fallback: keep URI for local playback but flag audioKey as null so submit sends b64
+          console.warn("Audio upload failed, will fallback to base64", e?.message);
+        }
       }
       // Reset audio mode so subsequent playback routes to speaker (not earpiece) on iOS
       await Audio.setAudioModeAsync({
@@ -151,7 +160,7 @@ export default function MoodCreate() {
   };
 
   const playPreview = async () => {
-    if (!audioB64) return;
+    if (!audioUri) return;
     try {
       // Reset audio mode to playback mode (important on iOS after recording)
       await Audio.setAudioModeAsync({
@@ -162,7 +171,7 @@ export default function MoodCreate() {
       });
       if (soundRef.current) { await soundRef.current.unloadAsync(); soundRef.current = null; }
       const { sound } = await Audio.Sound.createAsync(
-        { uri: `data:audio/m4a;base64,${audioB64}` },
+        { uri: audioUri },
         { shouldPlay: true, volume: 1.0 },
       );
       soundRef.current = sound;
@@ -176,7 +185,7 @@ export default function MoodCreate() {
 
   const clearAudio = async () => {
     if (soundRef.current) { await soundRef.current.unloadAsync().catch(() => {}); soundRef.current = null; }
-    setAudioB64(null); setRecSeconds(0); setPlaying(false);
+    setAudioUri(null); setAudioKey(null); setRecSeconds(0); setPlaying(false);
   };
 
   const maxIntensity = pro ? 10 : 5;
@@ -185,74 +194,66 @@ export default function MoodCreate() {
   const pickFromLibrary = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { Alert.alert("Permission needed", "We need photo access to attach images."); return; }
-    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.6, base64: true });
-    if (!r.canceled && r.assets[0]?.base64) { setPhoto(r.assets[0].base64); setVideo(null); }
+    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.9 });
+    if (!r.canceled && r.assets[0]?.uri) {
+      try {
+        const key = await uploadMedia("mood_photo", r.assets[0].uri, "image/jpeg");
+        setPhoto({ uri: r.assets[0].uri, key });
+        setVideo(null);
+      } catch (e: any) { Alert.alert("Upload failed", e?.message || "Try again."); }
+    }
   };
 
   const takePhoto = async () => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) { Alert.alert("Permission needed", "We need camera access to take photos."); return; }
-    const r = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.6, base64: true });
-    if (!r.canceled && r.assets[0]?.base64) { setPhoto(r.assets[0].base64); setVideo(null); }
+    const r = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.9 });
+    if (!r.canceled && r.assets[0]?.uri) {
+      try {
+        const key = await uploadMedia("mood_photo", r.assets[0].uri, "image/jpeg");
+        setPhoto({ uri: r.assets[0].uri, key });
+        setVideo(null);
+      } catch (e: any) { Alert.alert("Upload failed", e?.message || "Try again."); }
+    }
   };
 
-  // Video: up to 10s looping. We trust Expo's videoMaxDuration; if user picks a longer video we cap at 10s metadata.
+  // Video: up to 10s looping. Pro-only.
   const pickVideoFromLibrary = async () => {
+    if (!pro) { Alert.alert("Pro feature", "Video auras are a Pro feature."); return; }
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { Alert.alert("Permission needed", "We need library access to attach videos."); return; }
     const r = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Videos,
       quality: 0.6,
       videoMaxDuration: 10,
-      base64: true,
     });
-    if (r.canceled || !r.assets[0]) return;
+    if (r.canceled || !r.assets[0]?.uri) return;
     const a = r.assets[0];
-    // Enforce 10s max on our side too
     const dur = Math.min(10, Math.max(1, Math.round((a.duration || 10000) / 1000)));
-    let b64 = a.base64 || "";
-    if (!b64 && a.uri) {
-      // Fallback: fetch & base64-encode
-      const resp = await fetch(a.uri);
-      const blob = await resp.blob();
-      b64 = await new Promise<string>((res, rej) => {
-        const fr = new FileReader();
-        fr.onerror = () => rej(new Error("read failed"));
-        fr.onloadend = () => res(((fr.result as string) || "").split(",")[1] || "");
-        fr.readAsDataURL(blob);
-      });
-    }
-    if (!b64) { Alert.alert("Couldn't read video"); return; }
-    setVideo({ b64, seconds: dur });
-    setPhoto(null);
+    try {
+      const key = await uploadMedia("mood_video", a.uri, "video/mp4", { compress: false, ext: "mp4" });
+      setVideo({ uri: a.uri, key, seconds: dur });
+      setPhoto(null);
+    } catch (e: any) { Alert.alert("Upload failed", e?.message || "Try again."); }
   };
 
   const recordVideo = async () => {
+    if (!pro) { Alert.alert("Pro feature", "Video auras are a Pro feature."); return; }
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) { Alert.alert("Permission needed", "We need camera access to record videos."); return; }
     const r = await ImagePicker.launchCameraAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Videos,
       quality: 0.6,
       videoMaxDuration: 10,
-      base64: true,
     });
-    if (r.canceled || !r.assets[0]) return;
+    if (r.canceled || !r.assets[0]?.uri) return;
     const a = r.assets[0];
     const dur = Math.min(10, Math.max(1, Math.round((a.duration || 10000) / 1000)));
-    let b64 = a.base64 || "";
-    if (!b64 && a.uri) {
-      const resp = await fetch(a.uri);
-      const blob = await resp.blob();
-      b64 = await new Promise<string>((res, rej) => {
-        const fr = new FileReader();
-        fr.onerror = () => rej(new Error("read failed"));
-        fr.onloadend = () => res(((fr.result as string) || "").split(",")[1] || "");
-        fr.readAsDataURL(blob);
-      });
-    }
-    if (!b64) { Alert.alert("Couldn't read video"); return; }
-    setVideo({ b64, seconds: dur });
-    setPhoto(null);
+    try {
+      const key = await uploadMedia("mood_video", a.uri, "video/mp4", { compress: false, ext: "mp4" });
+      setVideo({ uri: a.uri, key, seconds: dur });
+      setPhoto(null);
+    } catch (e: any) { Alert.alert("Upload failed", e?.message || "Try again."); }
   };
 
   const pick = () => {
@@ -278,12 +279,12 @@ export default function MoodCreate() {
         body: {
           word: word.trim() || null, emotion,
           intensity: Math.max(1, Math.min(maxIntensity, intensity)),
-          photo_b64: photo,
-          video_b64: video?.b64 || null,
+          photo_key: photo?.key || null,
+          video_key: video?.key || null,
           video_seconds: video?.seconds || null,
           text: pro ? note || null : null,
-          audio_b64: pro ? audioB64 : null,
-          audio_seconds: pro && audioB64 ? Math.max(1, recSeconds) : null,
+          audio_key: pro ? audioKey : null,
+          audio_seconds: pro && audioUri ? Math.max(1, recSeconds) : null,
           music: pro && selectedMusic ? {
             track_id: selectedMusic.track_id,
             name: selectedMusic.name,
@@ -368,7 +369,7 @@ export default function MoodCreate() {
             <Text style={styles.section}>Photo or video</Text>
             <TouchableOpacity testID="mood-add-photo" onPress={pick} style={styles.photoBox}>
               {photo ? (
-                <Image source={{ uri: `data:image/jpeg;base64,${photo}` }} style={styles.photoPrev} />
+                <Image source={{ uri: photo.uri }} style={styles.photoPrev} />
               ) : video ? (
                 <View style={[styles.photoPrev, { backgroundColor: "#111", alignItems: "center", justifyContent: "center", gap: 8 }]}>
                   <Ionicons name="videocam" size={28} color="#fff" />
@@ -401,7 +402,7 @@ export default function MoodCreate() {
                   <ProBadge />
                 </View>
                 <View style={[styles.audioCard, { borderColor: auraColor + "80" }]}>
-                  {!audioB64 ? (
+                  {!audioUri ? (
                     <TouchableOpacity
                       testID={isRecording ? "mood-stop-audio" : "mood-record-audio"}
                       onPress={() => (isRecording ? stopRecording() : startRecording())}

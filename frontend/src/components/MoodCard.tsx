@@ -14,11 +14,14 @@ type Mood = {
   emotion: string;
   intensity: number;
   photo_b64?: string | null;
+  photo_url?: string | null;
   video_b64?: string | null;
+  video_url?: string | null;
   video_seconds?: number | null;
   has_video?: boolean;
   text?: string | null;
   audio_b64?: string | null;
+  audio_url?: string | null;
   has_audio?: boolean;
   audio_seconds?: number | null;
   music?: {
@@ -117,17 +120,19 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
         shouldDuckAndroid: true,
         staysActiveInBackground: false,
       });
-      let b64 = cachedAudio;
-      if (!b64) {
+      let audioSource: string | null = cachedAudio ? cachedAudio : (mood.audio_url || null);
+      if (!audioSource) {
         setLoadingAudio(true);
-        const r = await api<{ audio_b64: string }>(`/moods/${mood.mood_id}/audio`);
-        b64 = r.audio_b64;
-        setCachedAudio(b64);
+        const r = await api<{ audio_b64?: string; audio_url?: string }>(`/moods/${mood.mood_id}/audio`);
+        audioSource = r.audio_url ? r.audio_url : (r.audio_b64 ? `data:audio/m4a;base64,${r.audio_b64}` : null);
+        setCachedAudio(audioSource);
         setLoadingAudio(false);
+      } else if (!audioSource.startsWith("http") && !audioSource.startsWith("data:")) {
+        audioSource = `data:audio/m4a;base64,${audioSource}`;
       }
-      if (!soundRef.current) {
+      if (!soundRef.current && audioSource) {
         const { sound } = await Audio.Sound.createAsync(
-          { uri: `data:audio/m4a;base64,${b64}` },
+          { uri: audioSource },
           { shouldPlay: false, volume: 1.0 },
         );
         soundRef.current = sound;
@@ -166,7 +171,9 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
         {showAuthor ? (
           <View style={styles.authorRow}>
             <View style={[styles.avatar, { backgroundColor: mood.author_color || em.hex, overflow: "hidden", borderColor: em.hex + "88" }]}>
-              {mood.author_avatar_b64 ? (
+              {mood.author_avatar_url ? (
+                <Image source={{ uri: mood.author_avatar_url }} style={{ width: 40, height: 40 }} />
+              ) : mood.author_avatar_b64 ? (
                 <Image source={{ uri: `data:image/jpeg;base64,${mood.author_avatar_b64}` }} style={{ width: 40, height: 40 }} />
               ) : (
                 <Text style={styles.avatarTxt}>{(mood.author_name || "?").slice(0, 1).toUpperCase()}</Text>
@@ -227,8 +234,12 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
         <Text style={styles.intensityLabel}>{mood.intensity}/{mood.intensity > 5 ? 10 : 5}</Text>
       </View>
 
-      {mood.video_b64 ? (
+      {mood.video_url ? (
+        <LoopingVideo uri={mood.video_url} />
+      ) : mood.video_b64 ? (
         <LoopingVideo b64={mood.video_b64} />
+      ) : mood.photo_url ? (
+        <Image source={{ uri: mood.photo_url }} style={styles.photo} />
       ) : mood.photo_b64 ? (
         <Image source={{ uri: `data:image/jpeg;base64,${mood.photo_b64}` }} style={styles.photo} />
       ) : null}
@@ -355,8 +366,8 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
 }
 
 /** Short looping video attached to an aura. Uses expo-video for efficient playback. */
-function LoopingVideo({ b64 }: { b64: string }) {
-  const source = `data:video/mp4;base64,${b64}`;
+function LoopingVideo({ b64, uri }: { b64?: string; uri?: string }) {
+  const source = uri || (b64 ? `data:video/mp4;base64,${b64}` : "");
   const player = useVideoPlayer(source, (p) => {
     p.loop = true;
     p.muted = true;

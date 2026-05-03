@@ -7,6 +7,7 @@ import RadialAura from "../../src/components/RadialAura";
 import Button from "../../src/components/Button";
 import { useAuth } from "../../src/auth";
 import { api } from "../../src/api";
+import { uploadMedia } from "../../src/media";
 import { COLORS } from "../../src/theme";
 import { t } from "../../src/i18n";
 import { Ionicons } from "@expo/vector-icons";
@@ -25,16 +26,11 @@ export default function Profile() {
       if (!perm.granted) { Alert.alert("Permission needed", "We need photo access to update your profile picture."); return; }
       const r = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.5,
-        base64: true,
+        quality: 0.9,
       });
-      if (r.canceled || !r.assets?.[0]?.base64) return;
-      const b64 = r.assets[0].base64;
-      if (b64.length > 2_500_000) {
-        Alert.alert("Image too large", "Please choose a smaller image (< 2 MB).");
-        return;
-      }
-      await api("/profile/avatar", { method: "POST", body: { avatar_b64: b64 } });
+      if (r.canceled || !r.assets?.[0]?.uri) return;
+      const key = await uploadMedia("avatar", r.assets[0].uri, "image/jpeg");
+      await api("/profile/avatar", { method: "POST", body: { avatar_key: key } });
       await refresh();
       Alert.alert("Updated ✦", "Your profile picture is live.");
     } catch (e: any) {
@@ -50,7 +46,9 @@ export default function Profile() {
           <View style={styles.header}>
             <TouchableOpacity testID="change-avatar" onPress={changeAvatar} activeOpacity={0.85}>
               <View style={[styles.avatar, { backgroundColor: user?.avatar_color || "#A78BFA" }]}>
-                {(user as any)?.avatar_b64 ? (
+                {(user as any)?.avatar_url ? (
+                  <Image source={{ uri: (user as any).avatar_url }} style={styles.avatarImg} />
+                ) : (user as any)?.avatar_b64 ? (
                   <Image source={{ uri: `data:image/jpeg;base64,${(user as any).avatar_b64}` }} style={styles.avatarImg} />
                 ) : (
                   <Text style={styles.avatarTxt}>{(user?.name || "?").slice(0, 1).toUpperCase()}</Text>

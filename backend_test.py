@@ -1,327 +1,446 @@
-"""Full backend regression sanity-check for InnFeel post-refactor."""
-
+"""
+InnFeel R2 migration sanity test (Session 13).
+Targets the public preview backend URL + /api prefix.
+"""
 import os
-import sys
+import re
+import json
+import time
 import uuid
-import requests
+import logging
+from typing import Optional
 
-BASE = os.environ.get("BACKEND_URL", "https://charming-wescoff-8.preview.emergentagent.com")
-API = BASE.rstrip("/") + "/api"
+import httpx
 
-ADMIN_EMAIL = "admin@innfeel.app"
-ADMIN_PW = "admin123"
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+log = logging.getLogger("test")
+
+BACKEND_URL = "https://charming-wescoff-8.preview.emergentagent.com"
+try:
+    with open("/app/frontend/.env") as f:
+        for line in f:
+            if line.startswith("EXPO_PUBLIC_BACKEND_URL="):
+                BACKEND_URL = line.split("=", 1)[1].strip().strip('"')
+                break
+except Exception:
+    pass
+API = BACKEND_URL.rstrip("/") + "/api"
+log.info(f"API: {API}")
+
+ADMIN_EMAIL = "hello@innfeel.app"
+ADMIN_PASS = "admin123"
 LUNA_EMAIL = "luna@innfeel.app"
-LUNA_PW = "demo1234"
+LUNA_PASS = "demo1234"
 
-results = []
-
-
-def record(name, ok, detail=""):
-    results.append((name, ok, detail))
-    status = "PASS" if ok else "FAIL"
-    print(f"[{status}] {name} :: {detail}")
+PASS = []
+FAIL = []
 
 
-def post(path, token=None, json_body=None, params=None):
-    h = {}
-    if token:
-        h["Authorization"] = f"Bearer {token}"
-    return requests.post(API + path, headers=h, json=json_body, params=params, timeout=30)
+def record(label: str, ok: bool, detail: str = ""):
+    if ok:
+        PASS.append(label)
+        log.info(f"  PASS  {label}  {detail}")
+    else:
+        FAIL.append((label, detail))
+        log.info(f"  FAIL  {label}  {detail}")
 
 
-def get(path, token=None, params=None):
-    h = {}
-    if token:
-        h["Authorization"] = f"Bearer {token}"
-    return requests.get(API + path, headers=h, params=params, timeout=30)
+def login(client: httpx.Client, email: str, password: str) -> Optional[str]:
+    client.cookies.clear()
+    r = client.post(f"{API}/auth/login", json={"email": email, "password": password})
+    if r.status_code == 200:
+        return r.json().get("access_token")
+    log.info(f"login {email} -> {r.status_code} {r.text[:200]}")
+    return None
 
 
-def delete(path, token=None):
-    h = {}
-    if token:
-        h["Authorization"] = f"Bearer {token}"
-    return requests.delete(API + path, headers=h, timeout=30)
+def hdr(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
 
 
-def login(email, pw):
-    r = post("/auth/login", json_body={"email": email, "password": pw})
+def fresh_user(client: httpx.Client) -> tuple[str, str, str]:
+    suf = uuid.uuid4().hex[:8]
+    email = f"r2test_{suf}@innfeel.app"
+    payload = {"email": email, "password": "test1234!", "name": f"R2T{suf[:4]}", "lang": "en"}
+    r = client.post(f"{API}/auth/register", json=payload)
     if r.status_code != 200:
-        return None, r
-    return r.json().get("access_token"), r
+        raise RuntimeError(f"register failed: {r.status_code} {r.text[:200]}")
+    body = r.json()
+    return body["user"]["user_id"], email, body["access_token"]
 
 
-# 1) AUTH
-print("\n=== 1) AUTH ===")
+def main():
+    with httpx.Client(timeout=30.0) as client:
+        # ============================================================
+        # 1. Login
+        # ============================================================
+        admin_token = login(client, ADMIN_EMAIL, ADMIN_PASS)
+        record("auth.login admin", admin_token is not None)
+        if not admin_token:
+            return
 
-rand_email = f"sandy_{uuid.uuid4().hex[:8]}@innfeel.app"
-r = post("/auth/register", json_body={"email": rand_email, "password": "Test1234!", "name": "Sandy Test"})
-record("auth/register new user", r.status_code == 200, f"{r.status_code} {r.text[:120]}")
-new_token = r.json().get("access_token") if r.status_code == 200 else None
+        client.cookies.clear()
+        luna_token = login(client, LUNA_EMAIL, LUNA_PASS)
+        record("auth.login luna", luna_token is not None)
 
-admin_token, r = login(ADMIN_EMAIL, ADMIN_PW)
-record("auth/login admin", r.status_code == 200 and admin_token is not None, f"{r.status_code}")
+        client.cookies.clear()
+        r = client.get(f"{API}/auth/me", headers=hdr(admin_token))
+        admin_user = r.json() if r.status_code == 200 else {}
+        admin_id = admin_user.get("user_id", "")
+        record("auth.me admin", r.status_code == 200 and admin_user.get("is_admin") is True,
+               f"is_admin={admin_user.get('is_admin')} pro={admin_user.get('pro')}")
+        record("auth.me admin has avatar_url field", "avatar_url" in admin_user,
+               f"avatar_url={admin_user.get('avatar_url')}")
 
-luna_token, r = login(LUNA_EMAIL, LUNA_PW)
-record("auth/login luna", r.status_code == 200 and luna_token is not None, f"{r.status_code}")
+        client.cookies.clear()
+        r = client.get(f"{API}/auth/me", headers=hdr(luna_token))
+        luna_user = r.json() if r.status_code == 200 else {}
+        luna_id = luna_user.get("user_id", "")
+        record("auth.me luna", r.status_code == 200, f"luna_id={luna_id}")
 
-r = get("/auth/me", token=admin_token)
-me_admin = r.json() if r.status_code == 200 else {}
-record("auth/me admin is_admin:true", r.status_code == 200 and me_admin.get("is_admin") is True,
-       f"{r.status_code} is_admin={me_admin.get('is_admin')}")
+        # ============================================================
+        # 2. /api/media/upload-url validation matrix
+        # ============================================================
+        client.cookies.clear()
+        r = client.post(f"{API}/media/upload-url",
+                        headers=hdr(admin_token),
+                        json={"kind": "mood_photo", "content_type": "image/jpeg"})
+        ok = r.status_code == 200
+        signed = r.json() if ok else {}
+        keys_ok = ok and all(k in signed for k in ("url", "method", "key", "headers", "expires_in"))
+        record("media.upload-url mood_photo as admin", ok and keys_ok,
+               f"status={r.status_code} keys={list(signed.keys()) if ok else r.text[:120]}")
+        if ok:
+            record("media.upload-url method == PUT", signed.get("method") == "PUT", f"method={signed.get('method')}")
+            record("media.upload-url Content-Type header echoed",
+                   signed.get("headers", {}).get("Content-Type") == "image/jpeg",
+                   f"headers={signed.get('headers')}")
+            record("media.upload-url key has user_id prefix",
+                   f"/{admin_id}/" in signed.get("key", ""),
+                   f"key={signed.get('key')}")
+            record("media.upload-url url at R2 endpoint",
+                   "r2.cloudflarestorage.com" in (signed.get("url") or ""),
+                   f"url[:80]={(signed.get('url') or '')[:80]}")
+            record("media.upload-url expires_in == 900", signed.get("expires_in") == 900,
+                   f"expires_in={signed.get('expires_in')}")
 
-r = get("/auth/me", token=luna_token)
-me_luna = r.json() if r.status_code == 200 else {}
-luna_id = me_luna.get("user_id")
-record("auth/me luna", r.status_code == 200 and luna_id is not None, f"{r.status_code}")
+        # 2b) Free user video → 402
+        try:
+            free_uid, free_email, free_token = fresh_user(client)
+        except Exception as e:
+            free_uid = free_email = free_token = None
+            record("fresh free user creation", False, str(e))
+        if free_token:
+            client.cookies.clear()
+            r = client.post(f"{API}/media/upload-url",
+                            headers=hdr(free_token),
+                            json={"kind": "mood_video", "content_type": "video/mp4"})
+            record("media.upload-url mood_video as FREE -> 402",
+                   r.status_code == 402 and "Pro feature" in r.text,
+                   f"status={r.status_code} body={r.text[:160]}")
 
-r = post("/auth/logout", token=new_token)
-record("auth/logout", r.status_code == 200, f"{r.status_code}")
+        # 2c) Pro video → 200
+        client.cookies.clear()
+        r = client.post(f"{API}/media/upload-url",
+                        headers=hdr(admin_token),
+                        json={"kind": "mood_video", "content_type": "video/mp4"})
+        record("media.upload-url mood_video as Pro -> 200", r.status_code == 200,
+               f"status={r.status_code}")
 
-# 2) MOODS
-print("\n=== 2) MOODS ===")
+        # 2d) Bad photo content type → 400
+        client.cookies.clear()
+        r = client.post(f"{API}/media/upload-url",
+                        headers=hdr(admin_token),
+                        json={"kind": "mood_photo", "content_type": "application/x-php"})
+        record("media.upload-url bad photo content_type -> 400",
+               r.status_code == 400 and "Unsupported" in r.text,
+               f"status={r.status_code} body={r.text[:160]}")
 
-delete("/moods/today", token=luna_token)
+        # ============================================================
+        # 3. Round-trip: presign -> PUT -> POST /moods with photo_key
+        # ============================================================
+        client.cookies.clear()
+        client.delete(f"{API}/moods/today", headers=hdr(admin_token))
 
-r = post("/moods", token=luna_token,
-        json_body={"word": "ocean", "emotion": "joy", "intensity": 4, "privacy": "friends"})
-luna_mood_body = r.json() if r.status_code == 200 else {}
-luna_mood_id = (
-    luna_mood_body.get("mood_id")
-    or (luna_mood_body.get("mood") or {}).get("mood_id")
-)
-record("POST /moods luna", r.status_code == 200 and luna_mood_id is not None,
-       f"{r.status_code} keys={list(luna_mood_body.keys())[:8]}")
+        client.cookies.clear()
+        r = client.post(f"{API}/media/upload-url",
+                        headers=hdr(admin_token),
+                        json={"kind": "mood_photo", "content_type": "image/jpeg"})
+        if r.status_code != 200:
+            record("roundtrip presign", False, f"{r.status_code}")
+            return
+        signed = r.json()
+        rt_key = signed["key"]
+        rt_url = signed["url"]
+        rt_headers = signed["headers"]
 
-delete("/moods/today", token=admin_token)
-r = post("/moods", token=admin_token,
-        json_body={"word": "calm", "emotion": "calm", "intensity": 3, "privacy": "friends"})
-record("POST /moods admin", r.status_code == 200, f"{r.status_code}")
+        payload_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+        with httpx.Client(timeout=30.0) as r2c:
+            put_resp = r2c.put(rt_url, content=payload_bytes, headers=rt_headers)
+        record("roundtrip R2 PUT bytes", put_resp.status_code in (200, 204),
+               f"status={put_resp.status_code} body={put_resp.text[:200]}")
 
-r = get("/moods/today", token=luna_token)
-record("GET /moods/today luna", r.status_code == 200 and r.json().get("mood") is not None,
-       f"{r.status_code}")
+        client.cookies.clear()
+        r = client.post(f"{API}/moods", headers=hdr(admin_token),
+                        json={"emotion": "joy", "intensity": 3, "photo_key": rt_key})
+        body = r.json() if r.status_code == 200 else {}
+        mood_doc = body.get("mood", {}) if r.status_code == 200 else {}
+        ok = r.status_code == 200
+        record("POST /moods with photo_key -> 200", ok,
+               f"status={r.status_code} body={r.text[:200] if not ok else ''}")
+        signed_photo_url = mood_doc.get("photo_url")
+        record("mood.photo_url present and signed",
+               bool(signed_photo_url) and "X-Amz-Signature" in (signed_photo_url or ""),
+               f"photo_url[:100]={(signed_photo_url or '')[:100]}")
 
-r = get("/moods/feed", token=luna_token)
-feed = r.json() if r.status_code == 200 else {}
-record("GET /moods/feed luna", r.status_code == 200 and isinstance(feed.get("items"), list),
-       f"{r.status_code} items={len(feed.get('items', []))}")
+        client.cookies.clear()
+        r = client.get(f"{API}/moods/today", headers=hdr(admin_token))
+        today_mood = (r.json() or {}).get("mood") or {}
+        today_url = today_mood.get("photo_url")
+        record("GET /moods/today returns photo_url", bool(today_url),
+               f"key={today_mood.get('photo_key')}")
 
-r = get("/moods/stats", token=luna_token)
-record("GET /moods/stats luna", r.status_code == 200, f"{r.status_code}")
+        if signed_photo_url:
+            with httpx.Client(timeout=30.0) as r2c:
+                gr = r2c.get(signed_photo_url)
+            record("GET signed photo_url -> 200", gr.status_code == 200,
+                   f"status={gr.status_code} bytes={len(gr.content)}")
+            record("photo bytes round-trip integrity",
+                   gr.status_code == 200 and gr.content[:3] == b"\xff\xd8\xff",
+                   f"first3={gr.content[:3]!r}")
 
-r = get("/moods/stats", token=admin_token)
-stats = r.json() if r.status_code == 200 else {}
-shape_ok = all(k in stats for k in ("range_30", "range_90", "range_365"))
-ranges_ok = shape_ok and all(
-    isinstance(stats.get(k), dict) and all(sub in stats.get(k, {}) for sub in ("count", "distribution", "avg_intensity", "volatility"))
-    for k in ("range_30", "range_90", "range_365")
-)
-insights_ok = isinstance(stats.get("insights"), list) and all(isinstance(x, str) for x in stats.get("insights", []))
-record("GET /moods/stats admin Pro shape range_30/90/365 + insights[]",
-       r.status_code == 200 and shape_ok and ranges_ok and insights_ok,
-       f"shape_ok={shape_ok} ranges_ok={ranges_ok} insights_ok={insights_ok}")
+        # ============================================================
+        # 4. /api/media/delete
+        # ============================================================
+        client.cookies.clear()
+        r = client.post(f"{API}/media/upload-url",
+                        headers=hdr(admin_token),
+                        json={"kind": "mood_photo", "content_type": "image/jpeg"})
+        del_signed = r.json() if r.status_code == 200 else {}
+        del_key = del_signed.get("key")
+        if del_key:
+            with httpx.Client(timeout=30.0) as r2c:
+                r2c.put(del_signed["url"], content=b"\xff\xd8\xff\xe0test", headers=del_signed["headers"])
+            client.cookies.clear()
+            r = client.post(f"{API}/media/delete", headers=hdr(admin_token), json={"key": del_key})
+            record("media.delete own object -> 200",
+                   r.status_code == 200 and r.json().get("ok") is True,
+                   f"status={r.status_code} body={r.text[:160]}")
 
-if luna_mood_id:
-    r = post(f"/moods/{luna_mood_id}/react", token=admin_token, json_body={"emoji": "heart"})
-    body = r.json() if r.status_code == 200 else {}
-    shape = r.status_code == 200 and body.get("ok") is True and isinstance(body.get("reactions"), list)
-    record("POST /moods/{id}/react shape {ok:true, reactions:[...]}", shape,
-           f"{r.status_code} keys={list(body.keys())}")
+        foreign_key = f"media/mood_photo/user_other_user_id_xxx/{uuid.uuid4().hex}.jpg"
+        client.cookies.clear()
+        r = client.post(f"{API}/media/delete", headers=hdr(admin_token), json={"key": foreign_key})
+        record("media.delete foreign object -> 403",
+               r.status_code == 403 and "Not your object" in r.text,
+               f"status={r.status_code} body={r.text[:160]}")
 
-    r = post(f"/moods/{luna_mood_id}/comment", token=admin_token, json_body={"text": "nice"})
-    body = r.json() if r.status_code == 200 else {}
-    shape = r.status_code == 200 and body.get("ok") is True and isinstance(body.get("comment"), dict)
-    record("POST /moods/{id}/comment shape {ok:true, comment:{...}}", shape,
-           f"{r.status_code} keys={list(body.keys())}")
+        # ============================================================
+        # 5. Messages with R2 photo_key (luna -> hello)
+        # ============================================================
+        if luna_token and admin_id:
+            client.cookies.clear()
+            client.post(f"{API}/friends/add", headers=hdr(luna_token), json={"email": ADMIN_EMAIL})
+            client.cookies.clear()
+            r = client.post(f"{API}/media/upload-url",
+                            headers=hdr(luna_token),
+                            json={"kind": "msg_photo", "content_type": "image/jpeg"})
+            ok = r.status_code == 200
+            msg_signed = r.json() if ok else {}
+            record("media.upload-url msg_photo as luna", ok, f"status={r.status_code}")
+            if ok:
+                msg_key = msg_signed["key"]
+                with httpx.Client(timeout=30.0) as r2c:
+                    pr = r2c.put(msg_signed["url"], content=b"\xff\xd8\xff\xe0msg", headers=msg_signed["headers"])
+                record("messages photo R2 PUT", pr.status_code in (200, 204), f"status={pr.status_code}")
+                client.cookies.clear()
+                r = client.post(f"{API}/messages/with/{admin_id}",
+                                headers=hdr(luna_token),
+                                json={"photo_key": msg_key})
+                ok2 = r.status_code == 200
+                msg_obj = (r.json() or {}).get("message", {}) if ok2 else {}
+                record("POST /messages/with photo_key -> 200", ok2,
+                       f"status={r.status_code} body={r.text[:200] if not ok2 else ''}")
+                record("message.photo_url signed",
+                       bool(msg_obj.get("photo_url")) and "X-Amz-Signature" in (msg_obj.get("photo_url") or ""),
+                       f"photo_url[:80]={(msg_obj.get('photo_url') or '')[:80]}")
+                client.cookies.clear()
+                r = client.get(f"{API}/messages/with/{admin_id}", headers=hdr(luna_token))
+                ok3 = r.status_code == 200
+                msgs = (r.json() or {}).get("messages", []) if ok3 else []
+                with_photo = [m for m in msgs if m.get("photo_key")]
+                record("GET /messages/with returns photo_url",
+                       ok3 and any(m.get("photo_url") for m in with_photo),
+                       f"#with_photo={len(with_photo)}")
 
-r = get("/activity", token=luna_token)
-record("GET /activity luna", r.status_code == 200, f"{r.status_code}")
+        # ============================================================
+        # 6. Avatar with R2
+        # ============================================================
+        client.cookies.clear()
+        r = client.post(f"{API}/media/upload-url",
+                        headers=hdr(admin_token),
+                        json={"kind": "avatar", "content_type": "image/jpeg"})
+        av_ok = r.status_code == 200
+        av_signed = r.json() if av_ok else {}
+        record("media.upload-url avatar -> 200", av_ok, f"status={r.status_code}")
+        if av_ok:
+            av_key = av_signed["key"]
+            with httpx.Client(timeout=30.0) as r2c:
+                pr = r2c.put(av_signed["url"], content=b"\xff\xd8\xff\xe0avatar", headers=av_signed["headers"])
+            record("avatar PUT to R2", pr.status_code in (200, 204), f"status={pr.status_code}")
+            client.cookies.clear()
+            r = client.post(f"{API}/profile/avatar", headers=hdr(admin_token),
+                            json={"avatar_key": av_key})
+            record("POST /profile/avatar avatar_key -> 200", r.status_code == 200, f"status={r.status_code}")
+            client.cookies.clear()
+            r = client.get(f"{API}/auth/me", headers=hdr(admin_token))
+            me_user = r.json() if r.status_code == 200 else {}
+            record("auth/me user.avatar_url populated",
+                   bool(me_user.get("avatar_url")) and "X-Amz-Signature" in (me_user.get("avatar_url") or ""),
+                   f"avatar_url[:80]={(me_user.get('avatar_url') or '')[:80]}")
 
-r = get("/activity/unread-count", token=luna_token)
-record("GET /activity/unread-count luna", r.status_code == 200, f"{r.status_code} {r.text[:80]}")
+        # ============================================================
+        # 7. Mood audio fetch with R2
+        # ============================================================
+        client.cookies.clear()
+        r = client.post(f"{API}/media/upload-url",
+                        headers=hdr(admin_token),
+                        json={"kind": "mood_audio", "content_type": "audio/m4a"})
+        audio_ok = r.status_code == 200
+        audio_signed = r.json() if audio_ok else {}
+        record("media.upload-url mood_audio -> 200", audio_ok, f"status={r.status_code}")
+        if audio_ok:
+            audio_key = audio_signed["key"]
+            with httpx.Client(timeout=30.0) as r2c:
+                pr = r2c.put(audio_signed["url"], content=b"audio_bytes_test_payload", headers=audio_signed["headers"])
+            record("audio PUT to R2", pr.status_code in (200, 204), f"status={pr.status_code}")
+            client.cookies.clear()
+            client.delete(f"{API}/moods/today", headers=hdr(admin_token))
+            client.cookies.clear()
+            r = client.post(f"{API}/moods", headers=hdr(admin_token),
+                            json={"emotion": "joy", "intensity": 3, "audio_key": audio_key, "audio_seconds": 5})
+            mood_id = (r.json() or {}).get("mood", {}).get("mood_id") if r.status_code == 200 else None
+            record("POST /moods with audio_key -> 200", r.status_code == 200 and bool(mood_id),
+                   f"status={r.status_code}")
+            if mood_id:
+                client.cookies.clear()
+                r = client.get(f"{API}/moods/{mood_id}/audio", headers=hdr(admin_token))
+                body = r.json() if r.status_code == 200 else {}
+                record("GET /moods/{id}/audio returns audio_url (not b64)",
+                       r.status_code == 200 and bool(body.get("audio_url")) and not body.get("audio_b64"),
+                       f"keys={list(body.keys()) if r.status_code == 200 else r.status_code}")
 
-r = post("/activity/mark-read", token=luna_token, json_body={})
-record("POST /activity/mark-read luna", r.status_code == 200, f"{r.status_code}")
+        # ============================================================
+        # 8. REGRESSION SWEEP
+        # ============================================================
+        log.info("--- REGRESSION SWEEP ---")
+        client.cookies.clear()
+        r = client.get(f"{API}/auth/me", headers=hdr(admin_token))
+        record("regression /auth/me", r.status_code == 200)
+        client.cookies.clear()
+        r = client.get(f"{API}/account/export", headers=hdr(admin_token))
+        record("regression /account/export", r.status_code == 200)
+        client.cookies.clear()
+        r = client.get(f"{API}/moods/today", headers=hdr(admin_token))
+        record("regression /moods/today", r.status_code == 200)
+        client.cookies.clear()
+        r = client.get(f"{API}/moods/feed", headers=hdr(admin_token))
+        record("regression /moods/feed", r.status_code == 200, f"locked={(r.json() or {}).get('locked')}")
+        client.cookies.clear()
+        r = client.get(f"{API}/moods/stats", headers=hdr(admin_token))
+        body = r.json() if r.status_code == 200 else {}
+        record("regression /moods/stats Pro ranges",
+               r.status_code == 200 and "range_30" in body and "range_90" in body and "range_365" in body,
+               f"keys={list(body.keys())[:8]}")
+        client.cookies.clear()
+        r = client.get(f"{API}/friends", headers=hdr(admin_token))
+        record("regression /friends", r.status_code == 200)
+        client.cookies.clear()
+        r = client.get(f"{API}/friends/leaderboard", headers=hdr(admin_token))
+        record("regression /friends/leaderboard", r.status_code == 200)
+        client.cookies.clear()
+        r = client.get(f"{API}/badges", headers=hdr(admin_token))
+        record("regression /badges", r.status_code == 200)
+        client.cookies.clear()
+        r = client.get(f"{API}/messages/conversations", headers=hdr(admin_token))
+        record("regression /messages/conversations", r.status_code == 200)
+        client.cookies.clear()
+        r = client.get(f"{API}/messages/unread-count", headers=hdr(admin_token))
+        record("regression /messages/unread-count", r.status_code == 200)
+        client.cookies.clear()
+        r = client.get(f"{API}/admin/me", headers=hdr(admin_token))
+        record("regression /admin/me", r.status_code == 200 and r.json().get("is_admin") is True)
+        client.cookies.clear()
+        r = client.get(f"{API}/admin/users/search?q=luna", headers=hdr(admin_token))
+        record("regression /admin/users/search", r.status_code == 200)
+        client.cookies.clear()
+        r = client.get(f"{API}/admin/pro-grants", headers=hdr(admin_token))
+        record("regression /admin/pro-grants", r.status_code == 200)
+        client.cookies.clear()
+        r = client.get(f"{API}/iap/status", headers=hdr(admin_token))
+        record("regression /iap/status", r.status_code == 200)
+        client.cookies.clear()
+        r = client.post(f"{API}/iap/sync", headers=hdr(admin_token))
+        record("regression /iap/sync", r.status_code == 200)
+        client.cookies.clear()
+        r = client.post(f"{API}/iap/webhook",
+                        json={"event": {"id": f"evt_test_{uuid.uuid4().hex[:8]}", "type": "INITIAL_PURCHASE",
+                                        "app_user_id": "user_xxx"}})
+        record("regression /iap/webhook", r.status_code == 200)
+        client.cookies.clear()
+        r = client.post(f"{API}/payments/checkout", headers=hdr(admin_token), json={})
+        body = r.json() if r.status_code == 200 else {}
+        record("regression /payments/checkout origin fallback",
+               r.status_code == 200 and "url" in body, f"status={r.status_code}")
+        client.cookies.clear()
+        r = client.get(f"{API}/music/search?q=ocean", headers=hdr(admin_token))
+        body = r.json() if r.status_code == 200 else {}
+        record("regression /music/search Pro admin",
+               r.status_code == 200 and len(body.get("tracks") or []) > 0,
+               f"#tracks={len(body.get('tracks') or [])}")
+        client.cookies.clear()
+        r = client.get(f"{API}/wellness/joy", headers=hdr(admin_token))
+        body = r.json() if r.status_code == 200 else {}
+        record("regression /wellness/joy",
+               r.status_code == 200 and bool(body.get("quote")) and bool(body.get("advice")),
+               f"source={body.get('source')}")
+        client.cookies.clear()
+        r = client.get(f"{API}/notifications/prefs", headers=hdr(admin_token))
+        record("regression /notifications/prefs GET", r.status_code == 200)
+        client.cookies.clear()
+        r = client.post(f"{API}/notifications/prefs", headers=hdr(admin_token),
+                        json={"reaction": True})
+        record("regression /notifications/prefs POST", r.status_code == 200)
 
-# 3) FRIENDS
-print("\n=== 3) FRIENDS ===")
+        # ============================================================
+        # 9. Purge daemon log line
+        # ============================================================
+        try:
+            with open("/var/log/supervisor/backend.err.log") as f:
+                log_text = f.read()[-30000:]
+            has_purge = bool(re.search(r"\[purge\]\s*\{", log_text))
+            record("purge daemon log line present", has_purge,
+                   "found '[purge] {' in backend.err.log" if has_purge else "missing '[purge]' line")
+            err_count = len(re.findall(r"ERROR", log_text))
+            record("backend.err.log ERROR count low", err_count < 5, f"count={err_count}")
+        except Exception as e:
+            record("purge daemon log check", False, str(e))
 
-r = get("/friends", token=admin_token)
-record("GET /friends admin", r.status_code == 200 and "friends" in r.json(),
-       f"{r.status_code} count={len(r.json().get('friends', []))}")
 
-peer_email = f"peer_{uuid.uuid4().hex[:8]}@innfeel.app"
-rp = post("/auth/register", json_body={"email": peer_email, "password": "Peer1234!", "name": "Peer Test"})
-peer_token = rp.json().get("access_token") if rp.status_code == 200 else None
+def finalize():
+    log.info("\n" + "=" * 70)
+    log.info(f"PASS: {len(PASS)}    FAIL: {len(FAIL)}")
+    log.info("=" * 70)
+    if FAIL:
+        log.info("\nFAILURES:")
+        for label, detail in FAIL:
+            log.info(f"  - {label}  | {detail}")
+    total = len(PASS) + len(FAIL)
+    if total:
+        log.info(f"\nPass rate: {len(PASS)}/{total} = {100.0 * len(PASS) / total:.1f}%")
 
-r = post("/friends/add", token=admin_token, json_body={"email": peer_email})
-body = r.json() if r.status_code == 200 else {}
-shape = r.status_code == 200 and body.get("ok") is True and isinstance(body.get("friend"), dict)
-friend_obj = body.get("friend", {}) if shape else {}
-required_friend_fields = ("user_id", "name", "email", "avatar_color")
-missing = [k for k in required_friend_fields if k not in friend_obj]
-record("POST /friends/add shape {ok:true, friend:{user_id,name,email,avatar_color}}",
-       shape and not missing, f"{r.status_code} missing={missing} keys={list(friend_obj.keys())}")
-peer_friend_id = friend_obj.get("user_id")
 
-if peer_friend_id:
-    r = post(f"/friends/close/{peer_friend_id}", token=admin_token, json_body={})
-    record("POST /friends/close/{id}", r.status_code == 200, f"{r.status_code}")
-
-    r = delete(f"/friends/{peer_friend_id}", token=admin_token)
-    record("DELETE /friends/{id}", r.status_code == 200, f"{r.status_code}")
-
-# 4) MESSAGES
-print("\n=== 4) MESSAGES ===")
-
-if luna_id:
-    r = post(f"/messages/with/{luna_id}", token=admin_token, json_body={"text": "hi"})
-    body = r.json() if r.status_code == 200 else {}
-    msg = body.get("message", {}) if isinstance(body, dict) else {}
-    required_msg_fields = ("message_id", "conversation_id", "sender_id", "sender_name", "text", "at")
-    missing = [f for f in required_msg_fields if f not in msg]
-    shape_ok = (r.status_code == 200 and body.get("ok") is True
-                and isinstance(msg, dict) and not missing)
-    record("POST /messages/with/{peer} shape preserved", shape_ok,
-           f"{r.status_code} missing={missing} body_keys={list(body.keys())}")
-
-    r = get(f"/messages/with/{luna_id}", token=admin_token)
-    record("GET /messages/with/{peer}", r.status_code == 200, f"{r.status_code}")
-
-r = get("/messages", token=admin_token)
-record("GET /messages (inbox)", r.status_code == 200, f"{r.status_code}")
-
-# 5) WELLNESS
-print("\n=== 5) WELLNESS ===")
-for emo in ("joy", "anxiety"):
-    r = get(f"/wellness/{emo}", token=admin_token)
-    body = r.json() if r.status_code == 200 else {}
-    ok = r.status_code == 200 and body.get("quote") and body.get("advice")
-    record(f"GET /wellness/{emo}", ok, f"{r.status_code} source={body.get('source')}")
-
-# 6) MUSIC
-print("\n=== 6) MUSIC ===")
-r = get("/music/search", token=admin_token, params={"q": "ocean"})
-body = r.json() if r.status_code == 200 else {}
-tracks = body.get("tracks", [])
-record("GET /music/search?q=ocean", r.status_code == 200 and isinstance(tracks, list) and len(tracks) > 0,
-       f"{r.status_code} count={len(tracks)}")
-
-# 7) ADMIN
-print("\n=== 7) ADMIN ===")
-
-r = get("/admin/me", token=admin_token)
-record("GET /admin/me admin is_admin:true", r.status_code == 200 and r.json().get("is_admin") is True,
-       f"{r.status_code}")
-
-r = get("/admin/users/search", token=admin_token, params={"q": "luna"})
-record("GET /admin/users/search?q=luna", r.status_code == 200 and isinstance(r.json().get("users"), list),
-       f"{r.status_code} count={len(r.json().get('users', []))}")
-
-r = post("/admin/grant-pro", token=admin_token, json_body={"email": LUNA_EMAIL, "days": 30})
-record("POST /admin/grant-pro luna 30d", r.status_code == 200, f"{r.status_code} {r.text[:120]}")
-
-r = post("/admin/revoke-pro", token=admin_token, json_body={"email": LUNA_EMAIL})
-record("POST /admin/revoke-pro luna", r.status_code == 200, f"{r.status_code} {r.text[:120]}")
-
-# 8) NOTIFICATIONS
-print("\n=== 8) NOTIFICATIONS ===")
-
-fake_token = "ExponentPushToken[fake_long_token_abc123]"
-r = post("/notifications/register-token", token=admin_token,
-         json_body={"token": fake_token, "platform": "ios"})
-record("POST /notifications/register-token", r.status_code == 200, f"{r.status_code}")
-
-r = get("/notifications/prefs", token=admin_token)
-record("GET /notifications/prefs (1st)", r.status_code == 200, f"{r.status_code}")
-
-r = post("/notifications/prefs", token=admin_token, json_body={"reaction": False})
-record("POST /notifications/prefs reaction:false", r.status_code == 200, f"{r.status_code}")
-
-r = get("/notifications/prefs", token=admin_token)
-prefs = r.json().get("prefs", {}) if r.status_code == 200 else {}
-record("GET /notifications/prefs reaction now false",
-       r.status_code == 200 and prefs.get("reaction") is False,
-       f"{r.status_code} prefs={prefs}")
-
-r = post("/notifications/prefs", token=admin_token, json_body={"reaction": True})
-record("POST /notifications/prefs reaction:true", r.status_code == 200, f"{r.status_code}")
-
-r = post("/notifications/test", token=admin_token, json_body={})
-record("POST /notifications/test", r.status_code == 200, f"{r.status_code}")
-
-r = post("/notifications/unregister-token", token=admin_token, json_body={"token": fake_token})
-record("POST /notifications/unregister-token", r.status_code == 200, f"{r.status_code}")
-
-# 9) PAYMENTS
-print("\n=== 9) PAYMENTS ===")
-r = post("/payments/checkout", token=admin_token, json_body={"origin_url": "https://example.com"})
-body = r.json() if r.status_code == 200 else {}
-ok = r.status_code == 200 and "checkout.stripe.com" in (body.get("url") or "")
-record("POST /payments/checkout", ok, f"{r.status_code} url={(body.get('url') or '')[:60]}")
-
-# 10) DEV
-print("\n=== 10) DEV ===")
-r = post("/dev/toggle-pro", token=new_token)
-ok1 = r.status_code == 200
-state1 = r.json().get("pro") if ok1 else None
-r = post("/dev/toggle-pro", token=new_token)
-ok2 = r.status_code == 200
-state2 = r.json().get("pro") if ok2 else None
-record("POST /dev/toggle-pro twice (toggles)", ok1 and ok2 and state1 != state2,
-       f"states={state1}->{state2}")
-
-# 11-13) IAP NEW
-print("\n=== 11-13) IAP ===")
-
-r = post("/iap/sync", token=admin_token, json_body={})
-body = r.json() if r.status_code == 200 else {}
-expected_ok = (r.status_code == 200 and body.get("ok") is False
-               and body.get("pro") is False and body.get("reason") == "no_subscriber")
-record("POST /iap/sync no_subscriber {ok:false,pro:false,reason:'no_subscriber'} (no 500)",
-       expected_ok, f"{r.status_code} body={body}")
-
-r = get("/iap/status", token=admin_token)
-body = r.json() if r.status_code == 200 else {}
-shape = (r.status_code == 200 and "pro" in body
-         and "pro_expires_at" in body and "pro_source" in body)
-record("GET /iap/status shape {pro,pro_expires_at,pro_source}",
-       shape, f"{r.status_code} body={body}")
-
-event_id = f"evt_test_abc_{uuid.uuid4().hex[:8]}"
-payload = {"event": {"id": event_id, "type": "INITIAL_PURCHASE", "app_user_id": "user_nonexistent"}}
-r = requests.post(API + "/iap/webhook", json=payload, timeout=30)
-record("POST /iap/webhook first → 200", r.status_code == 200, f"{r.status_code} {r.text[:120]}")
-
-r = requests.post(API + "/iap/webhook", json=payload, timeout=30)
-body = r.json() if r.status_code == 200 else {}
-record("POST /iap/webhook resend same event.id {duplicate:true}",
-       r.status_code == 200 and body.get("duplicate") is True,
-       f"{r.status_code} body={body}")
-
-r = requests.post(API + "/iap/webhook", json={}, timeout=30)
-body = r.json() if r.status_code == 200 else {}
-record("POST /iap/webhook invalid body {} → 200 ignored:'missing_ids'",
-       r.status_code == 200 and body.get("ignored") == "missing_ids",
-       f"{r.status_code} body={body}")
-
-r = requests.post(API + "/iap/sync", json={}, timeout=30)
-record("POST /iap/sync without auth → 401/403", r.status_code in (401, 403),
-       f"{r.status_code}")
-
-r = requests.get(API + "/iap/status", timeout=30)
-record("GET /iap/status without auth → 401/403", r.status_code in (401, 403),
-       f"{r.status_code}")
-
-# Summary
-print("\n" + "=" * 60)
-total = len(results)
-passed = sum(1 for _, ok, _ in results if ok)
-pct = 100.0 * passed / total if total else 0
-print(f"TOTAL: {passed}/{total} PASS ({pct:.1f}%)")
-print("\nFAILURES:")
-for n, ok, d in results:
-    if not ok:
-        print(f"  - {n} :: {d}")
-
-sys.exit(0 if passed == total else 1)
+if __name__ == "__main__":
+    try:
+        main()
+    finally:
+        finalize()

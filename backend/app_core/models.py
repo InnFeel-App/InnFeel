@@ -48,18 +48,22 @@ class InnFeelIn(BaseModel):
     word: Optional[str] = Field(default=None, max_length=30)
     emotion: EMOTION_LITERAL
     intensity: int = Field(ge=1, le=10)
-    photo_b64: Optional[str] = None  # base64 image
-    video_b64: Optional[str] = None  # base64 video (10s max, auto-loops)
+    photo_b64: Optional[str] = None  # legacy; kept for backwards compat during migration
+    photo_key: Optional[str] = Field(default=None, max_length=256)  # R2 object key
+    video_b64: Optional[str] = None  # legacy
+    video_key: Optional[str] = Field(default=None, max_length=256)  # R2 object key (Pro only)
     video_seconds: Optional[int] = Field(default=None, ge=1, le=10)
     text: Optional[str] = Field(default=None, max_length=280)
-    audio_b64: Optional[str] = None  # base64 audio
+    audio_b64: Optional[str] = None  # legacy
+    audio_key: Optional[str] = Field(default=None, max_length=256)  # R2 object key
     audio_seconds: Optional[int] = Field(default=None, ge=1, le=30)
     music: Optional[MusicTrackIn] = None  # Pro: track from Apple/Spotify search
     privacy: Literal["friends", "close", "private"] = "friends"
 
 
 class AvatarIn(BaseModel):
-    avatar_b64: str = Field(min_length=1)
+    avatar_b64: Optional[str] = None  # legacy inline upload path
+    avatar_key: Optional[str] = Field(default=None, max_length=256)  # R2 object key
 
 
 class ReactionIn(BaseModel):
@@ -72,8 +76,10 @@ class CommentIn(BaseModel):
 
 class MessageIn(BaseModel):
     text: Optional[str] = Field(default=None, max_length=1000)
-    photo_b64: Optional[str] = None  # base64-encoded image (optional)
-    audio_b64: Optional[str] = None  # base64-encoded audio (optional)
+    photo_b64: Optional[str] = None  # legacy
+    photo_key: Optional[str] = Field(default=None, max_length=256)
+    audio_b64: Optional[str] = None  # legacy
+    audio_key: Optional[str] = Field(default=None, max_length=256)
     audio_seconds: Optional[int] = Field(default=None, ge=1, le=60)
 
 

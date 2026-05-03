@@ -105,12 +105,22 @@ def is_pro(user: dict) -> bool:
 
 
 def sanitize_user(u: dict) -> dict:
+    avatar_url = None
+    try:
+        k = u.get("avatar_key")
+        if k:
+            from . import r2 as _r2  # local import to avoid circulars at module load
+            avatar_url = _r2.generate_get_url(k)
+    except Exception:
+        avatar_url = None
     return {
         "user_id": u["user_id"],
         "email": u["email"],
         "name": u.get("name", ""),
         "avatar_color": u.get("avatar_color", "#A78BFA"),
         "avatar_b64": u.get("avatar_b64"),
+        "avatar_key": u.get("avatar_key"),
+        "avatar_url": avatar_url,
         "pro": is_pro(u),
         "pro_expires_at": u.get("pro_expires_at").isoformat() if isinstance(u.get("pro_expires_at"), datetime) else u.get("pro_expires_at"),
         "pro_source": u.get("pro_source"),  # e.g. "admin_grant" / "stripe" / "iap_apple" / "iap_google" / "dev"
