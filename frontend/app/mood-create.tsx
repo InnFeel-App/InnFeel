@@ -230,6 +230,8 @@ export default function MoodCreate() {
         },
       });
       await refresh();
+      // User posted — no need for the evening safety-net reminder today.
+      try { const n = await import("../src/notifications"); await n.cancelEveningReminder(); } catch {}
       // Fetch wellness quote+advice for the chosen emotion and show the sheet
       try {
         const w = await api<any>(`/wellness/${emotion}`);

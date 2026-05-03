@@ -11,6 +11,7 @@ import { t } from "../../src/i18n";
 import { COLORS, EMOTION_COLORS } from "../../src/theme";
 import { Ionicons } from "@expo/vector-icons";
 import { useShareToStories } from "../../src/components/ShareToStories";
+import { notifyIfNew } from "../../src/notifications";
 
 export default function Home() {
   const router = useRouter();
@@ -50,14 +51,35 @@ export default function Home() {
     } catch {}
   };
 
-  // Activity bell (reactions/comments on MY auras)
+  // Activity / message / friend polling → in-app local notifications
   const [activityUnread, setActivityUnread] = useState(0);
   useEffect(() => {
     let live = true;
     const poll = async () => {
       try {
-        const r = await api<{ unread: number }>("/activity/unread-count");
-        if (live) setActivityUnread(r.unread || 0);
+        const [act, msg, fr] = await Promise.all([
+          api<{ unread: number }>("/activity/unread-count").catch(() => ({ unread: 0 })),
+          api<{ total: number }>("/messages/unread-count").catch(() => ({ total: 0 })),
+          api<{ friends: any[] }>("/friends").catch(() => ({ friends: [] })),
+        ]);
+        if (!live) return;
+        setActivityUnread(act.unread || 0);
+        // Trigger local notifications only when counts increase since last seen
+        await notifyIfNew("reaction", act.unread || 0, {
+          title: "New activity on your aura ✨",
+          body: "A friend just reacted or commented — tap to see.",
+          data: { route: "/activity" },
+        });
+        await notifyIfNew("message", msg.total || 0, {
+          title: "New message",
+          body: "You have a new message from a friend.",
+          data: { route: "/(tabs)/messages" },
+        });
+        await notifyIfNew("friend", (fr.friends || []).length, {
+          title: "New friend added",
+          body: "Someone is now part of your InnFeel circle.",
+          data: { route: "/(tabs)/friends" },
+        });
       } catch {}
     };
     poll();
@@ -111,7 +133,7 @@ export default function Home() {
           ) : (
             <View>
               <View style={styles.myMoodHeader}>
-                <Text style={styles.sectionTitle}>Your mood today</Text>
+                <Text style={styles.sectionTitle}>Your aura today</Text>
                 <View style={styles.myMoodActions}>
                   <TouchableOpacity
                     testID="share-my-mood"

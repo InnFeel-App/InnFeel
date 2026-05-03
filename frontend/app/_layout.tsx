@@ -10,8 +10,8 @@ function NotificationScheduler() {
   const { user } = useAuth();
   useEffect(() => {
     if (user) {
-      // Fire-and-forget: schedule a random daily aura reminder between 9–21h.
-      ensureDailyRandomNotification(9, 21).catch(() => {});
+      // Fire-and-forget: schedule the daily aura reminders (noon + 19:30 safety-net).
+      ensureDailyRandomNotification().catch(() => {});
     }
   }, [user]);
   return null;

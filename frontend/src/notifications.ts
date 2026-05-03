@@ -1,16 +1,41 @@
 import * as Notifications from "expo-notifications";
 import { getItem, setItem } from "./storage";
 
-const KEY_LAST_SCHEDULED = "innfeel_last_notif_scheduled_day";
-const KEY_NOTIF_HOUR = "innfeel_notif_hour";
-const KEY_NOTIF_MINUTE = "innfeel_notif_minute";
+/**
+ * Notification preferences — per-category toggles.
+ * All default to ON. User can disable any in Settings.
+ */
+export type NotifCategory =
+  | "reminder"     // daily aura reminder (noon + backup 19:30)
+  | "reaction"     // someone reacted/commented on my aura
+  | "message"      // new DM received
+  | "friend";      // friend added / accepted
 
-// Defaults: 12:00 (noon) — auras run noon→noon, so this gives users a full
-// day to drop and see their friends' auras (rather than a short evening window).
-export const DEFAULT_HOUR = 12;
-export const DEFAULT_MINUTE = 0;
-export const WINDOW_MIN_HOUR = 8;
-export const WINDOW_MAX_HOUR = 21;
+const CAT_KEYS: Record<NotifCategory, string> = {
+  reminder: "innfeel_notif_reminder",
+  reaction: "innfeel_notif_reaction",
+  message: "innfeel_notif_message",
+  friend: "innfeel_notif_friend",
+};
+
+// Per-category last-seen counters (so we can detect "new" events)
+const SEEN_KEYS = {
+  reaction: "innfeel_last_reaction_count",
+  message: "innfeel_last_message_count",
+  friend: "innfeel_last_friend_count",
+};
+
+const KEY_LAST_SCHEDULED = "innfeel_last_notif_scheduled_day";
+
+// Fixed reminder times (cannot be changed by user, only toggled)
+export const REMINDER_NOON_HOUR = 12;
+export const REMINDER_NOON_MINUTE = 0;
+export const REMINDER_EVENING_HOUR = 19;
+export const REMINDER_EVENING_MINUTE = 30;
+
+// Legacy constants kept for import compat elsewhere
+export const DEFAULT_HOUR = REMINDER_NOON_HOUR;
+export const DEFAULT_MINUTE = REMINDER_NOON_MINUTE;
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -22,75 +47,164 @@ Notifications.setNotificationHandler({
   }),
 });
 
-export async function getNotificationTime(): Promise<{ hour: number; minute: number }> {
-  const h = await getItem(KEY_NOTIF_HOUR);
-  const m = await getItem(KEY_NOTIF_MINUTE);
-  const hour = h !== null && !isNaN(Number(h)) ? Number(h) : DEFAULT_HOUR;
-  const minute = m !== null && !isNaN(Number(m)) ? Number(m) : DEFAULT_MINUTE;
-  return { hour, minute };
+export async function getCategoryEnabled(cat: NotifCategory): Promise<boolean> {
+  const v = await getItem(CAT_KEYS[cat]);
+  return v !== "0"; // default ON
 }
 
-export async function setNotificationTime(hour: number, minute: number) {
-  await setItem(KEY_NOTIF_HOUR, String(hour));
-  await setItem(KEY_NOTIF_MINUTE, String(minute));
-  // Force reschedule on next call
-  await setItem(KEY_LAST_SCHEDULED, "");
-}
-
-export async function scheduleDailyReminder(): Promise<{ scheduled: boolean; when?: Date }> {
-  try {
-    const { granted } = await Notifications.getPermissionsAsync();
-    if (!granted) {
-      const req = await Notifications.requestPermissionsAsync();
-      if (!req.granted) return { scheduled: false };
+export async function setCategoryEnabled(cat: NotifCategory, enabled: boolean) {
+  await setItem(CAT_KEYS[cat], enabled ? "1" : "0");
+  if (cat === "reminder") {
+    // Re-schedule (or cancel) the daily reminders immediately
+    if (enabled) {
+      await scheduleDailyReminder();
+    } else {
+      await cancelReminderOnly();
     }
+  }
+}
 
-    const { hour, minute } = await getNotificationTime();
+export async function getAllPrefs(): Promise<Record<NotifCategory, boolean>> {
+  return {
+    reminder: await getCategoryEnabled("reminder"),
+    reaction: await getCategoryEnabled("reaction"),
+    message: await getCategoryEnabled("message"),
+    friend: await getCategoryEnabled("friend"),
+  };
+}
 
-    const todayKey = `${new Date().toISOString().slice(0, 10)}_${hour}_${minute}`;
+async function ensurePermission(): Promise<boolean> {
+  const { granted } = await Notifications.getPermissionsAsync();
+  if (granted) return true;
+  const req = await Notifications.requestPermissionsAsync();
+  return !!req.granted;
+}
+
+/**
+ * Schedules BOTH daily reminders:
+ *  - 12:00  primary
+ *  - 19:30  safety-net (will fire only if user hasn't posted yet today — controlled client-side)
+ * Called on app boot & when user toggles the reminder on.
+ */
+export async function scheduleDailyReminder(): Promise<{ scheduled: boolean }> {
+  try {
+    const enabled = await getCategoryEnabled("reminder");
+    if (!enabled) return { scheduled: false };
+
+    const ok = await ensurePermission();
+    if (!ok) return { scheduled: false };
+
+    const todayKey = new Date().toISOString().slice(0, 10);
     const last = await getItem(KEY_LAST_SCHEDULED);
     if (last === todayKey) {
-      return { scheduled: true };
+      return { scheduled: true }; // already scheduled today
     }
 
-    // Cancel previous to avoid duplicates
-    await Notifications.cancelAllScheduledNotificationsAsync();
+    await cancelReminderOnly();
 
-    // Schedule a DAILY repeating notification at the chosen hour/minute
+    // Primary reminder at noon
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: "It's time. ✦",
-        body: "Share your aura in 20 seconds.",
-        data: { kind: "daily_drop" },
+        title: "Your daily aura ✨",
+        body: "Take 20 seconds to share how you feel today.",
+        data: { kind: "reminder_noon" },
       },
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.DAILY,
-        hour,
-        minute,
+        hour: REMINDER_NOON_HOUR,
+        minute: REMINDER_NOON_MINUTE,
       } as any,
     });
 
-    // compute next fire date for UI preview
-    const now = new Date();
-    const fire = new Date();
-    fire.setHours(hour, minute, 0, 0);
-    if (fire.getTime() <= now.getTime()) fire.setDate(fire.getDate() + 1);
+    // Evening safety-net reminder at 19:30
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "Haven't shared yet?",
+        body: "One aura, 20 seconds — then see your friends' day.",
+        data: { kind: "reminder_evening" },
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DAILY,
+        hour: REMINDER_EVENING_HOUR,
+        minute: REMINDER_EVENING_MINUTE,
+      } as any,
+    });
 
     await setItem(KEY_LAST_SCHEDULED, todayKey);
-    return { scheduled: true, when: fire };
+    return { scheduled: true };
   } catch {
     return { scheduled: false };
   }
 }
 
-// Back-compat alias used from _layout.tsx
-export async function ensureDailyRandomNotification(
-  _startHour?: number,
-  _endHour?: number
-): Promise<{ scheduled: boolean; when?: Date }> {
+/** Cancel only the scheduled DAILY reminders (not the instant push ones). */
+export async function cancelReminderOnly() {
+  try {
+    const all = await Notifications.getAllScheduledNotificationsAsync();
+    for (const n of all) {
+      const kind = (n.content?.data as any)?.kind;
+      if (kind === "reminder_noon" || kind === "reminder_evening") {
+        await Notifications.cancelScheduledNotificationAsync(n.identifier);
+      }
+    }
+    // Reset the guard so next enable will re-schedule
+    await setItem(KEY_LAST_SCHEDULED, "");
+  } catch {}
+}
+
+/** Cancel the evening reminder (called when user successfully posts today). */
+export async function cancelEveningReminder() {
+  try {
+    const all = await Notifications.getAllScheduledNotificationsAsync();
+    for (const n of all) {
+      const kind = (n.content?.data as any)?.kind;
+      if (kind === "reminder_evening") {
+        await Notifications.cancelScheduledNotificationAsync(n.identifier);
+      }
+    }
+  } catch {}
+}
+
+/** Legacy alias kept for any old imports. */
+export async function clearAllScheduled() {
+  await cancelReminderOnly();
+}
+
+/** Legacy alias — boots the reminder system. */
+export async function ensureDailyRandomNotification(): Promise<{ scheduled: boolean }> {
   return scheduleDailyReminder();
 }
 
-export async function clearAllScheduled() {
-  try { await Notifications.cancelAllScheduledNotificationsAsync(); } catch {}
+/**
+ * In-app event notifier — call this when polled counts increase.
+ * We only trigger a local notification if the category is enabled AND the
+ * count has strictly increased since last seen.
+ */
+export async function notifyIfNew(
+  cat: Exclude<NotifCategory, "reminder">,
+  newCount: number,
+  opts: { title: string; body: string; data?: any },
+) {
+  try {
+    const enabled = await getCategoryEnabled(cat);
+    if (!enabled) return;
+    const key = SEEN_KEYS[cat];
+    const prev = await getItem(key);
+    const prevN = prev === null ? -1 : Number(prev);
+    if (newCount > prevN && prevN >= 0) {
+      const ok = await ensurePermission();
+      if (ok) {
+        await Notifications.scheduleNotificationAsync({
+          content: { title: opts.title, body: opts.body, data: opts.data || { kind: cat } },
+          trigger: null, // fire immediately
+        });
+      }
+    }
+    // Always record the new count (even on first call, to avoid a burst)
+    await setItem(key, String(newCount));
+  } catch {}
+}
+
+export async function resetSeenCounter(cat: Exclude<NotifCategory, "reminder">) {
+  try { await setItem(SEEN_KEYS[cat], "0"); } catch {}
 }
