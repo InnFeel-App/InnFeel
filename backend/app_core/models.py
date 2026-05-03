@@ -96,3 +96,17 @@ class IAPValidateIn(BaseModel):
     """Client posts a RevenueCat app_user_id after a successful purchase
     so the backend can call RevenueCat REST to fetch & cache the subscription state."""
     app_user_id: str = Field(min_length=1, max_length=200)
+
+
+class UpdateProfileIn(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=40)
+
+
+class UpdateEmailIn(BaseModel):
+    new_email: EmailStr
+    password: str = Field(min_length=1)
+
+
+class DeleteAccountIn(BaseModel):
+    password: str = Field(min_length=1)
+    confirm: Literal["DELETE"]

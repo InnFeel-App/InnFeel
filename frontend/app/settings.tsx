@@ -142,6 +142,22 @@ export default function Settings() {
           <Text style={[styles.sectionTitle, { marginTop: 28 }]}>{t("settings.section.other")}</Text>
 
           <TouchableOpacity
+            testID="settings-account-row"
+            style={styles.row}
+            onPress={() => router.push("/account")}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.iconBox, { backgroundColor: "rgba(168,85,247,0.15)", borderColor: "rgba(168,85,247,0.35)" }]}>
+              <Ionicons name="person-circle-outline" size={18} color="#A855F7" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>Account</Text>
+              <Text style={styles.rowSub}>Name, email, data export, delete</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={COLORS.textSecondary} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
             testID="settings-language-row"
             style={styles.row}
             onPress={() => setLangOpen(true)}
@@ -168,6 +184,16 @@ export default function Settings() {
           </View>
 
           <Text style={styles.footer}>{t("settings.footer")}</Text>
+
+          <View style={styles.legalRow}>
+            <TouchableOpacity onPress={() => router.push("/legal/terms")} testID="settings-terms-link">
+              <Text style={styles.legalLink}>Terms of Service</Text>
+            </TouchableOpacity>
+            <Text style={styles.legalSep}> · </Text>
+            <TouchableOpacity onPress={() => router.push("/legal/privacy")} testID="settings-privacy-link">
+              <Text style={styles.legalLink}>Privacy Policy</Text>
+            </TouchableOpacity>
+          </View>
         </ScrollView>
       </SafeAreaView>
 
@@ -239,4 +265,7 @@ const styles = StyleSheet.create({
   langRowActive: { backgroundColor: "rgba(34,211,238,0.08)", borderColor: "rgba(34,211,238,0.35)" },
   langLabel: { color: "#fff", fontSize: 15, fontWeight: "600", flex: 1 },
   langSub: { color: COLORS.textSecondary, fontSize: 12, marginRight: 10 },
+  legalRow: { flexDirection: "row", justifyContent: "center", alignItems: "center", marginTop: 12 },
+  legalLink: { color: "#60A5FA", fontSize: 12, textDecorationLine: "underline" },
+  legalSep: { color: COLORS.textTertiary, fontSize: 12 },
 });
