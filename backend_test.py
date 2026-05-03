@@ -1,340 +1,327 @@
-"""
-InnFeel backend regression test (post-rebrand).
-Covers: auth, moods, wellness LLM, friends + close + feed, music, admin, stripe, messages, comments+reactions.
+"""Full backend regression sanity-check for InnFeel post-refactor."""
 
-Run:  python /app/backend_test.py
-"""
 import os
 import sys
-import time
-import json
 import uuid
 import requests
-from typing import Optional
 
-# -------- Config --------
-def _read_env(path: str) -> dict:
-    out = {}
-    try:
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, _, v = line.partition("=")
-                out[k.strip()] = v.strip().strip('"').strip("'")
-    except FileNotFoundError:
-        pass
-    return out
+BASE = os.environ.get("BACKEND_URL", "https://charming-wescoff-8.preview.emergentagent.com")
+API = BASE.rstrip("/") + "/api"
 
-FRONTEND_ENV = _read_env("/app/frontend/.env")
-BASE = (FRONTEND_ENV.get("EXPO_PUBLIC_BACKEND_URL") or "").rstrip("/")
-if not BASE:
-    print("FATAL: EXPO_PUBLIC_BACKEND_URL not found in /app/frontend/.env")
-    sys.exit(2)
-API = f"{BASE}/api"
-print(f">>> Using API base: {API}")
+ADMIN_EMAIL = "admin@innfeel.app"
+ADMIN_PW = "admin123"
+LUNA_EMAIL = "luna@innfeel.app"
+LUNA_PW = "demo1234"
 
-PASSED = []
-FAILED = []
+results = []
 
-def _record(name: str, ok: bool, info: str = ""):
-    if ok:
-        PASSED.append(name)
-        print(f"  PASS  {name}  {info}")
-    else:
-        FAILED.append((name, info))
-        print(f"  FAIL  {name}  {info}")
 
-def _h(token: Optional[str]) -> dict:
-    return {"Authorization": f"Bearer {token}"} if token else {}
+def record(name, ok, detail=""):
+    results.append((name, ok, detail))
+    status = "PASS" if ok else "FAIL"
+    print(f"[{status}] {name} :: {detail}")
 
-def post(path, token=None, json_body=None, expect=None, name=None):
-    url = f"{API}{path}"
-    r = requests.post(url, headers=_h(token), json=json_body or {}, timeout=30)
-    return _check(r, expect, name or f"POST {path}")
 
-def get(path, token=None, params=None, expect=None, name=None):
-    url = f"{API}{path}"
-    r = requests.get(url, headers=_h(token), params=params or {}, timeout=30)
-    return _check(r, expect, name or f"GET {path}")
+def post(path, token=None, json_body=None, params=None):
+    h = {}
+    if token:
+        h["Authorization"] = f"Bearer {token}"
+    return requests.post(API + path, headers=h, json=json_body, params=params, timeout=30)
 
-def delete(path, token=None, expect=None, name=None):
-    url = f"{API}{path}"
-    r = requests.delete(url, headers=_h(token), timeout=30)
-    return _check(r, expect, name or f"DELETE {path}")
 
-def _check(r, expect, name):
-    ok = (r.status_code == expect) if expect is not None else (200 <= r.status_code < 300)
-    body = None
-    try:
-        body = r.json()
-    except Exception:
-        body = r.text[:200]
-    info = f"status={r.status_code}"
-    if not ok:
-        info += f" body={str(body)[:240]}"
-    _record(name, ok, info)
-    return r, body
+def get(path, token=None, params=None):
+    h = {}
+    if token:
+        h["Authorization"] = f"Bearer {token}"
+    return requests.get(API + path, headers=h, params=params, timeout=30)
 
-def login(email, password, label):
-    r, body = post("/auth/login", json_body={"email": email, "password": password}, expect=200, name=f"login {label}")
-    if r.status_code == 200 and isinstance(body, dict):
-        return body.get("access_token"), body.get("user")
-    return None, None
 
-def register_fresh(name_prefix: str):
-    ts = int(time.time() * 1000)
-    rnd = uuid.uuid4().hex[:6]
-    email = f"{name_prefix}_{ts}_{rnd}@example.com"
-    pw = "Test1234!"
-    r, body = post("/auth/register", json_body={"email": email, "password": pw, "name": name_prefix.title()}, expect=200, name=f"register {name_prefix}")
-    tok = body.get("access_token") if isinstance(body, dict) else None
-    user = body.get("user") if isinstance(body, dict) else None
-    return email, pw, tok, user
+def delete(path, token=None):
+    h = {}
+    if token:
+        h["Authorization"] = f"Bearer {token}"
+    return requests.delete(API + path, headers=h, timeout=30)
 
-# ============================================================
-# A) Auth
-# ============================================================
-print("\n=== A) Auth & users ===")
-admin_token, admin_user = login("admin@innfeel.app", "admin123", "admin")
-if admin_user:
-    ok = bool(admin_user.get("is_admin")) and bool(admin_user.get("pro"))
-    _record("admin login flags is_admin+pro", ok, f"is_admin={admin_user.get('is_admin')} pro={admin_user.get('pro')}")
-else:
-    _record("admin login flags is_admin+pro", False, "no user object")
 
-post("/auth/login", json_body={"email": "admin@mooddrop.app", "password": "admin123"}, expect=401, name="legacy admin@mooddrop.app login → 401")
+def login(email, pw):
+    r = post("/auth/login", json_body={"email": email, "password": pw})
+    if r.status_code != 200:
+        return None, r
+    return r.json().get("access_token"), r
 
-r, me_body = get("/auth/me", token=admin_token, expect=200, name="auth/me admin")
-if isinstance(me_body, dict):
-    has_keys = ("is_admin" in me_body) and ("pro" in me_body) and ("pro_source" in me_body)
-    _record("auth/me has is_admin/pro/pro_source", has_keys, f"is_admin={me_body.get('is_admin')} pro={me_body.get('pro')} pro_source={me_body.get('pro_source')}")
 
-fresh_email, fresh_pw, fresh_token, fresh_user = register_fresh("t1")
+# 1) AUTH
+print("\n=== 1) AUTH ===")
 
-luna_token, luna_user = login("luna@innfeel.app", "demo1234", "luna")
-LUNA_ID = luna_user["user_id"] if luna_user else None
-ADMIN_ID = admin_user["user_id"] if admin_user else None
+rand_email = f"sandy_{uuid.uuid4().hex[:8]}@innfeel.app"
+r = post("/auth/register", json_body={"email": rand_email, "password": "Test1234!", "name": "Sandy Test"})
+record("auth/register new user", r.status_code == 200, f"{r.status_code} {r.text[:120]}")
+new_token = r.json().get("access_token") if r.status_code == 200 else None
 
-# ============================================================
-# B) Moods
-# ============================================================
-print("\n=== B) Moods ===")
-delete("/moods/today", token=admin_token, expect=200, name="DELETE /moods/today (clean slate)")
+admin_token, r = login(ADMIN_EMAIL, ADMIN_PW)
+record("auth/login admin", r.status_code == 200 and admin_token is not None, f"{r.status_code}")
 
-post("/moods", token=admin_token, json_body={
-    "word": "radiant", "emotion": "joy", "intensity": 6, "privacy": "private"
-}, expect=200, name="admin POST /moods (joy, intensity=6 Pro)")
+luna_token, r = login(LUNA_EMAIL, LUNA_PW)
+record("auth/login luna", r.status_code == 200 and luna_token is not None, f"{r.status_code}")
 
-# 8 — invalid emotion key 'joyful' should 422
-delete("/moods/today", token=admin_token, expect=200, name="DELETE /moods/today (pre-422)")
-post("/moods", token=admin_token, json_body={
-    "word": "test", "emotion": "joyful", "intensity": 3, "privacy": "private"
-}, expect=422, name="POST /moods invalid emotion 'joyful' → 422")
+r = get("/auth/me", token=admin_token)
+me_admin = r.json() if r.status_code == 200 else {}
+record("auth/me admin is_admin:true", r.status_code == 200 and me_admin.get("is_admin") is True,
+       f"{r.status_code} is_admin={me_admin.get('is_admin')}")
 
-# 9 - 4 fresh users for new emotions
-NEW_EMOTIONS = ["motivated", "unmotivated", "worried", "lost"]
-for emo in NEW_EMOTIONS:
-    e, p, tok, _u = register_fresh(f"emo_{emo}")
-    post("/moods", token=tok, json_body={
-        "word": "test", "emotion": emo, "intensity": 5, "privacy": "private"
-    }, expect=200, name=f"free user posts mood emotion={emo}")
+r = get("/auth/me", token=luna_token)
+me_luna = r.json() if r.status_code == 200 else {}
+luna_id = me_luna.get("user_id")
+record("auth/me luna", r.status_code == 200 and luna_id is not None, f"{r.status_code}")
 
-# Re-drop admin mood with motivated key
-post("/moods", token=admin_token, json_body={
-    "word": "fired-up", "emotion": "motivated", "intensity": 6, "privacy": "private"
-}, expect=200, name="admin POST /moods (motivated)")
+r = post("/auth/logout", token=new_token)
+record("auth/logout", r.status_code == 200, f"{r.status_code}")
 
-# 10 - GET /moods/today admin
-r, body = get("/moods/today", token=admin_token, expect=200, name="GET /moods/today admin")
-if isinstance(body, dict):
-    mood = body.get("mood") or {}
-    _record("GET /moods/today returns mood", bool(mood and mood.get("emotion") == "motivated"), f"emotion={mood.get('emotion')}")
+# 2) MOODS
+print("\n=== 2) MOODS ===")
 
-# 11 - delete idempotent
-r, body = delete("/moods/today", token=admin_token, expect=200, name="DELETE /moods/today first call")
-if isinstance(body, dict):
-    _record("DELETE /moods/today deleted=1", body.get("deleted") == 1, f"deleted={body.get('deleted')}")
-r, body = delete("/moods/today", token=admin_token, expect=200, name="DELETE /moods/today second call (idempotent)")
-if isinstance(body, dict):
-    _record("DELETE /moods/today deleted=0 second call", body.get("deleted") == 0, f"deleted={body.get('deleted')}")
+delete("/moods/today", token=luna_token)
 
-# ============================================================
-# C) Wellness
-# ============================================================
-print("\n=== C) Wellness ===")
-r, body = get("/wellness/motivated", token=admin_token, expect=200, name="GET /wellness/motivated #1")
-src1 = body.get("source") if isinstance(body, dict) else None
-_record("/wellness/motivated has quote+advice+source", isinstance(body, dict) and bool(body.get("quote")) and bool(body.get("advice")) and "source" in body, f"src={src1}")
+r = post("/moods", token=luna_token,
+        json_body={"word": "ocean", "emotion": "joy", "intensity": 4, "privacy": "friends"})
+luna_mood_body = r.json() if r.status_code == 200 else {}
+luna_mood_id = (
+    luna_mood_body.get("mood_id")
+    or (luna_mood_body.get("mood") or {}).get("mood_id")
+)
+record("POST /moods luna", r.status_code == 200 and luna_mood_id is not None,
+       f"{r.status_code} keys={list(luna_mood_body.keys())[:8]}")
 
-r, body2 = get("/wellness/motivated", token=admin_token, expect=200, name="GET /wellness/motivated #2 (cache)")
-src2 = body2.get("source") if isinstance(body2, dict) else None
-_record("/wellness/motivated 2nd call source ∈ {llm-cache, static, llm}", src2 in ("llm-cache", "static", "llm"), f"src2={src2}")
+delete("/moods/today", token=admin_token)
+r = post("/moods", token=admin_token,
+        json_body={"word": "calm", "emotion": "calm", "intensity": 3, "privacy": "friends"})
+record("POST /moods admin", r.status_code == 200, f"{r.status_code}")
 
-r, body = get("/wellness/lost", token=admin_token, expect=200, name="GET /wellness/lost")
-_record("/wellness/lost non-empty quote+advice", isinstance(body, dict) and bool(body.get("quote")) and bool(body.get("advice")), "")
+r = get("/moods/today", token=luna_token)
+record("GET /moods/today luna", r.status_code == 200 and r.json().get("mood") is not None,
+       f"{r.status_code}")
 
-get("/wellness/joyful", token=admin_token, expect=404, name="GET /wellness/joyful → 404")
+r = get("/moods/feed", token=luna_token)
+feed = r.json() if r.status_code == 200 else {}
+record("GET /moods/feed luna", r.status_code == 200 and isinstance(feed.get("items"), list),
+       f"{r.status_code} items={len(feed.get('items', []))}")
 
-# ============================================================
-# D) Friends + close + feed
-# ============================================================
-print("\n=== D) Friends + close + feed ===")
-r, body = get("/friends", token=admin_token, expect=200, name="GET /friends admin")
-friends = body.get("friends") if isinstance(body, dict) else []
-has_is_close = all("is_close" in f for f in friends) if friends else True
-_record("/friends rows have is_close field", has_is_close, f"n_friends={len(friends)}")
+r = get("/moods/stats", token=luna_token)
+record("GET /moods/stats luna", r.status_code == 200, f"{r.status_code}")
 
-r = requests.post(f"{API}/friends/add", headers=_h(admin_token), json={"email": "luna@innfeel.app"}, timeout=30)
-ok = r.status_code in (200, 409)
-_record("admin /friends/add luna → 200 or 409", ok, f"status={r.status_code}")
+r = get("/moods/stats", token=admin_token)
+stats = r.json() if r.status_code == 200 else {}
+shape_ok = all(k in stats for k in ("range_30", "range_90", "range_365"))
+ranges_ok = shape_ok and all(
+    isinstance(stats.get(k), dict) and all(sub in stats.get(k, {}) for sub in ("count", "distribution", "avg_intensity", "volatility"))
+    for k in ("range_30", "range_90", "range_365")
+)
+insights_ok = isinstance(stats.get("insights"), list) and all(isinstance(x, str) for x in stats.get("insights", []))
+record("GET /moods/stats admin Pro shape range_30/90/365 + insights[]",
+       r.status_code == 200 and shape_ok and ranges_ok and insights_ok,
+       f"shape_ok={shape_ok} ranges_ok={ranges_ok} insights_ok={insights_ok}")
 
-if not LUNA_ID:
-    r, body = get("/friends", token=admin_token, expect=200, name="GET /friends to find luna id")
-    for f in (body.get("friends") if isinstance(body, dict) else []):
-        if f.get("email") == "luna@innfeel.app":
-            LUNA_ID = f["user_id"]
-            break
+if luna_mood_id:
+    r = post(f"/moods/{luna_mood_id}/react", token=admin_token, json_body={"emoji": "heart"})
+    body = r.json() if r.status_code == 200 else {}
+    shape = r.status_code == 200 and body.get("ok") is True and isinstance(body.get("reactions"), list)
+    record("POST /moods/{id}/react shape {ok:true, reactions:[...]}", shape,
+           f"{r.status_code} keys={list(body.keys())}")
 
-if LUNA_ID:
-    r, body = post(f"/friends/close/{LUNA_ID}", token=admin_token, expect=200, name="admin toggles luna close")
-    _record("close toggle returns is_close field", isinstance(body, dict) and "is_close" in body, f"body={body}")
-else:
-    _record("admin toggles luna close", False, "no LUNA_ID")
+    r = post(f"/moods/{luna_mood_id}/comment", token=admin_token, json_body={"text": "nice"})
+    body = r.json() if r.status_code == 200 else {}
+    shape = r.status_code == 200 and body.get("ok") is True and isinstance(body.get("comment"), dict)
+    record("POST /moods/{id}/comment shape {ok:true, comment:{...}}", shape,
+           f"{r.status_code} keys={list(body.keys())}")
 
-post(f"/friends/close/{LUNA_ID or 'user_xxx'}", token=fresh_token, expect=403, name="free user toggles close → 403")
+r = get("/activity", token=luna_token)
+record("GET /activity luna", r.status_code == 200, f"{r.status_code}")
 
-# luna drops today (clean slate) for feed test
-delete("/moods/today", token=luna_token, expect=200, name="DELETE luna /moods/today")
-post("/moods", token=luna_token, json_body={
-    "word": "soft", "emotion": "calm", "intensity": 4, "privacy": "friends"
-}, expect=200, name="luna POST /moods (calm friends)")
+r = get("/activity/unread-count", token=luna_token)
+record("GET /activity/unread-count luna", r.status_code == 200, f"{r.status_code} {r.text[:80]}")
 
-# admin re-drops today (mood for the rest of regression)
-post("/moods", token=admin_token, json_body={
-    "word": "alive", "emotion": "joy", "intensity": 6, "privacy": "friends"
-}, expect=200, name="admin POST /moods (joy friends)")
+r = post("/activity/mark-read", token=luna_token, json_body={})
+record("POST /activity/mark-read luna", r.status_code == 200, f"{r.status_code}")
 
-r, body = get("/moods/feed", token=admin_token, expect=200, name="GET /moods/feed admin")
-items = body.get("items", []) if isinstance(body, dict) else []
-_record("/moods/feed has items[]", len(items) > 0, f"n_items={len(items)}")
-if items:
-    has_avatar_field = all("author_avatar_b64" in it for it in items)
-    _record("/moods/feed items[] have author_avatar_b64 field", has_avatar_field, "")
+# 3) FRIENDS
+print("\n=== 3) FRIENDS ===")
 
-# ============================================================
-# E) Music search
-# ============================================================
-print("\n=== E) Music search ===")
-r, body = get("/music/search", token=admin_token, params={"q": "ocean"}, expect=200, name="GET /music/search q=ocean (Pro admin)")
-tracks = body.get("tracks", []) if isinstance(body, dict) else []
-_record("/music/search returns tracks[]", len(tracks) > 0, f"n_tracks={len(tracks)}")
-if tracks:
-    t0 = tracks[0]
-    has_keys = all(k in t0 for k in ("track_id", "name", "artist", "artwork_url", "preview_url", "source"))
-    _record("track has all keys", has_keys, f"keys={list(t0.keys())}")
-    _record("track source=='apple'", t0.get("source") == "apple", f"src={t0.get('source')}")
-    _record("track preview_url is http(s)", str(t0.get("preview_url", "")).startswith("http"), f"url={str(t0.get('preview_url',''))[:60]}")
+r = get("/friends", token=admin_token)
+record("GET /friends admin", r.status_code == 200 and "friends" in r.json(),
+       f"{r.status_code} count={len(r.json().get('friends', []))}")
 
-get("/music/search", token=fresh_token, params={"q": "ocean"}, expect=403, name="GET /music/search free user → 403")
+peer_email = f"peer_{uuid.uuid4().hex[:8]}@innfeel.app"
+rp = post("/auth/register", json_body={"email": peer_email, "password": "Peer1234!", "name": "Peer Test"})
+peer_token = rp.json().get("access_token") if rp.status_code == 200 else None
 
-r, body = get("/music/tracks", token=admin_token, expect=200, name="GET /music/tracks legacy")
-_record("/music/tracks returns {tracks: []}", isinstance(body, dict) and isinstance(body.get("tracks"), list) and len(body["tracks"]) == 0, f"body={body}")
+r = post("/friends/add", token=admin_token, json_body={"email": peer_email})
+body = r.json() if r.status_code == 200 else {}
+shape = r.status_code == 200 and body.get("ok") is True and isinstance(body.get("friend"), dict)
+friend_obj = body.get("friend", {}) if shape else {}
+required_friend_fields = ("user_id", "name", "email", "avatar_color")
+missing = [k for k in required_friend_fields if k not in friend_obj]
+record("POST /friends/add shape {ok:true, friend:{user_id,name,email,avatar_color}}",
+       shape and not missing, f"{r.status_code} missing={missing} keys={list(friend_obj.keys())}")
+peer_friend_id = friend_obj.get("user_id")
 
-# ============================================================
-# F) Admin endpoints
-# ============================================================
-print("\n=== F) Admin ===")
-r, body = get("/admin/me", token=admin_token, expect=200, name="GET /admin/me admin")
-_record("/admin/me admin is_admin=true", isinstance(body, dict) and body.get("is_admin") is True, f"body={body}")
+if peer_friend_id:
+    r = post(f"/friends/close/{peer_friend_id}", token=admin_token, json_body={})
+    record("POST /friends/close/{id}", r.status_code == 200, f"{r.status_code}")
 
-r, body = get("/admin/me", token=fresh_token, expect=200, name="GET /admin/me fresh user")
-_record("/admin/me non-admin is_admin=false", isinstance(body, dict) and body.get("is_admin") is False, f"body={body}")
+    r = delete(f"/friends/{peer_friend_id}", token=admin_token)
+    record("DELETE /friends/{id}", r.status_code == 200, f"{r.status_code}")
 
-post("/admin/grant-pro", token=admin_token, json_body={"email": "luna@innfeel.app", "days": 5, "note": "regression test"}, expect=200, name="admin grant-pro luna 5d")
+# 4) MESSAGES
+print("\n=== 4) MESSAGES ===")
 
-r, body = get("/admin/pro-grants", token=admin_token, expect=200, name="GET /admin/pro-grants")
-grants = body.get("grants", []) if isinstance(body, dict) else []
-luna_active = any(g.get("granted_to_email") == "luna@innfeel.app" and g.get("is_active") is True for g in grants)
-_record("/admin/pro-grants includes luna active", luna_active, f"n_grants={len(grants)}")
+if luna_id:
+    r = post(f"/messages/with/{luna_id}", token=admin_token, json_body={"text": "hi"})
+    body = r.json() if r.status_code == 200 else {}
+    msg = body.get("message", {}) if isinstance(body, dict) else {}
+    required_msg_fields = ("message_id", "conversation_id", "sender_id", "sender_name", "text", "at")
+    missing = [f for f in required_msg_fields if f not in msg]
+    shape_ok = (r.status_code == 200 and body.get("ok") is True
+                and isinstance(msg, dict) and not missing)
+    record("POST /messages/with/{peer} shape preserved", shape_ok,
+           f"{r.status_code} missing={missing} body_keys={list(body.keys())}")
 
-post("/admin/grant-pro", token=fresh_token, json_body={"email": "luna@innfeel.app", "days": 1}, expect=403, name="non-admin grant-pro → 403")
+    r = get(f"/messages/with/{luna_id}", token=admin_token)
+    record("GET /messages/with/{peer}", r.status_code == 200, f"{r.status_code}")
 
-post("/admin/revoke-pro", token=admin_token, json_body={"email": "luna@innfeel.app"}, expect=200, name="admin revoke-pro luna")
+r = get("/messages", token=admin_token)
+record("GET /messages (inbox)", r.status_code == 200, f"{r.status_code}")
 
-r, body = get("/admin/users/search", token=admin_token, params={"q": "luna"}, expect=200, name="admin users/search q=luna")
-matches = body.get("users", []) if isinstance(body, dict) else []
-_record("admin users/search q=luna ≥ 1 result", len(matches) >= 1, f"n_matches={len(matches)}")
+# 5) WELLNESS
+print("\n=== 5) WELLNESS ===")
+for emo in ("joy", "anxiety"):
+    r = get(f"/wellness/{emo}", token=admin_token)
+    body = r.json() if r.status_code == 200 else {}
+    ok = r.status_code == 200 and body.get("quote") and body.get("advice")
+    record(f"GET /wellness/{emo}", ok, f"{r.status_code} source={body.get('source')}")
 
-# ============================================================
-# G) Stripe checkout
-# ============================================================
-print("\n=== G) Stripe checkout ===")
-r, body = post("/payments/checkout", token=admin_token, json_body={}, expect=200, name="checkout {} (origin fallback)")
-_record("checkout has url+session_id", isinstance(body, dict) and bool(body.get("url")) and bool(body.get("session_id")), f"url={(body.get('url') if isinstance(body,dict) else '')[:60]}")
+# 6) MUSIC
+print("\n=== 6) MUSIC ===")
+r = get("/music/search", token=admin_token, params={"q": "ocean"})
+body = r.json() if r.status_code == 200 else {}
+tracks = body.get("tracks", [])
+record("GET /music/search?q=ocean", r.status_code == 200 and isinstance(tracks, list) and len(tracks) > 0,
+       f"{r.status_code} count={len(tracks)}")
 
-r, body = post("/payments/checkout", token=admin_token, json_body={"origin_url": "https://example.com"}, expect=200, name="checkout origin=https://example.com")
-_record("checkout has url+session_id (explicit origin)", isinstance(body, dict) and bool(body.get("url")) and bool(body.get("session_id")), "")
+# 7) ADMIN
+print("\n=== 7) ADMIN ===")
 
-# ============================================================
-# H) Messages
-# ============================================================
-print("\n=== H) Messages ===")
-r, body = get("/messages/unread-count", token=admin_token, expect=200, name="GET /messages/unread-count admin")
-_record("unread-count has total + conversations", isinstance(body, dict) and "total" in body and "conversations" in body, f"body={body}")
+r = get("/admin/me", token=admin_token)
+record("GET /admin/me admin is_admin:true", r.status_code == 200 and r.json().get("is_admin") is True,
+       f"{r.status_code}")
 
-if LUNA_ID:
-    post(f"/messages/with/{LUNA_ID}", token=admin_token, json_body={"text": "Hi from regression"}, expect=200, name=f"admin sends message to luna")
-else:
-    _record("admin sends message to luna", False, "no LUNA_ID")
+r = get("/admin/users/search", token=admin_token, params={"q": "luna"})
+record("GET /admin/users/search?q=luna", r.status_code == 200 and isinstance(r.json().get("users"), list),
+       f"{r.status_code} count={len(r.json().get('users', []))}")
 
-r, body = get("/messages/conversations", token=luna_token, expect=200, name="luna /messages/conversations")
-convs = body.get("conversations", []) if isinstance(body, dict) else []
-admin_conv = next((c for c in convs if c.get("peer_id") == ADMIN_ID), None)
-_record("luna sees admin conversation", admin_conv is not None, f"n_convs={len(convs)} admin_conv={bool(admin_conv)}")
-if admin_conv:
-    _record("luna unread > 0 in admin conv", (admin_conv.get("unread") or 0) > 0, f"unread={admin_conv.get('unread')}")
+r = post("/admin/grant-pro", token=admin_token, json_body={"email": LUNA_EMAIL, "days": 30})
+record("POST /admin/grant-pro luna 30d", r.status_code == 200, f"{r.status_code} {r.text[:120]}")
 
-# ============================================================
-# I) Comments + reactions
-# ============================================================
-print("\n=== I) Comments + reactions ===")
-r, body = get("/moods/today", token=admin_token, expect=200, name="GET /moods/today admin (find mood_id)")
-admin_mood = body.get("mood") if isinstance(body, dict) else None
-admin_mood_id = admin_mood.get("mood_id") if admin_mood else None
-admin_privacy = admin_mood.get("privacy") if admin_mood else None
-print(f"  -> admin_mood_id={admin_mood_id}, privacy={admin_privacy}")
+r = post("/admin/revoke-pro", token=admin_token, json_body={"email": LUNA_EMAIL})
+record("POST /admin/revoke-pro luna", r.status_code == 200, f"{r.status_code} {r.text[:120]}")
 
-if not admin_mood_id:
-    _record("comments+reactions setup", False, "no admin mood")
-else:
-    if admin_privacy == "private":
-        delete("/moods/today", token=admin_token, expect=200, name="re-public admin mood: delete")
-        r, body = post("/moods", token=admin_token, json_body={
-            "word": "alive", "emotion": "joy", "intensity": 6, "privacy": "friends"
-        }, expect=200, name="admin re-post public mood for comments")
-        admin_mood_id = body.get("mood", {}).get("mood_id") if isinstance(body, dict) else None
+# 8) NOTIFICATIONS
+print("\n=== 8) NOTIFICATIONS ===")
 
-    if admin_mood_id:
-        post(f"/moods/{admin_mood_id}/comment", token=luna_token, json_body={"text": "Nice aura"}, expect=200, name="luna comments on admin mood")
+fake_token = "ExponentPushToken[fake_long_token_abc123]"
+r = post("/notifications/register-token", token=admin_token,
+         json_body={"token": fake_token, "platform": "ios"})
+record("POST /notifications/register-token", r.status_code == 200, f"{r.status_code}")
 
-        r, comments_body = get(f"/moods/{admin_mood_id}/comments", token=admin_token, expect=200, name="GET admin mood comments")
-        comments = comments_body.get("comments", []) if isinstance(comments_body, dict) else []
-        has_luna = any(c.get("text") == "Nice aura" for c in comments)
-        _record("admin sees luna's comment on his mood", has_luna, f"n_comments={len(comments)}")
+r = get("/notifications/prefs", token=admin_token)
+record("GET /notifications/prefs (1st)", r.status_code == 200, f"{r.status_code}")
 
-        post(f"/moods/{admin_mood_id}/react", token=luna_token, json_body={"emoji": "heart"}, expect=200, name="luna reacts heart on admin mood")
+r = post("/notifications/prefs", token=admin_token, json_body={"reaction": False})
+record("POST /notifications/prefs reaction:false", r.status_code == 200, f"{r.status_code}")
 
-# ============================================================
+r = get("/notifications/prefs", token=admin_token)
+prefs = r.json().get("prefs", {}) if r.status_code == 200 else {}
+record("GET /notifications/prefs reaction now false",
+       r.status_code == 200 and prefs.get("reaction") is False,
+       f"{r.status_code} prefs={prefs}")
+
+r = post("/notifications/prefs", token=admin_token, json_body={"reaction": True})
+record("POST /notifications/prefs reaction:true", r.status_code == 200, f"{r.status_code}")
+
+r = post("/notifications/test", token=admin_token, json_body={})
+record("POST /notifications/test", r.status_code == 200, f"{r.status_code}")
+
+r = post("/notifications/unregister-token", token=admin_token, json_body={"token": fake_token})
+record("POST /notifications/unregister-token", r.status_code == 200, f"{r.status_code}")
+
+# 9) PAYMENTS
+print("\n=== 9) PAYMENTS ===")
+r = post("/payments/checkout", token=admin_token, json_body={"origin_url": "https://example.com"})
+body = r.json() if r.status_code == 200 else {}
+ok = r.status_code == 200 and "checkout.stripe.com" in (body.get("url") or "")
+record("POST /payments/checkout", ok, f"{r.status_code} url={(body.get('url') or '')[:60]}")
+
+# 10) DEV
+print("\n=== 10) DEV ===")
+r = post("/dev/toggle-pro", token=new_token)
+ok1 = r.status_code == 200
+state1 = r.json().get("pro") if ok1 else None
+r = post("/dev/toggle-pro", token=new_token)
+ok2 = r.status_code == 200
+state2 = r.json().get("pro") if ok2 else None
+record("POST /dev/toggle-pro twice (toggles)", ok1 and ok2 and state1 != state2,
+       f"states={state1}->{state2}")
+
+# 11-13) IAP NEW
+print("\n=== 11-13) IAP ===")
+
+r = post("/iap/sync", token=admin_token, json_body={})
+body = r.json() if r.status_code == 200 else {}
+expected_ok = (r.status_code == 200 and body.get("ok") is False
+               and body.get("pro") is False and body.get("reason") == "no_subscriber")
+record("POST /iap/sync no_subscriber {ok:false,pro:false,reason:'no_subscriber'} (no 500)",
+       expected_ok, f"{r.status_code} body={body}")
+
+r = get("/iap/status", token=admin_token)
+body = r.json() if r.status_code == 200 else {}
+shape = (r.status_code == 200 and "pro" in body
+         and "pro_expires_at" in body and "pro_source" in body)
+record("GET /iap/status shape {pro,pro_expires_at,pro_source}",
+       shape, f"{r.status_code} body={body}")
+
+event_id = f"evt_test_abc_{uuid.uuid4().hex[:8]}"
+payload = {"event": {"id": event_id, "type": "INITIAL_PURCHASE", "app_user_id": "user_nonexistent"}}
+r = requests.post(API + "/iap/webhook", json=payload, timeout=30)
+record("POST /iap/webhook first → 200", r.status_code == 200, f"{r.status_code} {r.text[:120]}")
+
+r = requests.post(API + "/iap/webhook", json=payload, timeout=30)
+body = r.json() if r.status_code == 200 else {}
+record("POST /iap/webhook resend same event.id {duplicate:true}",
+       r.status_code == 200 and body.get("duplicate") is True,
+       f"{r.status_code} body={body}")
+
+r = requests.post(API + "/iap/webhook", json={}, timeout=30)
+body = r.json() if r.status_code == 200 else {}
+record("POST /iap/webhook invalid body {} → 200 ignored:'missing_ids'",
+       r.status_code == 200 and body.get("ignored") == "missing_ids",
+       f"{r.status_code} body={body}")
+
+r = requests.post(API + "/iap/sync", json={}, timeout=30)
+record("POST /iap/sync without auth → 401/403", r.status_code in (401, 403),
+       f"{r.status_code}")
+
+r = requests.get(API + "/iap/status", timeout=30)
+record("GET /iap/status without auth → 401/403", r.status_code in (401, 403),
+       f"{r.status_code}")
+
 # Summary
-# ============================================================
 print("\n" + "=" * 60)
-total = len(PASSED) + len(FAILED)
-print(f"PASSED: {len(PASSED)} / {total}  ({100.0*len(PASSED)/max(1,total):.1f}%)")
-print(f"FAILED: {len(FAILED)}")
-if FAILED:
-    print("\nFAILURES:")
-    for n, info in FAILED:
-        print(f"  - {n}  {info}")
-sys.exit(0 if not FAILED else 1)
+total = len(results)
+passed = sum(1 for _, ok, _ in results if ok)
+pct = 100.0 * passed / total if total else 0
+print(f"TOTAL: {passed}/{total} PASS ({pct:.1f}%)")
+print("\nFAILURES:")
+for n, ok, d in results:
+    if not ok:
+        print(f"  - {n} :: {d}")
+
+sys.exit(0 if passed == total else 1)

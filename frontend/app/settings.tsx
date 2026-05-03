@@ -74,29 +74,29 @@ export default function Settings() {
       key: "reminder",
       icon: "sparkles",
       color: "#FACC15",
-      title: t("settings.notifications"),
-      sub: `${String(REMINDER_NOON_HOUR).padStart(2, "0")}:${String(REMINDER_NOON_MINUTE).padStart(2, "0")} · backup ${String(REMINDER_EVENING_HOUR).padStart(2, "0")}:${String(REMINDER_EVENING_MINUTE).padStart(2, "0")}`,
+      title: t("settings.notif.reminder"),
+      sub: t("settings.notif.reminder.sub"),
     },
     {
       key: "reaction",
       icon: "heart",
       color: "#EC4899",
-      title: "Reactions & comments",
-      sub: "When friends react or comment on your aura",
+      title: t("settings.notif.reaction"),
+      sub: t("settings.notif.reaction.sub"),
     },
     {
       key: "message",
       icon: "chatbubble",
       color: "#38BDF8",
-      title: "Direct messages",
-      sub: "When a friend sends you a private message",
+      title: t("settings.notif.message"),
+      sub: t("settings.notif.message.sub"),
     },
     {
       key: "friend",
       icon: "people",
       color: "#A855F7",
-      title: "Friend activity",
-      sub: "When someone adds you as a friend",
+      title: t("settings.notif.friend"),
+      sub: t("settings.notif.friend.sub"),
     },
   ];
 
@@ -117,8 +117,8 @@ export default function Settings() {
         </View>
 
         <ScrollView contentContainerStyle={styles.scroll}>
-          <Text style={styles.sectionTitle}>Notifications</Text>
-          <Text style={styles.sectionSub}>Stay in the loop. Toggle any category off anytime.</Text>
+          <Text style={styles.sectionTitle}>{t("settings.section.notifications")}</Text>
+          <Text style={styles.sectionSub}>{t("settings.notifications.sub")}</Text>
 
           {ROWS.map((r) => (
             <View key={r.key} style={styles.row} testID={`notif-${r.key}-row`}>
@@ -139,7 +139,7 @@ export default function Settings() {
             </View>
           ))}
 
-          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Other</Text>
+          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>{t("settings.section.other")}</Text>
 
           <TouchableOpacity
             testID="settings-language-row"
@@ -163,11 +163,11 @@ export default function Settings() {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.rowTitle}>{t("settings.privacy")}</Text>
-              <Text style={styles.rowSub}>Set per-aura when you share.</Text>
+              <Text style={styles.rowSub}>{t("settings.privacy.sub")}</Text>
             </View>
           </View>
 
-          <Text style={styles.footer}>InnFeel 1.0 · made with color</Text>
+          <Text style={styles.footer}>{t("settings.footer")}</Text>
         </ScrollView>
       </SafeAreaView>
 

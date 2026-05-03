@@ -7,8 +7,6 @@ load_dotenv(ROOT_DIR / ".env")
 import os
 import uuid
 import logging
-import bcrypt
-import jwt
 import json
 import hashlib
 from datetime import datetime, timezone, timedelta, date
@@ -16,7 +14,6 @@ from typing import List, Optional, Literal
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, Body
 from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
 from emergentintegrations.payments.stripe.checkout import (
     StripeCheckout,
@@ -26,58 +23,26 @@ from emergentintegrations.payments.stripe.checkout import (
 )
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
-# =========================================================================
-# Config
-# =========================================================================
-MONGO_URL = os.environ["MONGO_URL"]
-DB_NAME = os.environ["DB_NAME"]
-JWT_SECRET = os.environ["JWT_SECRET"]
-STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "")
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
-
-JWT_ALGORITHM = "HS256"
-ACCESS_TOKEN_TTL_MINUTES = 60 * 24 * 7  # 7 days for mobile convenience
-REFRESH_TOKEN_TTL_DAYS = 30
-
-PRO_PRICE_USD = 4.99  # monthly
-
-# Emotion color palette — ordered from "best to worst" (positive → neutral → negative)
-EMOTIONS = {
-    # top: positive & expansive
-    "joy":         "#FACC15",
-    "happy":       "#FFD166",
-    "love":        "#EC4899",
-    "excitement":  "#FF7A00",
-    # positive & nurturing
-    "grateful":    "#F59E0B",
-    "hopeful":     "#38BDF8",
-    "inspired":    "#A855F7",
-    "confident":   "#FB923C",
-    "motivated":   "#22D3EE",
-    # calm & steady
-    "peace":       "#10B981",
-    "calm":        "#3B82F6",
-    "focus":       "#06D6A0",
-    "nostalgia":   "#C026D3",
-    # low energy / flat
-    "tired":       "#94A3B8",
-    "bored":       "#78716C",
-    "unmotivated": "#6B7280",
-    # isolating / sad
-    "lonely":      "#64748B",
-    "sadness":     "#6366F1",
-    # worried / anxious / lost
-    "worried":     "#CA8A04",
-    "anxiety":     "#F59E0B",
-    "lost":        "#475569",
-    # intense negative
-    "stressed":    "#DC2626",
-    "overwhelmed": "#B91C1C",
-    "anger":       "#EF4444",
-}
-
-client = AsyncIOMotorClient(MONGO_URL)
-db = client[DB_NAME]
+# Shared infrastructure (moved out of this file for maintainability)
+from app_core.config import (
+    STRIPE_API_KEY, EMERGENT_LLM_KEY,
+    JWT_SECRET, JWT_ALGORITHM, ACCESS_TOKEN_TTL_MINUTES, REFRESH_TOKEN_TTL_DAYS,
+)
+from app_core.constants import EMOTIONS, PRO_PRICE_USD
+from app_core.db import client, db
+from app_core.deps import (
+    now_utc, today_key,
+    hash_password, verify_password,
+    create_access_token, create_refresh_token, set_auth_cookies,
+    get_current_user, is_pro, sanitize_user,
+)
+from app_core.models import (
+    RegisterIn, LoginIn, EMOTION_LITERAL, MusicTrackIn, InnFeelIn,
+    AvatarIn, ReactionIn, CommentIn, MessageIn, AddFriendIn,
+    CheckoutIn, AdminGrantProIn, AdminRevokeProIn,
+    PushTokenIn, NotifPrefsIn, IAPValidateIn,
+)
+from app_core.push import send_push, EXPO_PUSH_URL
 
 app = FastAPI(title="InnFeel API")
 api = APIRouter(prefix="/api")
@@ -87,221 +52,9 @@ logger = logging.getLogger("innfeel")
 
 
 # =========================================================================
-# Helpers
+# Legacy block removed — config/EMOTIONS/client/db/helpers/models live in app_core now.
 # =========================================================================
-def now_utc() -> datetime:
-    return datetime.now(timezone.utc)
 
-
-def today_key(d: Optional[datetime] = None) -> str:
-    """Return the key for the current "aura day".
-
-    An aura day runs from 12:00 UTC to 12:00 UTC the next day — so an aura
-    posted at 2 PM Monday is still visible until noon Tuesday. This gives
-    users a full ~24h window, aligned with a noon daily reminder.
-    """
-    d = d or now_utc()
-    # shift 12h back: so before noon UTC we're still "yesterday's day"
-    anchor = d - timedelta(hours=12)
-    return anchor.strftime("%Y-%m-%d")
-
-
-def hash_password(pw: str) -> str:
-    return bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-
-
-def verify_password(pw: str, hashed: str) -> bool:
-    try:
-        return bcrypt.checkpw(pw.encode("utf-8"), hashed.encode("utf-8"))
-    except Exception:
-        return False
-
-
-def create_access_token(user_id: str, email: str) -> str:
-    payload = {
-        "sub": user_id,
-        "email": email,
-        "exp": now_utc() + timedelta(minutes=ACCESS_TOKEN_TTL_MINUTES),
-        "type": "access",
-    }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-
-
-def create_refresh_token(user_id: str) -> str:
-    payload = {
-        "sub": user_id,
-        "exp": now_utc() + timedelta(days=REFRESH_TOKEN_TTL_DAYS),
-        "type": "refresh",
-    }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-
-
-def set_auth_cookies(response: Response, access: str, refresh: str):
-    response.set_cookie(
-        "access_token", access, httponly=True, secure=True,
-        samesite="none", max_age=ACCESS_TOKEN_TTL_MINUTES * 60, path="/",
-    )
-    response.set_cookie(
-        "refresh_token", refresh, httponly=True, secure=True,
-        samesite="none", max_age=REFRESH_TOKEN_TTL_DAYS * 86400, path="/",
-    )
-
-
-async def get_current_user(request: Request) -> dict:
-    token = request.cookies.get("access_token")
-    if not token:
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            token = auth[7:]
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        if payload.get("type") != "access":
-            raise HTTPException(status_code=401, detail="Invalid token type")
-        user = await db.users.find_one({"user_id": payload["sub"]}, {"_id": 0, "password_hash": 0})
-        if not user:
-            raise HTTPException(status_code=401, detail="User not found")
-        return user
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-
-def is_pro(user: dict) -> bool:
-    if not user.get("pro"):
-        return False
-    exp = user.get("pro_expires_at")
-    if exp is None:
-        return False
-    if isinstance(exp, str):
-        try:
-            exp = datetime.fromisoformat(exp)
-        except Exception:
-            return False
-    if exp.tzinfo is None:
-        exp = exp.replace(tzinfo=timezone.utc)
-    return exp > now_utc()
-
-
-def sanitize_user(u: dict) -> dict:
-    return {
-        "user_id": u["user_id"],
-        "email": u["email"],
-        "name": u.get("name", ""),
-        "avatar_color": u.get("avatar_color", "#A78BFA"),
-        "avatar_b64": u.get("avatar_b64"),
-        "pro": is_pro(u),
-        "pro_expires_at": u.get("pro_expires_at").isoformat() if isinstance(u.get("pro_expires_at"), datetime) else u.get("pro_expires_at"),
-        "pro_source": u.get("pro_source"),  # e.g. "admin_grant" / "stripe" / "dev"
-        "is_admin": bool(u.get("is_admin", False)),
-        "friend_count": u.get("friend_count", 0),
-        "streak": u.get("streak", 0),
-        "created_at": u.get("created_at").isoformat() if isinstance(u.get("created_at"), datetime) else u.get("created_at"),
-    }
-
-
-def require_admin(user: dict = Depends(lambda: None)):
-    # Placeholder to make signature clear; the actual check is inside each admin endpoint
-    # via `user.get("is_admin")` because FastAPI Depends chaining with get_current_user
-    # would otherwise be nested.
-    pass
-
-
-# =========================================================================
-# Models
-# =========================================================================
-class RegisterIn(BaseModel):
-    email: EmailStr
-    password: str = Field(min_length=6)
-    name: str = Field(min_length=1, max_length=40)
-
-
-class LoginIn(BaseModel):
-    email: EmailStr
-    password: str
-
-
-EMOTION_LITERAL = Literal[
-    "joy", "happy", "love", "excitement",
-    "grateful", "hopeful", "inspired", "confident", "motivated",
-    "peace", "calm", "focus", "nostalgia",
-    "tired", "bored", "unmotivated",
-    "lonely", "sadness",
-    "worried", "anxiety", "lost",
-    "stressed", "overwhelmed", "anger",
-]
-
-
-class MusicTrackIn(BaseModel):
-    track_id: str = Field(min_length=1, max_length=64)
-    name: str = Field(min_length=1, max_length=120)
-    artist: Optional[str] = Field(default=None, max_length=120)
-    artwork_url: Optional[str] = Field(default=None, max_length=500)
-    preview_url: str = Field(min_length=1, max_length=500)
-    source: Literal["apple", "spotify"] = "apple"
-
-
-class InnFeelIn(BaseModel):
-    word: str = Field(min_length=1, max_length=30)
-    emotion: EMOTION_LITERAL
-    intensity: int = Field(ge=1, le=10)
-    photo_b64: Optional[str] = None  # base64 image
-    text: Optional[str] = Field(default=None, max_length=280)
-    audio_b64: Optional[str] = None  # base64 audio
-    audio_seconds: Optional[int] = Field(default=None, ge=1, le=30)
-    music: Optional[MusicTrackIn] = None  # Pro: track from Apple/Spotify search
-    privacy: Literal["friends", "close", "private"] = "friends"
-
-
-class AvatarIn(BaseModel):
-    avatar_b64: str = Field(min_length=1)
-
-
-class ReactionIn(BaseModel):
-    emoji: Literal["heart", "fire", "hug", "smile", "sparkle"]
-
-
-class CommentIn(BaseModel):
-    text: str = Field(min_length=1, max_length=300)
-
-
-class MessageIn(BaseModel):
-    text: str = Field(min_length=1, max_length=1000)
-
-
-class AddFriendIn(BaseModel):
-    email: EmailStr
-
-
-class CheckoutIn(BaseModel):
-    origin_url: Optional[str] = None
-
-
-class AdminGrantProIn(BaseModel):
-    email: EmailStr
-    days: int = Field(ge=1, le=3650, default=30)
-    note: Optional[str] = Field(default=None, max_length=200)
-
-
-class AdminRevokeProIn(BaseModel):
-    email: EmailStr
-
-
-class PushTokenIn(BaseModel):
-    token: str = Field(min_length=10, max_length=200)
-    platform: Optional[Literal["ios", "android", "web"]] = None
-
-
-class NotifPrefsIn(BaseModel):
-    reminder: Optional[bool] = None
-    reaction: Optional[bool] = None
-    message: Optional[bool] = None
-    friend: Optional[bool] = None
-
-
-# =========================================================================
 # Startup
 # =========================================================================
 @app.on_event("startup")
@@ -753,59 +506,8 @@ async def activity_mark_read(user: dict = Depends(get_current_user)):
 
 
 # =========================================================================
-# Push notifications (Expo Push)
+# Push notifications (Expo Push) — send_push/EXPO_PUSH_URL moved to app_core.push
 # =========================================================================
-EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
-
-
-async def send_push(target_user_id: str, category: str, title: str, body: str, data: Optional[dict] = None) -> bool:
-    """Fire an Expo Push notification to a user if they have a token and the category is enabled.
-
-    `category` is one of: reaction, message, friend, reminder.
-    Respects the recipient's notif_prefs (all default ON).
-    """
-    try:
-        target = await db.users.find_one({"user_id": target_user_id}, {"_id": 0, "push_token": 1, "notif_prefs": 1})
-        if not target:
-            return False
-        token = target.get("push_token")
-        if not token:
-            return False
-        prefs = target.get("notif_prefs") or {}
-        if prefs.get(category) is False:
-            return False
-        import httpx
-        payload = {
-            "to": token,
-            "title": title,
-            "body": body,
-            "data": data or {},
-            "sound": "default",
-            "priority": "high",
-            "channelId": category,
-        }
-        async with httpx.AsyncClient(timeout=6.0) as client_http:
-            r = await client_http.post(EXPO_PUSH_URL, json=payload, headers={"Accept": "application/json", "Content-Type": "application/json"})
-        ok = r.status_code == 200
-        if not ok:
-            logger.warning(f"Expo push non-200: {r.status_code} {r.text[:120]}")
-        else:
-            # If the token is invalid, Expo returns a "details.error" in response — we can prune later.
-            try:
-                body_json = r.json()
-                tickets = body_json.get("data") or []
-                if isinstance(tickets, dict):
-                    tickets = [tickets]
-                for t in tickets:
-                    if isinstance(t, dict) and t.get("status") == "error" and (t.get("details") or {}).get("error") == "DeviceNotRegistered":
-                        await db.users.update_one({"user_id": target_user_id}, {"$unset": {"push_token": "", "push_platform": ""}})
-                        logger.info(f"Pruned DeviceNotRegistered token for {target_user_id}")
-            except Exception:
-                pass
-        return ok
-    except Exception as e:
-        logger.warning(f"send_push failed: {e}")
-        return False
 
 
 @api.post("/notifications/register-token")
@@ -1179,6 +881,106 @@ async def stripe_webhook(request: Request):
                 {"$set": {"pro": True, "pro_expires_at": now_utc() + timedelta(days=30)}},
             )
     return {"ok": True}
+
+
+# =========================================================================
+# In-App Purchases — RevenueCat unified (iOS App Store + Google Play + Stripe Web)
+# =========================================================================
+from app_core.revenuecat import get_subscriber as rc_get_subscriber, extract_pro_state
+from app_core.config import REVENUECAT_WEBHOOK_AUTH
+
+
+@api.post("/iap/sync")
+async def iap_sync(user: dict = Depends(get_current_user)):
+    """Client calls this right after a successful native purchase (or on demand).
+    Backend fetches the authoritative subscriber state from RevenueCat REST and
+    mirrors pro/pro_expires_at into our users collection.
+    """
+    sub = await rc_get_subscriber(user["user_id"])
+    if not sub:
+        return {"ok": False, "pro": False, "reason": "no_subscriber"}
+    is_active, expires_at, store = extract_pro_state(sub)
+    source = {"app_store": "iap_apple", "play_store": "iap_google", "stripe": "iap_stripe", "promotional": "iap_promo"}.get(store or "", "iap")
+    update = {"pro": bool(is_active)}
+    if is_active and expires_at:
+        try:
+            update["pro_expires_at"] = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            update["pro_source"] = source
+        except Exception:
+            pass
+    else:
+        update["pro_expires_at"] = None
+        update["pro_source"] = None
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": update})
+    return {"ok": True, "pro": bool(is_active), "pro_expires_at": expires_at, "source": source}
+
+
+@api.post("/iap/webhook")
+async def iap_webhook(request: Request):
+    """RevenueCat webhook endpoint. Configure this URL in the RevenueCat dashboard
+    under Integrations → Webhooks, and set an authorization header that matches
+    the REVENUECAT_WEBHOOK_AUTH env var.
+    Events: INITIAL_PURCHASE, RENEWAL, CANCELLATION, EXPIRATION, BILLING_ISSUE,
+            PRODUCT_CHANGE, SUBSCRIBER_ALIAS, NON_RENEWING_PURCHASE, UNCANCELLATION.
+    """
+    # 1) Authenticate
+    expected = REVENUECAT_WEBHOOK_AUTH
+    if expected:
+        auth = request.headers.get("Authorization", "")
+        if auth != expected:
+            raise HTTPException(status_code=401, detail="Invalid webhook auth")
+    # 2) Parse
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    event = payload.get("event") or {}
+    event_type = event.get("type")
+    event_id = event.get("id")
+    app_user_id = event.get("app_user_id")
+    if not event_id or not app_user_id:
+        return {"ok": True, "ignored": "missing_ids"}
+    # 3) Idempotency guard
+    already = await db.iap_events.find_one({"event_id": event_id})
+    if already:
+        return {"ok": True, "duplicate": True}
+    await db.iap_events.insert_one({
+        "event_id": event_id,
+        "event_type": event_type,
+        "app_user_id": app_user_id,
+        "received_at": now_utc(),
+        "event": event,
+    })
+    # 4) Pull authoritative state from the REST API and update the user
+    sub = await rc_get_subscriber(app_user_id)
+    update = {"pro": False, "pro_expires_at": None}
+    if sub:
+        is_active, expires_at, store = extract_pro_state(sub)
+        source = {"app_store": "iap_apple", "play_store": "iap_google", "stripe": "iap_stripe", "promotional": "iap_promo"}.get(store or "", "iap")
+        update["pro"] = bool(is_active)
+        update["pro_source"] = source if is_active else None
+        if is_active and expires_at:
+            try:
+                update["pro_expires_at"] = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            except Exception:
+                pass
+    await db.users.update_one({"user_id": app_user_id}, {"$set": update})
+    logger.info(f"IAP webhook {event_type} applied for {app_user_id}: pro={update['pro']}")
+    return {"ok": True, "event_type": event_type, "pro": update["pro"]}
+
+
+@api.get("/iap/status")
+async def iap_status(user: dict = Depends(get_current_user)):
+    """Lightweight endpoint for the client to poll the latest pro state + source."""
+    cur = await db.users.find_one(
+        {"user_id": user["user_id"]},
+        {"_id": 0, "pro": 1, "pro_expires_at": 1, "pro_source": 1},
+    )
+    return {
+        "pro": is_pro(cur or {}),
+        "pro_expires_at": (cur or {}).get("pro_expires_at"),
+        "pro_source": (cur or {}).get("pro_source"),
+    }
 
 
 # =========================================================================

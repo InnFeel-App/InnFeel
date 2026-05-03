@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from "react-native";
+import React, { useEffect, useState } from "react";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
@@ -10,6 +10,7 @@ import { useAuth } from "../src/auth";
 import { COLORS } from "../src/theme";
 import { t } from "../src/i18n";
 import { Ionicons } from "@expo/vector-icons";
+import { isIAPAvailable, getOfferings, purchasePackage, restorePurchases } from "../src/iap";
 
 const BENEFITS = [
   { icon: "infinite", key: "paywall.f1" },
@@ -24,8 +25,63 @@ export default function Paywall() {
   const router = useRouter();
   const { refresh } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [offering, setOffering] = useState<any>(null);
+  const [useIAP, setUseIAP] = useState<boolean>(false);
 
+  // On mount, probe RevenueCat to see if native IAP is available on this build.
+  useEffect(() => {
+    (async () => {
+      if (!isIAPAvailable()) { setUseIAP(false); return; }
+      const off = await getOfferings();
+      if (off && off.availablePackages?.length > 0) {
+        setOffering(off);
+        setUseIAP(true);
+      }
+    })();
+  }, []);
+
+  // Native IAP purchase (iOS/Android EAS build only)
+  const upgradeIAP = async () => {
+    if (!offering) return;
+    const pkg = offering.availablePackages[0]; // take the first (usually monthly)
+    setLoading(true);
+    try {
+      const res = await purchasePackage(pkg);
+      if (res.success) {
+        await refresh();
+        Alert.alert("✦ You're Pro!", "All features unlocked.");
+        router.replace("/(tabs)/profile");
+      } else if (res.cancelled) {
+        // user cancelled — no-op
+      } else {
+        Alert.alert("Purchase failed", res.error || "Please try again.");
+      }
+    } catch (e: any) {
+      Alert.alert("Purchase failed", e?.message || "Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const restore = async () => {
+    setLoading(true);
+    try {
+      const r = await restorePurchases();
+      if (r.proActive) {
+        await refresh();
+        Alert.alert("✦ Restored", "Your Pro subscription is active.");
+        router.replace("/(tabs)/profile");
+      } else {
+        Alert.alert("No purchases", "No active subscription found for this account.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Stripe web fallback (web / Expo Go / missing RevenueCat keys)
   const upgrade = async () => {
+    if (useIAP) return upgradeIAP();
     setLoading(true);
     try {
       const origin = process.env.EXPO_PUBLIC_BACKEND_URL || "";
@@ -75,14 +131,23 @@ export default function Paywall() {
           </TouchableOpacity>
         </View>
         <ScrollView contentContainerStyle={styles.scroll}>
-          <Text style={styles.kicker}>MOODDROP</Text>
+          <Text style={styles.kicker}>INNFEEL</Text>
           <Text style={styles.title}>{t("paywall.title")}</Text>
           <Text style={styles.sub}>{t("paywall.subtitle")}</Text>
 
-          <View style={styles.priceCard}>
-            <Text style={styles.price}>$4.99 <Text style={styles.per}>/ month</Text></Text>
-            <Text style={styles.priceSub}>Cancel anytime</Text>
-          </View>
+          {useIAP && offering?.availablePackages?.[0] ? (
+            <View style={styles.priceCard}>
+              <Text style={styles.price}>
+                {offering.availablePackages[0].product.priceString} <Text style={styles.per}>/ {offering.availablePackages[0].packageType?.toLowerCase() || "month"}</Text>
+              </Text>
+              <Text style={styles.priceSub}>Cancel anytime · via {Platform.OS === "ios" ? "App Store" : "Google Play"}</Text>
+            </View>
+          ) : (
+            <View style={styles.priceCard}>
+              <Text style={styles.price}>$4.99 <Text style={styles.per}>/ month</Text></Text>
+              <Text style={styles.priceSub}>Cancel anytime</Text>
+            </View>
+          )}
 
           <View style={{ gap: 12, marginTop: 20 }}>
             {BENEFITS.map((b) => (
@@ -97,6 +162,11 @@ export default function Paywall() {
 
           <View style={{ marginTop: 24, gap: 10 }}>
             <Button testID="paywall-upgrade" label={t("paywall.cta")} onPress={upgrade} loading={loading} />
+            {useIAP && (
+              <TouchableOpacity testID="paywall-restore" onPress={restore}>
+                <Text style={styles.dev}>Restore purchases</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity testID="dev-toggle-pro" onPress={devToggle}>
               <Text style={styles.dev}>{t("paywall.devToggle")}</Text>
             </TouchableOpacity>

@@ -6,6 +6,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "../src/auth";
 import { ensureDailyRandomNotification, registerForPushNotificationsAsync } from "../src/notifications";
 import { loadLocaleOverride } from "../src/i18n";
+import { initIAP, identifyIAP } from "../src/iap";
 
 function NotificationScheduler() {
   const { user } = useAuth();
@@ -16,6 +17,13 @@ function NotificationScheduler() {
       // Register the Expo push token with the backend so server-side notifications
       // (reactions, comments, messages, friend adds) can reach this device.
       registerForPushNotificationsAsync().catch(() => {});
+      // Boot RevenueCat with the user's id so subscription state is attached to them.
+      (async () => {
+        try {
+          const ok = await initIAP(user.user_id);
+          if (ok) await identifyIAP(user.user_id);
+        } catch {}
+      })();
     }
   }, [user]);
   return null;

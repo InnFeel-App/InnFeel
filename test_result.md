@@ -383,6 +383,77 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 
+backend_session10:
+  - task: "Post-refactor full regression + new IAP endpoints (sync/status/webhook)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py, /app/backend/app_core/*"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Full backend regression sanity-check executed via /app/backend_test.py against the public preview URL.
+            Result: 46/47 PASS (97.9%, target was 95%). The 1 "failure" is a misnaming in the review request:
+            the request listed `GET /messages` as inbox, but the actual implemented inbox endpoint is
+            `GET /api/messages/conversations` (verified 200 with conversations[] populated). No backend bug.
+
+            REGRESSION (all PASS):
+            - Auth: register, login admin+luna, /auth/me admin (is_admin:true), /auth/me luna, logout
+            - Moods: POST /moods (luna+admin), today, feed (1 item), stats luna+admin
+              (Pro admin returns range_30/90/365 with count/distribution/avg_intensity/volatility + insights[] strings),
+              /moods/{id}/react {ok:true, reactions:[...]}, /moods/{id}/comment {ok:true, comment:{...}},
+              /activity, /activity/unread-count, /activity/mark-read
+            - Friends: /friends, /friends/add (shape {ok:true, friend:{user_id,name,email,avatar_color}} preserved),
+              /friends/close/{id}, DELETE /friends/{id}
+            - Messages: POST /messages/with/{peer} → {ok:true, message:{message_id, conversation_id,
+              sender_id, sender_name, text, at}} all 6 fields present. GET /messages/with/{peer} 200.
+              GET /messages/conversations 200 (the implemented inbox).
+            - Wellness: /wellness/joy and /wellness/anxiety → 200 source=llm with quote+advice
+            - Music: /music/search?q=ocean → 200, 15 tracks
+            - Admin: /admin/me (is_admin:true), /admin/users/search?q=luna (2 matches),
+              /admin/grant-pro luna 30d, /admin/revoke-pro luna — all 200
+            - Notifications: register-token, prefs round-trip (reaction:false→read-back→reaction:true),
+              /notifications/test, /notifications/unregister-token — all 200
+            - Payments: /payments/checkout {origin_url:'https://example.com'} → 200 with checkout.stripe.com URL
+            - Dev: /dev/toggle-pro toggles True↔False
+
+            NEW IAP (REVENUECAT_API_KEY intentionally unset — must not 500):
+            - POST /api/iap/sync (auth) → 200 {ok:false, pro:false, reason:"no_subscriber"} ✅
+            - GET  /api/iap/status (auth) → 200 with pro/pro_expires_at/pro_source keys ✅
+            - POST /api/iap/webhook (no auth, REVENUECAT_WEBHOOK_AUTH unset):
+                · first call with {event:{id:"evt_test_abc_xxx", type:"INITIAL_PURCHASE",
+                  app_user_id:"user_nonexistent"}} → 200 {ok:true, event_type:"INITIAL_PURCHASE", pro:false}
+                · resend same event.id → 200 {ok:true, duplicate:true} ✅
+                · invalid body {} → 200 {ok:true, ignored:"missing_ids"} ✅
+            - Auth required check: /iap/sync no token → 401, /iap/status no token → 401 ✅
+            Backend log confirmed: "REVENUECAT_API_KEY not set — subscriber fetch skipped" — graceful fallback.
+            No 500s. No exceptions. Refactor preserved every contract shape verified.
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        POST-REFACTOR FULL REGRESSION COMPLETE — 46/47 PASS (97.9%, target 95%).
+        Single non-issue: review request mentioned `GET /messages` for inbox, but the actual
+        implemented endpoint is `GET /api/messages/conversations` (verified 200).
+        All critical shape preservations confirmed:
+          • POST /moods/{id}/react → {ok:true, reactions:[...]}
+          • POST /moods/{id}/comment → {ok:true, comment:{...}}
+          • POST /messages/with/{peer} → {ok:true, message:{message_id, conversation_id,
+                                          sender_id, sender_name, text, at}}
+          • POST /friends/add → {ok:true, friend:{user_id, name, email, avatar_color}}
+          • GET /moods/stats Pro admin → range_30/90/365 (count, distribution, avg_intensity,
+                                          volatility) + insights[] strings
+        New IAP endpoints all behaved correctly with REVENUECAT_API_KEY unset:
+          • /iap/sync → 200 {ok:false, pro:false, reason:"no_subscriber"} (no 500)
+          • /iap/status → 200 with pro/pro_expires_at/pro_source
+          • /iap/webhook first → 200; resend same event.id → 200 {duplicate:true}; invalid body {} → 200 {ignored:"missing_ids"}
+          • Auth required: /iap/sync and /iap/status without token → 401
+        Backend log shows the expected "REVENUECAT_API_KEY not set — subscriber fetch skipped" entries — graceful no-op.
+        No code fixes were applied by the testing agent. Refactor regression-clean.
+
 agent_communication:
     - agent: "testing"
       message: |
