@@ -10,6 +10,7 @@ type MoodShare = {
   emotion: string;
   intensity: number;
   userName?: string;
+  music?: { title?: string; artist?: string } | null;
 };
 type StatsShare = {
   kind: "stats";
@@ -27,6 +28,22 @@ export function useShareToStories() {
   const cardRef = useRef<View>(null);
   const [payload, setPayload] = React.useState<Payload | null>(null);
 
+  const buildMessage = (p: Payload): string => {
+    const appLink = "https://innfeel.app";
+    if (p.kind === "mood") {
+      const parts = [
+        `My aura today: ${p.word || p.emotion} ✦`,
+      ];
+      if (p.music?.title) {
+        parts.push(`🎵 ${p.music.title}${p.music.artist ? ` — ${p.music.artist}` : ""}`);
+      }
+      parts.push(`One aura a day! Share yours. Unlock the others!`);
+      parts.push(appLink);
+      return parts.join("\n");
+    }
+    return `My InnFeel streak: ${p.streak} days · ${p.dropsThisWeek} auras this week ✦ Mostly feeling ${p.dominant}.\n${appLink}`;
+  };
+
   const share = async (p: Payload) => {
     setPayload(p);
     // Wait a beat for the offscreen view to mount/render.
@@ -34,6 +51,7 @@ export function useShareToStories() {
     try {
       if (!cardRef.current) throw new Error("Card not ready");
       const uri = await captureRef(cardRef, { format: "png", quality: 1, result: "tmpfile" });
+      const message = buildMessage(p);
 
       // Prefer Instagram Stories deeplink on iOS
       if (Platform.OS === "ios") {
@@ -43,7 +61,7 @@ export function useShareToStories() {
           // We open share sheet as the best reliable path (user picks Instagram > Stories).
           await Sharing.shareAsync(uri, {
             mimeType: "image/png",
-            dialogTitle: "Share to Instagram Stories",
+            dialogTitle: message,
             UTI: "public.png",
           });
           setPayload(null);
@@ -54,7 +72,7 @@ export function useShareToStories() {
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, {
           mimeType: "image/png",
-          dialogTitle: "Share your mood",
+          dialogTitle: message,
         });
       } else {
         Alert.alert("Sharing unavailable", "Your device doesn't support sharing.");
@@ -78,6 +96,7 @@ export function useShareToStories() {
           word={(payload as MoodShare).word}
           emotion={(payload as MoodShare).emotion || (payload as StatsShare).dominant}
           intensity={(payload as MoodShare).intensity}
+          music={(payload as MoodShare).music}
           streak={(payload as StatsShare).streak}
           dropsThisWeek={(payload as StatsShare).dropsThisWeek}
           dominant={(payload as StatsShare).dominant}

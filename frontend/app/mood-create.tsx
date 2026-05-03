@@ -117,7 +117,8 @@ export default function MoodCreate() {
       setRecording(rec);
       setIsRecording(true);
       setRecSeconds(0);
-      setAudioB64(null);
+      setAudioUri(null);
+      setAudioKey(null);
       timerRef.current = setInterval(() => {
         setRecSeconds((s) => {
           if (s + 1 >= MAX_AUDIO_SECONDS) { stopRecording(rec); return MAX_AUDIO_SECONDS; }

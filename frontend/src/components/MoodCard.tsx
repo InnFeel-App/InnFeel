@@ -36,6 +36,7 @@ type Mood = {
   author_name?: string;
   author_color?: string;
   author_avatar_b64?: string | null;
+  author_avatar_url?: string | null;
   created_at?: string;
   reactions?: any[];
 };
@@ -58,7 +59,7 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
   const [cachedAudio, setCachedAudio] = useState<string | null>(mood.audio_b64 || null);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [reactingKey, setReactingKey] = useState<string | null>(null);
-  const hasAudio = !!(mood.has_audio || mood.audio_b64);
+  const hasAudio = !!(mood.has_audio || mood.audio_b64 || mood.audio_url);
   const commentCount = (mood as any).comments?.length || 0;
 
   const toggleMusicPreview = async () => {
@@ -143,6 +144,7 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
           }
         });
       }
+      if (!soundRef.current) return;
       await soundRef.current.playAsync();
       setPlaying(true);
     } catch (e: any) {

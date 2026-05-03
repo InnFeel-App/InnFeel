@@ -10,6 +10,7 @@ type Props = {
   emotion?: string;
   intensity?: number;
   userName?: string;
+  music?: { title?: string; artist?: string } | null;
   // stats
   streak?: number;
   dropsThisWeek?: number;
@@ -39,7 +40,7 @@ const ShareCard = forwardRef<View, Props>(function ShareCard(props, ref) {
       <View style={[styles.blob, { backgroundColor: "#06D6A0", top: 400, right: -80, width: 380, height: 380, opacity: 0.25 }]} />
 
       <View style={styles.content}>
-        <Text style={styles.brand}>MOODDROP ✦</Text>
+        <Text style={styles.brand}>INNFEEL ✦</Text>
 
         {props.kind === "mood" ? (
           <>
@@ -68,6 +69,15 @@ const ShareCard = forwardRef<View, Props>(function ShareCard(props, ref) {
             <Text style={styles.intensityLabel}>
               intensity {intensity}/{maxIntensity}
             </Text>
+            {props.music?.title ? (
+              <View style={styles.musicRow}>
+                <Text style={styles.musicIcon}>🎵</Text>
+                <View style={{ flexShrink: 1 }}>
+                  <Text style={styles.musicTitle} numberOfLines={1}>{props.music.title}</Text>
+                  {props.music.artist ? <Text style={styles.musicArtist} numberOfLines={1}>{props.music.artist}</Text> : null}
+                </View>
+              </View>
+            ) : null}
           </>
         ) : (
           <>
@@ -107,7 +117,8 @@ const ShareCard = forwardRef<View, Props>(function ShareCard(props, ref) {
         )}
 
         <View style={{ flex: 1 }} />
-        <Text style={styles.footer}>Share your aura. Unlock the others.</Text>
+        <Text style={styles.footer}>One aura a day! Twenty seconds. Full color!</Text>
+        <Text style={styles.footerSub}>Share yours. Unlock the others.</Text>
         <Text style={styles.footerHandle}>innfeel.app</Text>
       </View>
     </View>
@@ -148,6 +159,16 @@ const styles = StyleSheet.create({
   distTrack: { flex: 1, height: 18, borderRadius: 9, backgroundColor: "rgba(255,255,255,0.1)" },
   distFill: { height: 18, borderRadius: 9 },
   distPct: { color: "rgba(255,255,255,0.8)", width: 100, textAlign: "right", fontSize: 26 },
-  footer: { color: "rgba(255,255,255,0.85)", fontSize: 30, fontWeight: "600" },
-  footerHandle: { color: "rgba(255,255,255,0.5)", fontSize: 24, marginTop: 8 },
+  footer: { color: "rgba(255,255,255,0.95)", fontSize: 30, fontWeight: "700", textAlign: "center", paddingHorizontal: 30 },
+  footerSub: { color: "rgba(255,255,255,0.75)", fontSize: 24, fontStyle: "italic", marginTop: 6, textAlign: "center" },
+  footerHandle: { color: "rgba(255,255,255,0.55)", fontSize: 26, fontWeight: "600", marginTop: 14, letterSpacing: 2 },
+  musicRow: {
+    flexDirection: "row", alignItems: "center", gap: 14,
+    marginTop: 28, alignSelf: "stretch", paddingVertical: 18, paddingHorizontal: 22,
+    backgroundColor: "rgba(0,0,0,0.35)", borderRadius: 28,
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.12)",
+  },
+  musicIcon: { fontSize: 30 },
+  musicTitle: { color: "#fff", fontSize: 26, fontWeight: "700" },
+  musicArtist: { color: "rgba(255,255,255,0.7)", fontSize: 22, marginTop: 2 },
 });

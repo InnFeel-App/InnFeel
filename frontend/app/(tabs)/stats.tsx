@@ -258,4 +258,7 @@ const styles = StyleSheet.create({
   metricLbl: { color: COLORS.textSecondary, fontSize: 11 },
   rangeCard: { padding: 14, borderRadius: 20, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)", marginBottom: 12, gap: 8 },
   rangeCardHdr: { color: COLORS.textSecondary, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.2, fontWeight: "700", marginBottom: 4 },
+  topHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+  shareBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: COLORS.border },
+  shareBtnTxt: { color: "#fff", fontSize: 13, fontWeight: "600" },
 });

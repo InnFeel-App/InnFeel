@@ -153,66 +153,66 @@ export default function Home() {
             </View>
           ) : (
             <View>
-              <View style={styles.myMoodHeader}>
-                <Text style={styles.sectionTitle}>Your aura today</Text>
-                <View style={styles.myMoodActions}>
-                  <TouchableOpacity
-                    testID="share-my-mood"
-                    onPress={() =>
-                      share({
-                        kind: "mood",
-                        word: todayMood.word,
-                        emotion: todayMood.emotion,
-                        intensity: todayMood.intensity,
-                        userName: user?.name,
-                      })
-                    }
-                    style={styles.shareBtnXL}
-                    activeOpacity={0.85}
-                  >
-                    <Ionicons name="share-social" size={18} color="#000" />
-                    <Text style={styles.shareBtnXLTxt}>Share your aura</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    testID="redo-my-mood"
-                    onPress={() =>
-                      Alert.alert(
-                        "Redo today's aura?",
-                        "Your current mood will be deleted and you'll be taken to the drop screen.",
-                        [
-                          { text: "Cancel", style: "cancel" },
-                          {
-                            text: "Delete & redo",
-                            style: "destructive",
-                            onPress: async () => {
-                              try {
-                                await api("/moods/today", { method: "DELETE" });
-                                setTodayMood(null);
-                                router.push("/mood-create");
-                              } catch (e: any) {
-                                Alert.alert("Failed", e.message || "Could not delete drop");
-                              }
-                            },
-                          },
-                        ],
-                      )
-                    }
-                    style={styles.redoBtn}
-                  >
-                    <Ionicons name="refresh" size={14} color="#fff" />
-                    <Text style={styles.shareBtnTxt}>Redo</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
+              <Text style={[styles.sectionTitle, { marginBottom: 14 }]}>Your aura today</Text>
               <MoodCard
                 mood={{
                   ...todayMood,
                   author_name: user?.name,
                   author_color: user?.avatar_color,
                   author_avatar_b64: (user as any)?.avatar_b64,
+                  author_avatar_url: (user as any)?.avatar_url,
                 }}
                 testIDPrefix="my-mood"
               />
+              <View style={styles.myMoodActions}>
+                <TouchableOpacity
+                  testID="share-my-mood"
+                  onPress={() =>
+                    share({
+                      kind: "mood",
+                      word: todayMood.word,
+                      emotion: todayMood.emotion,
+                      intensity: todayMood.intensity,
+                      userName: user?.name,
+                      music: todayMood.music || undefined,
+                    })
+                  }
+                  style={styles.shareBtnXL}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="share-social" size={18} color="#000" />
+                  <Text style={styles.shareBtnXLTxt}>Share your aura</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  testID="redo-my-mood"
+                  onPress={() =>
+                    Alert.alert(
+                      "Redo today's aura?",
+                      "Your current mood will be deleted and you'll be taken to the drop screen.",
+                      [
+                        { text: "Cancel", style: "cancel" },
+                        {
+                          text: "Delete & redo",
+                          style: "destructive",
+                          onPress: async () => {
+                            try {
+                              await api("/moods/today", { method: "DELETE" });
+                              setTodayMood(null);
+                              router.push("/mood-create");
+                            } catch (e: any) {
+                              Alert.alert("Failed", e.message || "Could not delete drop");
+                            }
+                          },
+                        },
+                      ],
+                    )
+                  }
+                  style={styles.redoBtn}
+                >
+                  <Ionicons name="refresh" size={14} color="#fff" />
+                  <Text style={styles.shareBtnTxt}>Redo</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           )}
 
@@ -275,9 +275,9 @@ const styles = StyleSheet.create({
   sectionTitle: { color: COLORS.textSecondary, fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12 },
   feedHead: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
   myMoodHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  myMoodActions: { flexDirection: "row", gap: 8, marginBottom: 10 },
+  myMoodActions: { flexDirection: "row", gap: 10, marginTop: 14, marginBottom: 4, alignItems: "center" },
   shareBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: COLORS.border },
-  shareBtnXL: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 18, paddingVertical: 12, borderRadius: 999, backgroundColor: "#fff", shadowColor: "#fff", shadowOpacity: 0.25, shadowRadius: 14, shadowOffset: { width: 0, height: 4 }, elevation: 6 },
+  shareBtnXL: { flex: 1, justifyContent: "center", flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 20, paddingVertical: 14, borderRadius: 999, backgroundColor: "#fff" },
   shareBtnXLTxt: { color: "#000", fontSize: 14, fontWeight: "800", letterSpacing: 0.3 },
   redoBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, backgroundColor: "rgba(239,68,68,0.12)", borderWidth: 1, borderColor: "rgba(239,68,68,0.35)" },
   shareBtnTxt: { color: "#fff", fontSize: 12, fontWeight: "600" },
