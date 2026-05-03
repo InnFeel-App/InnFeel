@@ -89,6 +89,52 @@ def _pick_lang(lang: Optional[str]) -> str:
     return "en"
 
 
+# ---------------------------------------------------------------------------
+# Brand footer — shared across every automated email (logo + signature tagline)
+# ---------------------------------------------------------------------------
+BRAND_TAGLINE = "One aura a day! Twenty seconds. Full color! Share yours. Unlock the others!"
+
+
+def render_brand_footer_html() -> str:
+    """Return a reusable HTML block with the InnFeel logo + tagline.
+
+    Uses the same gradient ✦ mark as the email-signature file (pure HTML/CSS — no external
+    images required so it renders identically on Apple Mail, Gmail, Outlook, Yahoo, ProtonMail).
+    """
+    return (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'style="max-width:520px;margin-top:16px;">'
+        '<tr><td align="center" style="padding:24px 24px 8px 24px;">'
+        # Gradient circular ✦ logo
+        '<div style="display:inline-block;width:48px;height:48px;border-radius:50%;'
+        'background:linear-gradient(135deg,#A78BFA 0%,#F472B6 50%,#FDE047 100%);'
+        'line-height:48px;text-align:center;color:#0B0B0F;font-weight:800;font-size:22px;">✦</div>'
+        # Wordmark
+        '<div style="margin-top:10px;font-size:15px;font-weight:800;color:#fff;'
+        'letter-spacing:-0.2px;">InnFeel</div>'
+        # Tagline — brand signature kept in English on purpose (like "Just do it")
+        f'<div style="margin-top:8px;font-size:12px;font-style:italic;color:#9CA3AF;'
+        f'line-height:18px;max-width:380px;margin-left:auto;margin-right:auto;">'
+        f'{BRAND_TAGLINE}</div>'
+        # Contact link
+        '<div style="margin-top:14px;font-size:11px;color:#6B6B78;">'
+        '<a href="mailto:hello@innfeel.app" style="color:#A78BFA;text-decoration:none;">'
+        'hello@innfeel.app</a> &nbsp;·&nbsp; '
+        '<a href="https://innfeel.app" style="color:#6B6B78;text-decoration:none;">innfeel.app</a>'
+        '</div>'
+        '</td></tr></table>'
+    )
+
+
+def render_brand_footer_text() -> str:
+    return (
+        "\n\n-- \n"
+        "✦ InnFeel\n"
+        f"{BRAND_TAGLINE}\n"
+        "hello@innfeel.app · innfeel.app"
+    )
+
+
 def render_otp_email(code: str, name: str = "", lang: str = "en") -> tuple[str, str, str]:
     """Return (subject, html, text) for an OTP verification email in the given language."""
     l = _pick_lang(lang)
@@ -140,6 +186,7 @@ def render_otp_email(code: str, name: str = "", lang: str = "en") -> tuple[str, 
             </td>
           </tr>
         </table>
+        {render_brand_footer_html()}
       </td>
     </tr>
   </table>
@@ -152,6 +199,7 @@ def render_otp_email(code: str, name: str = "", lang: str = "en") -> tuple[str, 
         f"    {code}\n\n"
         f"{c['expires']}\n{c['ignore']}\n\n"
         f"{c['footer']}"
+        f"{render_brand_footer_text()}"
     )
     return c["subject"], html, text
 
