@@ -377,7 +377,7 @@ async def create_mood(data: InnFeelIn, user: dict = Depends(get_current_user)):
         "mood_id": mood_id,
         "user_id": user["user_id"],
         "day_key": key,
-        "word": data.word.strip(),
+        "word": (data.word or "").strip() or None,
         "emotion": data.emotion,
         "color": EMOTIONS[data.emotion],
         "intensity": data.intensity,
@@ -759,44 +759,70 @@ async def stats(user: dict = Depends(get_current_user)):
 # =========================================================================
 @api.get("/music/search")
 async def music_search(q: str, user: dict = Depends(get_current_user)):
-    """Search tracks on Apple's iTunes catalog (free, no auth). Returns tracks with a 30s preview MP3 URL.
+    """Unified music search querying Apple (iTunes) AND Spotify in parallel.
 
-    Response: { tracks: [{ track_id, name, artist, artwork_url, preview_url, source }] }
+    Returns a merged, de-duplicated list sorted by provider alternation so results
+    from both sources are shown. Each track carries a `source` tag ("apple" | "spotify").
+    If Spotify credentials aren't configured, results fall back to Apple-only.
     """
     if not is_pro(user):
         raise HTTPException(status_code=403, detail="Background music is a Pro feature")
     q = (q or "").strip()
     if len(q) < 2:
         return {"tracks": []}
-    import httpx
+    import httpx, asyncio
+    from app_core.spotify import search_tracks as spotify_search
+
+    async def apple_search():
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client_http:
+                r = await client_http.get(
+                    "https://itunes.apple.com/search",
+                    params={"term": q, "media": "music", "entity": "song", "limit": 15},
+                    headers={"User-Agent": "InnFeel/1.0"},
+                )
+            data = r.json() if r.status_code == 200 else {"results": []}
+        except Exception as e:
+            logger.warning(f"iTunes search failed: {e}")
+            data = {"results": []}
+        out = []
+        for t in data.get("results", []):
+            if not t.get("previewUrl"):
+                continue
+            art = (t.get("artworkUrl100") or "").replace("100x100bb", "300x300bb")
+            out.append({
+                "track_id": str(t.get("trackId")) if t.get("trackId") else t.get("previewUrl", "")[:48],
+                "name": t.get("trackName") or "",
+                "artist": t.get("artistName") or "",
+                "artwork_url": art,
+                "preview_url": t.get("previewUrl"),
+                "source": "apple",
+            })
+        return out
+
+    # Run both searches in parallel; never let one source's failure break the other.
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client_http:
-            r = await client_http.get(
-                "https://itunes.apple.com/search",
-                params={"term": q, "media": "music", "entity": "song", "limit": 20},
-                headers={"User-Agent": "InnFeel/1.0"},
-            )
-        data = r.json() if r.status_code == 200 else {"results": []}
+        apple_results, spotify_results = await asyncio.gather(
+            apple_search(), spotify_search(q, limit=10), return_exceptions=False
+        )
     except Exception as e:
-        logger.warning(f"iTunes search failed: {e}")
-        data = {"results": []}
-    results = []
-    for t in data.get("results", []):
-        if not t.get("previewUrl"):
-            continue
-        art = t.get("artworkUrl100") or ""
-        # Upgrade artwork to 300x300 for better quality
-        if art:
-            art = art.replace("100x100bb", "300x300bb")
-        results.append({
-            "track_id": str(t.get("trackId")) if t.get("trackId") else t.get("previewUrl", "")[:48],
-            "name": t.get("trackName") or "",
-            "artist": t.get("artistName") or "",
-            "artwork_url": art,
-            "preview_url": t.get("previewUrl"),
-            "source": "apple",
-        })
-    return {"tracks": results[:15]}
+        logger.warning(f"Unified music search failed: {e}")
+        apple_results, spotify_results = [], []
+
+    # Merge with dedup by (name+artist lowercased) — first seen wins.
+    seen: set[str] = set()
+    merged: list[dict] = []
+    # Alternate between sources for a balanced feel
+    max_len = max(len(apple_results), len(spotify_results))
+    for i in range(max_len):
+        for src_list in (apple_results, spotify_results):
+            if i < len(src_list):
+                t = src_list[i]
+                key = (t.get("name", "").lower().strip() + "|" + (t.get("artist", "") or "").lower().strip())
+                if key and key not in seen:
+                    seen.add(key)
+                    merged.append(t)
+    return {"tracks": merged[:20]}
 
 
 # Backward-compat: old endpoint returns empty tracks so legacy clients don't crash
@@ -856,6 +882,43 @@ async def list_close_friends(user: dict = Depends(get_current_user)):
         return {"friends": []}
     users = await db.users.find({"user_id": {"$in": ids}}, {"_id": 0, "user_id": 1, "name": 1, "avatar_color": 1}).to_list(200)
     return {"friends": users}
+
+
+@api.post("/friends/match-contacts")
+async def match_contacts(data: dict = Body(...), user: dict = Depends(get_current_user)):
+    """Check which of the user's device contacts already have an InnFeel account.
+
+    Client posts {emails: [str, ...]} (de-duped, lowercased). Returns the users
+    that match, excluding the caller and already-friends. Privacy: we don't store
+    non-matching emails or the raw contact list \u2014 purely a lookup.
+    """
+    emails = data.get("emails") or []
+    if not isinstance(emails, list):
+        raise HTTPException(status_code=400, detail="emails must be an array")
+    # Cap to 500 at a time and normalise
+    clean = list({(e or "").strip().lower() for e in emails if isinstance(e, str) and "@" in e})[:500]
+    if not clean:
+        return {"matches": []}
+    # Find existing InnFeel users with those emails (excluding self)
+    rows = await db.users.find(
+        {"email": {"$in": clean}, "user_id": {"$ne": user["user_id"]}},
+        {"_id": 0, "user_id": 1, "email": 1, "name": 1, "avatar_color": 1, "avatar_b64": 1},
+    ).to_list(500)
+    # Flag which are already friends
+    my_friends = set()
+    async for f in db.friendships.find({"user_id": user["user_id"]}, {"friend_id": 1}):
+        my_friends.add(f.get("friend_id"))
+    out = []
+    for u in rows:
+        out.append({
+            "user_id": u["user_id"],
+            "email": u["email"],
+            "name": u.get("name", ""),
+            "avatar_color": u.get("avatar_color"),
+            "avatar_b64": u.get("avatar_b64"),
+            "is_friend": u["user_id"] in my_friends,
+        })
+    return {"matches": out}
 
 
 @api.post("/friends/add")

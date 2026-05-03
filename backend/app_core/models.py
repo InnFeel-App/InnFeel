@@ -36,7 +36,7 @@ class MusicTrackIn(BaseModel):
 
 
 class InnFeelIn(BaseModel):
-    word: str = Field(min_length=1, max_length=30)
+    word: Optional[str] = Field(default=None, max_length=30)
     emotion: EMOTION_LITERAL
     intensity: int = Field(ge=1, le=10)
     photo_b64: Optional[str] = None  # base64 image

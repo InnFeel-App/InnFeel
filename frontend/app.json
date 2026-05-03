@@ -46,6 +46,12 @@
       "expo-localization",
       "expo-secure-store",
       [
+        "expo-contacts",
+        {
+          "contactsPermission": "Find friends who are already on InnFeel."
+        }
+      ],
+      [
         "expo-notifications",
         {
           "icon": "./assets/images/icon.png",

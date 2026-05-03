@@ -10,6 +10,7 @@ import RadialAura from "../src/components/RadialAura";
 import Button from "../src/components/Button";
 import WellnessSheet from "../src/components/WellnessSheet";
 import { useShareToStories } from "../src/components/ShareToStories";
+import ProBadge from "../src/components/ProBadge";
 import { api } from "../src/api";
 import { useAuth } from "../src/auth";
 import { EMOTION_COLORS, COLORS } from "../src/theme";
@@ -207,13 +208,13 @@ export default function MoodCreate() {
   };
 
   const submit = async () => {
-    if (!word.trim()) { Alert.alert("Add a word", "Describe your mood in one word."); return; }
+    // word is optional — emotion selection is enough
     setLoading(true);
     try {
       await api("/moods", {
         method: "POST",
         body: {
-          word: word.trim(), emotion,
+          word: word.trim() || null, emotion,
           intensity: Math.max(1, Math.min(maxIntensity, intensity)),
           photo_b64: photo, text: pro ? note || null : null,
           audio_b64: pro ? audioB64 : null,
@@ -275,7 +276,7 @@ export default function MoodCreate() {
               })}
             </View>
 
-            <Text style={styles.section}>{t("create.word")}</Text>
+            <Text style={styles.section}>{t("create.word")} · optional</Text>
             <TextInput
               testID="mood-word"
               value={word} onChangeText={setWord}
@@ -284,7 +285,10 @@ export default function MoodCreate() {
               placeholderTextColor="#555" maxLength={30}
             />
 
-            <Text style={styles.section}>{t("create.intensity")} · {intensity}/{maxIntensity}{!pro ? " · Pro ✦ for 1–10" : ""}</Text>
+            <View style={styles.sectionRow}>
+              <Text style={styles.section}>{t("create.intensity")} · {intensity}/{maxIntensity}</Text>
+              {!pro && <ProBadge />}
+            </View>
             <View style={styles.sliderBox}>
               <Slider
                 testID="mood-intensity"
@@ -310,7 +314,10 @@ export default function MoodCreate() {
 
             {pro ? (
               <>
-                <Text style={styles.section}>{t("create.text")} · Pro ✦</Text>
+                <View style={styles.sectionRow}>
+                  <Text style={styles.section}>{t("create.text")}</Text>
+                  <ProBadge />
+                </View>
                 <TextInput
                   testID="mood-note"
                   value={note} onChangeText={setNote}
@@ -318,7 +325,10 @@ export default function MoodCreate() {
                   placeholder="A sentence about how you feel…" placeholderTextColor="#555"
                 />
 
-                <Text style={styles.section}>{t("create.audio")} · Pro ✦ · {MAX_AUDIO_SECONDS}s</Text>
+                <View style={styles.sectionRow}>
+                  <Text style={styles.section}>{t("create.audio")} · {MAX_AUDIO_SECONDS}s</Text>
+                  <ProBadge />
+                </View>
                 <View style={[styles.audioCard, { borderColor: auraColor + "80" }]}>
                   {!audioB64 ? (
                     <TouchableOpacity
@@ -361,7 +371,10 @@ export default function MoodCreate() {
                   )}
                 </View>
 
-                <Text style={styles.section}>Background music · Pro ✦</Text>
+                <View style={styles.sectionRow}>
+                  <Text style={styles.section}>Background music</Text>
+                  <ProBadge />
+                </View>
                 <View style={styles.musicSearchBox}>
                   <Ionicons name="search" size={16} color={COLORS.textTertiary} />
                   <TextInput
@@ -553,4 +566,5 @@ const styles = StyleSheet.create({
   privTxt: { color: COLORS.textSecondary, fontWeight: "600", fontSize: 12 },
   proBadgeSmall: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(250,204,21,0.12)", borderWidth: 1, borderColor: "rgba(250,204,21,0.35)" },
   proBadgeSmallTxt: { color: "#FACC15", fontSize: 9, fontWeight: "700", letterSpacing: 0.5 },
+  sectionRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 24, marginBottom: 10 },
 });

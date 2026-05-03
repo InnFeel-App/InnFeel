@@ -24,14 +24,6 @@ export default function Friends() {
 
   const inviteText = `Hey! I'm on InnFeel — we share our mood once a day in color. Join me: https://innfeel.app ✦${user?.email ? ` (add me: ${user.email})` : ""}`;
 
-  const inviteWhatsApp = async () => {
-    const url = `whatsapp://send?text=${encodeURIComponent(inviteText)}`;
-    const ok = await Linking.canOpenURL(url);
-    if (ok) { Linking.openURL(url); return; }
-    // Fallback to wa.me universal link
-    Linking.openURL(`https://wa.me/?text=${encodeURIComponent(inviteText)}`);
-  };
-
   const inviteGeneric = async () => {
     try { await Share.share({ message: inviteText }); } catch {}
   };
@@ -110,9 +102,9 @@ export default function Friends() {
           <Text style={styles.hint}>Try: luna@innfeel.app · rio@innfeel.app · sage@innfeel.app</Text>
 
           <View style={styles.inviteRow}>
-            <TouchableOpacity testID="invite-whatsapp" onPress={inviteWhatsApp} style={[styles.inviteBtn, { backgroundColor: "#25D366" }]}>
-              <Ionicons name="logo-whatsapp" size={18} color="#fff" />
-              <Text style={styles.inviteTxt}>Invite via WhatsApp</Text>
+            <TouchableOpacity testID="invite-contacts" onPress={() => router.push("/contacts")} style={[styles.inviteBtn, { backgroundColor: "#8B5CF6" }]}>
+              <Ionicons name="people" size={18} color="#fff" />
+              <Text style={styles.inviteTxt}>From contacts</Text>
             </TouchableOpacity>
             <TouchableOpacity testID="invite-share" onPress={inviteGeneric} style={[styles.inviteBtn, { backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: COLORS.border }]}>
               <Ionicons name="share-outline" size={18} color="#fff" />
