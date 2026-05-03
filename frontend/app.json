@@ -57,8 +57,7 @@
         {
           "microphonePermission": "Record a voice note for your daily aura."
         }
-      ],
-      "react-native-purchases"
+      ]
     ],
     "experiments": {
       "typedRoutes": true
