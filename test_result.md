@@ -379,10 +379,148 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Email verification (OTP via Resend) — non-blocking"
+    - "Backend refactor: auth + account split into routes/ modules"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+backend_session12:
+  - task: "Refactor: move /auth/* and /account/* endpoints to /app/backend/routes/"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py, /app/backend/routes/auth.py, /app/backend/routes/account.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Session 12 post-refactor regression COMPLETE via /app/backend_test_session12.py against the public
+            preview URL. Result: 33/33 PASS (100%, target was 95%). The include_router wiring preserves every
+            contract shape verified in session 11.
+
+            AUTH (routes/auth.py) — 8/8 PASS:
+              · POST /auth/login admin@innfeel.app → 200, is_admin:true, email_verified_at populated (seeded).
+              · POST /auth/login luna@innfeel.app → 200.
+              · GET /auth/me → 200 with email_verified_at key.
+              · POST /auth/logout → 200.
+              · POST /auth/register {lang:'fr'} → 200, access_token, user.email_verified_at:null.
+              · POST /auth/send-verification immediately after register → 200 {ok:false, cooldown_seconds:44}
+                (register already queued the first OTP, 45s cooldown active).
+              · POST /auth/verify-email {code:'000000'} → 400 "Incorrect code. 4 attempts left." (exact format).
+              · Patched db.email_verifications.code_hash with sha256("123456") and verified_at timer fresh,
+                then POST /auth/verify-email {code:'123456'} → 200 {ok:true, user:{...email_verified_at:<iso>}}.
+
+            ACCOUNT (routes/account.py) — 3/3 PASS:
+              · POST /account/email as fresh unverified user → 403 "Please verify your current email before
+                changing it." (exact wording).
+              · PATCH /account/profile admin {name:'Admin'} → 200 {ok:true, user:{...}}.
+              · GET /account/export admin → 200 with {exported_at, user, moods, friendships, messages}.
+
+            UNCHANGED ENDPOINTS (still work) — 22/22 PASS:
+              · POST /moods admin fresh → 200 (after DELETE /moods/today).
+              · GET /moods/today → 200.
+              · GET /moods/stats Pro admin → 200 with range_30/90/365 + insights[].
+              · POST /moods/{id}/react → 200 {ok:true, reactions:[...]}.
+              · POST /moods/{id}/comment → 200 {ok:true, comment:{...}}.
+              · GET /friends → 200 (rows include is_close).
+              · POST /friends/add luna → 200 {ok:true, friend:{user_id,name,email,avatar_color}}.
+              · GET /friends/leaderboard → 200 {streak, moods, loved}.
+              · GET /badges → 200.
+              · POST /messages/with/{luna_id} → 200 {ok:true, message:{...}}.
+              · GET /messages/conversations → 200.
+              · POST /messages/{msg_id}/react {emoji:'heart'} → 200.
+              · GET /music/search?q=ocean Pro admin → 200 (14 tracks).
+              · GET /wellness/joy → 200 source=llm.
+              · GET /admin/me admin → {is_admin:true}.
+              · GET /admin/users/search?q=luna → 200 (2 matches).
+              · POST /payments/checkout {} → 200 (checkout.stripe.com URL, origin_url fallback).
+              · GET /iap/status → 200.
+              · POST /iap/sync → 200 (graceful when REVENUECAT_API_KEY unset).
+              · POST /iap/webhook (valid event) → 200.
+              · GET /notifications/prefs → 200.
+              · POST /notifications/prefs → 200.
+
+            CRITICAL CHECK (refactor risk) — backend startup clean:
+              · Fresh supervisor restart: "Application startup complete." No ImportError. No duplicate-route
+                warnings from FastAPI. No references to removed helpers (_issue_verification_code, etc.)
+                outside their new modules. The legacy admin@mooddrop.app migration block is fully removed —
+                no "Removed legacy admin@mooddrop.app" line on fresh boot.
+              · Only expected operational warnings: "REVENUECAT_API_KEY not set — subscriber fetch skipped"
+                and a Spotify 403 (unrelated — /music/search uses Apple iTunes, not Spotify).
+              · NOTE: One test harness adjustment required — admin's pro:false state (leftover from previous
+                test sessions' /admin/revoke-pro calls) was restored via /dev/toggle-pro before running the
+                Pro-only /moods/stats ranges and /music/search checks. NOT a refactor regression — the seeded
+                admin was Pro originally, state pollution from prior grants/revokes, unrelated to routes split.
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Partial backend refactor — extracted auth + account endpoints from server.py (was 2103 lines) into:
+              · /app/backend/routes/auth.py (182 lines): /auth/register, /auth/login, /auth/me, /auth/logout,
+                /auth/send-verification, /auth/verify-email, plus _issue_verification_code helper + OTP config.
+              · /app/backend/routes/account.py (125 lines): /account/profile (PATCH), /account/email (POST),
+                /account DELETE (GDPR), /account/export GET.
+              · server.py now includes these via `api.include_router(auth_router)` / `api.include_router(account_router)`.
+              · server.py trimmed to ~1804 lines (-300).
+            Also cleaned up:
+              · Removed unused imports (os, date, List, Literal, BaseModel, Field, EmailStr, JSONResponse,
+                CheckoutSessionResponse, verify_password, create_access_token, create_refresh_token,
+                set_auth_cookies, RegisterIn, LoginIn, UpdateProfileIn, UpdateEmailIn, DeleteAccountIn,
+                SendVerificationIn, VerifyEmailIn, EMOTION_LITERAL, MusicTrackIn, IAPValidateIn,
+                send_verification_email, EXPO_PUSH_URL).
+              · Removed legacy `admin@mooddrop.app → admin@innfeel.app` migration block (one-way done,
+                no longer needed — the new admin exists everywhere).
+              · Removed deprecated `/music/tracks` legacy empty endpoint (no client references).
+              · Seeded admin and demo users (luna/rio/sage) now also get email_verified_at at startup.
+            Smoke-tested endpoints after refactor — all 200 including the new /auth/send-verification +
+            /auth/verify-email flow. Please run a full regression to confirm nothing regressed.
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Session 12 post-refactor regression COMPLETE — 33/33 PASS (100%, target 95%).
+        Harness: /app/backend_test_session12.py (httpx + motor).
+        Backend URL: https://charming-wescoff-8.preview.emergentagent.com/api.
+        
+        AUTH (moved to routes/auth.py) — all 8 checks pass. Login admin+luna, /auth/me email_verified_at,
+        /auth/logout, /auth/register {lang:'fr'}, /auth/send-verification cooldown, /auth/verify-email
+        bad code 400 "Incorrect code. N attempts left.", /auth/verify-email with DB-patched known hash → 200.
+        
+        ACCOUNT (moved to routes/account.py) — all 3 checks pass. POST /account/email unverified → 403
+        "Please verify your current email before changing it." PATCH /account/profile admin → 200.
+        GET /account/export → 200 with {exported_at,user,moods,friendships,messages}.
+        
+        UNCHANGED ENDPOINTS — all 22 checks pass: /moods (POST/today/stats Pro ranges+insights/react/comment),
+        /friends (list/add/leaderboard), /badges, /messages (with/conversations/react), /music/search Pro,
+        /wellness/joy, /admin/me + /admin/users/search, /payments/checkout, /iap/status+sync+webhook,
+        /notifications/prefs GET+POST.
+        
+        CRITICAL CHECK — PASS: Backend startup clean on fresh supervisorctl restart. No ImportError, no
+        duplicate-route warnings from FastAPI, no references to the removed legacy mooddrop migration. Only
+        expected warnings: RevenueCat key unset + unrelated Spotify 403 (music search uses Apple iTunes).
+        
+        HARNESS NOTE: Admin's db state had pro:false from previous session's /admin/revoke-pro pollution
+        (not a refactor bug). Harness now self-heals via /dev/toggle-pro to restore Pro before Pro-only
+        checks. No backend code was modified by the testing agent.
+        
+        backend_test_session12:
+  - task: "Refactor regression sanity pass (session 12)"
+    implemented: true
+    working: true
+    file: "/app/backend_test_session12.py"
+    status: "33/33 PASS — include_router setup preserves every session-11 contract shape."
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Session 12: Partial backend refactor complete.
+          · /auth/* and /account/* endpoints moved to /app/backend/routes/auth.py and account.py.
+          · Obsolete code removed: legacy admin@mooddrop migration, /music/tracks stub, ~20 unused imports.
+          · server.py 2103 → 1804 lines (-14%).
+        Please run the same regression from session 11 (email verification + broad sanity sweep) to confirm
+        the include_router setup preserves all contracts. Admin creds: admin@innfeel.app / admin123.
+        Demo: luna@innfeel.app / demo1234.
 
 backend_session11:
   - task: "Email verification (OTP via Resend) — non-blocking"

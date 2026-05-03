@@ -4,20 +4,16 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
-import os
 import uuid
 import logging
 import json
 import hashlib
-from datetime import datetime, timezone, timedelta, date
-from typing import List, Optional, Literal
+from datetime import datetime, timezone, timedelta
+from typing import Optional
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, Body
-from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, EmailStr
 from emergentintegrations.payments.stripe.checkout import (
     StripeCheckout,
-    CheckoutSessionResponse,
     CheckoutStatusResponse,
     CheckoutSessionRequest,
 )
@@ -26,26 +22,22 @@ from emergentintegrations.llm.chat import LlmChat, UserMessage
 # Shared infrastructure (moved out of this file for maintainability)
 from app_core.config import (
     STRIPE_API_KEY, EMERGENT_LLM_KEY,
-    JWT_SECRET, JWT_ALGORITHM, ACCESS_TOKEN_TTL_MINUTES, REFRESH_TOKEN_TTL_DAYS,
 )
 from app_core.constants import EMOTIONS, PRO_PRICE_USD
 from app_core.db import client, db
 from app_core.deps import (
     now_utc, today_key,
-    hash_password, verify_password,
-    create_access_token, create_refresh_token, set_auth_cookies,
+    hash_password,
     get_current_user, is_pro, sanitize_user,
 )
 from app_core.models import (
-    RegisterIn, LoginIn, EMOTION_LITERAL, MusicTrackIn, InnFeelIn,
+    InnFeelIn,
     AvatarIn, ReactionIn, CommentIn, MessageIn, AddFriendIn,
     CheckoutIn, AdminGrantProIn, AdminRevokeProIn,
-    PushTokenIn, NotifPrefsIn, IAPValidateIn,
-    UpdateProfileIn, UpdateEmailIn, DeleteAccountIn, MessageReactIn,
-    SendVerificationIn, VerifyEmailIn,
+    PushTokenIn, NotifPrefsIn,
+    MessageReactIn,
 )
-from app_core.push import send_push, EXPO_PUSH_URL
-from app_core.email import send_verification_email
+from app_core.push import send_push
 
 app = FastAPI(title="InnFeel API")
 api = APIRouter(prefix="/api")
@@ -76,25 +68,6 @@ async def startup():
     # Email verification tokens — TTL index for auto-cleanup
     await db.email_verifications.create_index("user_id")
     await db.email_verifications.create_index("expires_at", expireAfterSeconds=0)
-    # one-time migration: rename legacy admin@mooddrop.app → admin@innfeel.app
-    # Order-safe: if BOTH rows exist, delete the legacy one first (no rename).
-    legacy_admin = await db.users.find_one({"email": "admin@mooddrop.app"})
-    if legacy_admin:
-        new_admin_exists = await db.users.find_one({"email": "admin@innfeel.app"})
-        if new_admin_exists:
-            await db.users.delete_one({"user_id": legacy_admin["user_id"]})
-            logger.info("Removed legacy admin@mooddrop.app (already migrated)")
-        else:
-            try:
-                await db.users.update_one(
-                    {"user_id": legacy_admin["user_id"]},
-                    {"$set": {"email": "admin@innfeel.app"}},
-                )
-                logger.info("Migrated admin@mooddrop.app → admin@innfeel.app")
-            except Exception as e:
-                # If a duplicate appeared between read and write, drop legacy and continue.
-                logger.warning(f"Migration rename hit a race ({e}); deleting legacy row.")
-                await db.users.delete_one({"user_id": legacy_admin["user_id"]})
 
     # seed demo admin
     existing = await db.users.find_one({"email": "admin@innfeel.app"})
@@ -146,280 +119,14 @@ async def startup():
             await db.users.update_one({"email": email}, {"$set": {"email_verified_at": now_utc()}})
 
 
-# =========================================================================
-# Auth endpoints
-# =========================================================================
-@api.post("/auth/register")
-async def register(data: RegisterIn, response: Response):
-    email = data.email.lower()
-    if await db.users.find_one({"email": email}):
-        raise HTTPException(status_code=400, detail="Email already registered")
-    uid = f"user_{uuid.uuid4().hex[:12]}"
-    colors = ["#60A5FA", "#FDE047", "#F472B6", "#A78BFA", "#2DD4BF", "#34D399", "#F97316"]
-    doc = {
-        "user_id": uid,
-        "email": email,
-        "password_hash": hash_password(data.password),
-        "name": data.name.strip(),
-        "avatar_color": colors[uuid.uuid4().int % len(colors)],
-        "pro": False,
-        "friend_count": 0,
-        "streak": 0,
-        "created_at": now_utc(),
-        # Legal acceptance trace (GDPR proof of consent)
-        "terms_accepted_at": now_utc() if bool(data.terms_accepted) else None,
-        "terms_version": "2025-06-01" if bool(data.terms_accepted) else None,
-    }
-    await db.users.insert_one(doc)
-    access = create_access_token(uid, email)
-    refresh = create_refresh_token(uid)
-    set_auth_cookies(response, access, refresh)
-    # Fire off the first verification email (non-blocking UX — failures don't block registration)
-    try:
-        await _issue_verification_code(doc, lang=(data.lang or "en").lower()[:2])
-    except Exception as e:
-        logger.warning(f"Initial verification email failed for {email}: {e}")
-    return {"user": sanitize_user(doc), "access_token": access, "refresh_token": refresh}
-
-
-@api.post("/auth/login")
-async def login(data: LoginIn, response: Response):
-    email = data.email.lower()
-    user = await db.users.find_one({"email": email})
-    if not user or not verify_password(data.password, user["password_hash"]):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-    access = create_access_token(user["user_id"], email)
-    refresh = create_refresh_token(user["user_id"])
-    set_auth_cookies(response, access, refresh)
-    return {"user": sanitize_user(user), "access_token": access, "refresh_token": refresh}
-
-
-@api.get("/auth/me")
-async def me(user: dict = Depends(get_current_user)):
-    return sanitize_user(user)
-
-
-@api.post("/auth/logout")
-async def logout(response: Response):
-    response.delete_cookie("access_token", path="/")
-    response.delete_cookie("refresh_token", path="/")
-    return {"ok": True}
-
 
 # =========================================================================
-# Email verification — non-blocking OTP via Resend (6-digit, 10 min TTL, 5 tries)
+# Auth + Account endpoints — extracted to /app/backend/routes/auth.py & account.py
 # =========================================================================
-import secrets
-
-VERIF_CODE_TTL_MIN = 10
-VERIF_MAX_ATTEMPTS = 5
-VERIF_RESEND_COOLDOWN_SEC = 45
-
-
-def _gen_otp() -> str:
-    """Cryptographically random 6-digit code."""
-    return f"{secrets.randbelow(10**6):06d}"
-
-
-def _hash_code(code: str) -> str:
-    return hashlib.sha256(code.encode("utf-8")).hexdigest()
-
-
-async def _issue_verification_code(user: dict, lang: str = "en") -> tuple[bool, Optional[int]]:
-    """Generate & store a new OTP, then send it via Resend.
-
-    Returns (sent_ok, cooldown_remaining_seconds). If the previous code is
-    still within cooldown, returns (False, seconds_left) without resending.
-    """
-    now = now_utc()
-    existing = await db.email_verifications.find_one({"user_id": user["user_id"]})
-    if existing:
-        last_sent = existing.get("last_sent_at")
-        if isinstance(last_sent, datetime):
-            if last_sent.tzinfo is None:
-                last_sent = last_sent.replace(tzinfo=timezone.utc)
-            elapsed = (now - last_sent).total_seconds()
-            if elapsed < VERIF_RESEND_COOLDOWN_SEC:
-                return False, int(VERIF_RESEND_COOLDOWN_SEC - elapsed)
-    code = _gen_otp()
-    doc = {
-        "user_id": user["user_id"],
-        "email": user["email"],
-        "code_hash": _hash_code(code),
-        "attempts": 0,
-        "expires_at": now + timedelta(minutes=VERIF_CODE_TTL_MIN),
-        "last_sent_at": now,
-        "lang": lang,
-    }
-    await db.email_verifications.update_one(
-        {"user_id": user["user_id"]},
-        {"$set": doc},
-        upsert=True,
-    )
-    try:
-        ok = await send_verification_email(user["email"], code, name=user.get("name", ""), lang=lang)
-    except Exception as e:
-        logger.warning(f"send_verification_email raised: {e}")
-        ok = False
-    if not ok:
-        logger.warning(f"[dev] Verification code for {user['email']}: {code}")
-    return ok, None
-
-
-@api.post("/auth/send-verification")
-async def send_verification(data: SendVerificationIn, user: dict = Depends(get_current_user)):
-    """(Re)send the 6-digit verification code to the authenticated user's email."""
-    if user.get("email_verified_at"):
-        return {"ok": True, "already_verified": True}
-    lang = (data.lang or "en").lower()[:2]
-    sent, cooldown = await _issue_verification_code(user, lang=lang)
-    if cooldown:
-        return {"ok": False, "cooldown_seconds": cooldown}
-    return {"ok": True, "sent": sent, "cooldown_seconds": VERIF_RESEND_COOLDOWN_SEC}
-
-
-@api.post("/auth/verify-email")
-async def verify_email(data: VerifyEmailIn, user: dict = Depends(get_current_user)):
-    """Check an OTP and mark the email verified if it matches."""
-    if user.get("email_verified_at"):
-        return {"ok": True, "already_verified": True, "user": sanitize_user(user)}
-    row = await db.email_verifications.find_one({"user_id": user["user_id"]})
-    if not row:
-        raise HTTPException(status_code=400, detail="No pending verification. Request a new code.")
-    exp = row.get("expires_at")
-    if isinstance(exp, datetime):
-        if exp.tzinfo is None:
-            exp = exp.replace(tzinfo=timezone.utc)
-        if exp < now_utc():
-            await db.email_verifications.delete_one({"user_id": user["user_id"]})
-            raise HTTPException(status_code=400, detail="Code expired. Request a new one.")
-    if int(row.get("attempts", 0)) >= VERIF_MAX_ATTEMPTS:
-        await db.email_verifications.delete_one({"user_id": user["user_id"]})
-        raise HTTPException(status_code=429, detail="Too many attempts. Request a new code.")
-    submitted = (data.code or "").strip().replace(" ", "").replace("-", "")
-    if _hash_code(submitted) != row.get("code_hash"):
-        await db.email_verifications.update_one(
-            {"user_id": user["user_id"]}, {"$inc": {"attempts": 1}}
-        )
-        remaining = max(0, VERIF_MAX_ATTEMPTS - int(row.get("attempts", 0)) - 1)
-        raise HTTPException(status_code=400, detail=f"Incorrect code. {remaining} attempts left.")
-    await db.users.update_one(
-        {"user_id": user["user_id"]},
-        {"$set": {"email_verified_at": now_utc()}},
-    )
-    await db.email_verifications.delete_one({"user_id": user["user_id"]})
-    fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0, "password_hash": 0})
-    return {"ok": True, "user": sanitize_user(fresh)}
-
-
-# =========================================================================
-# Account management — edit name, email, delete account + all data (GDPR)
-# =========================================================================
-@api.patch("/account/profile")
-async def update_profile(data: UpdateProfileIn, user: dict = Depends(get_current_user)):
-    """Update the user's display name (pseudo). Email changes go through /account/email."""
-    update: dict = {}
-    if data.name is not None:
-        name = data.name.strip()
-        if not name:
-            raise HTTPException(status_code=400, detail="Name cannot be empty")
-        update["name"] = name
-    if not update:
-        return {"ok": True, "user": sanitize_user(user)}
-    await db.users.update_one({"user_id": user["user_id"]}, {"$set": update})
-    fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0, "password_hash": 0})
-    return {"ok": True, "user": sanitize_user(fresh)}
-
-
-@api.post("/account/email")
-async def update_email(data: UpdateEmailIn, user: dict = Depends(get_current_user)):
-    """Change email. Requires current password for security."""
-    # Require the user to first verify their current email before they can change it.
-    # Keeps the flow non-blocking for general usage, but prevents address hopping.
-    if not user.get("email_verified_at"):
-        raise HTTPException(status_code=403, detail="Please verify your current email before changing it.")
-    current = await db.users.find_one({"user_id": user["user_id"]})
-    if not current or not verify_password(data.password, current.get("password_hash", "")):
-        raise HTTPException(status_code=401, detail="Incorrect password")
-    new_email = data.new_email.lower().strip()
-    if new_email == current.get("email", "").lower():
-        return {"ok": True, "user": sanitize_user(current)}
-    existing = await db.users.find_one({"email": new_email})
-    if existing and existing.get("user_id") != user["user_id"]:
-        raise HTTPException(status_code=409, detail="This email is already in use")
-    # Reset verification status — the NEW email needs to be verified.
-    await db.users.update_one(
-        {"user_id": user["user_id"]},
-        {"$set": {"email": new_email, "email_verified_at": None}},
-    )
-    await db.email_verifications.delete_many({"user_id": user["user_id"]})
-    fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0, "password_hash": 0})
-    return {"ok": True, "user": sanitize_user(fresh)}
-
-
-@api.delete("/account")
-async def delete_account(data: DeleteAccountIn, response: Response, user: dict = Depends(get_current_user)):
-    """GDPR-compliant hard-delete of all user data.
-
-    Requires password + typing "DELETE" as confirmation. Removes:
-      users row · moods · reactions on own moods · comments · messages · conversations ·
-      friendships (symmetric) · activity · iap_events · push_token · close_friends
-    """
-    current = await db.users.find_one({"user_id": user["user_id"]})
-    if not current or not verify_password(data.password, current.get("password_hash", "")):
-        raise HTTPException(status_code=401, detail="Incorrect password")
-    uid = user["user_id"]
-
-    # Delete owned data
-    await db.moods.delete_many({"user_id": uid})
-    await db.messages.delete_many({"$or": [{"sender_id": uid}, {"recipient_id": uid}]})
-    await db.conversations.delete_many({"participants": uid})
-    await db.friendships.delete_many({"$or": [{"user_id": uid}, {"friend_id": uid}]})
-    await db.activity.delete_many({"$or": [{"user_id": uid}, {"actor_id": uid}]})
-    await db.iap_events.delete_many({"app_user_id": uid})
-    # Remove reactions / comments this user made on other people's moods
-    await db.moods.update_many({}, {"$pull": {"reactions": {"user_id": uid}}})
-    await db.moods.update_many({}, {"$pull": {"comments": {"user_id": uid}}})
-    # Finally remove the user document
-    await db.users.delete_one({"user_id": uid})
-
-    # Clear auth cookies
-    response.delete_cookie("access_token", path="/")
-    response.delete_cookie("refresh_token", path="/")
-    logger.info(f"Account deleted (GDPR) for user_id={uid}")
-    return {"ok": True, "deleted": True}
-
-
-@api.get("/account/export")
-async def export_account(user: dict = Depends(get_current_user)):
-    """GDPR Article 20 — data portability. Returns the user's data as JSON."""
-    uid = user["user_id"]
-    u = await db.users.find_one({"user_id": uid}, {"_id": 0, "password_hash": 0})
-    if u and isinstance(u.get("created_at"), datetime):
-        u["created_at"] = u["created_at"].isoformat()
-    if u and isinstance(u.get("pro_expires_at"), datetime):
-        u["pro_expires_at"] = u["pro_expires_at"].isoformat()
-
-    def _ser(rows):
-        out = []
-        for r in rows:
-            r.pop("_id", None)
-            for k, v in list(r.items()):
-                if isinstance(v, datetime):
-                    r[k] = v.isoformat()
-            out.append(r)
-        return out
-
-    moods = _ser(await db.moods.find({"user_id": uid}).to_list(10000))
-    friendships = _ser(await db.friendships.find({"user_id": uid}).to_list(5000))
-    messages = _ser(await db.messages.find({"$or": [{"sender_id": uid}, {"recipient_id": uid}]}).to_list(50000))
-    return {
-        "exported_at": now_utc().isoformat(),
-        "user": u,
-        "moods": moods,
-        "friendships": friendships,
-        "messages": messages,
-    }
+from routes.auth import router as auth_router
+from routes.account import router as account_router
+api.include_router(auth_router)
+api.include_router(account_router)
 
 
 # =========================================================================
@@ -1071,12 +778,6 @@ async def music_search(q: str, user: dict = Depends(get_current_user)):
                     seen.add(key)
                     merged.append(t)
     return {"tracks": merged[:20]}
-
-
-# Backward-compat: old endpoint returns empty tracks so legacy clients don't crash
-@api.get("/music/tracks")
-async def music_tracks_legacy(user: dict = Depends(get_current_user)):
-    return {"tracks": []}
 
 
 @api.post("/profile/avatar")
