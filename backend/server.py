@@ -41,7 +41,7 @@ from app_core.models import (
     AvatarIn, ReactionIn, CommentIn, MessageIn, AddFriendIn,
     CheckoutIn, AdminGrantProIn, AdminRevokeProIn,
     PushTokenIn, NotifPrefsIn, IAPValidateIn,
-    UpdateProfileIn, UpdateEmailIn, DeleteAccountIn,
+    UpdateProfileIn, UpdateEmailIn, DeleteAccountIn, MessageReactIn,
 )
 from app_core.push import send_push, EXPO_PUSH_URL
 
@@ -157,6 +157,9 @@ async def register(data: RegisterIn, response: Response):
         "friend_count": 0,
         "streak": 0,
         "created_at": now_utc(),
+        # Legal acceptance trace (GDPR proof of consent)
+        "terms_accepted_at": now_utc() if bool(data.terms_accepted) else None,
+        "terms_version": "2025-06-01" if bool(data.terms_accepted) else None,
     }
     await db.users.insert_one(doc)
     access = create_access_token(uid, email)
@@ -1303,6 +1306,10 @@ async def send_message(peer_id: str, data: MessageIn, user: dict = Depends(get_c
     fship = await db.friendships.find_one({"user_id": user["user_id"], "friend_id": peer_id})
     if not fship:
         raise HTTPException(status_code=403, detail="Not friends")
+    text = (data.text or "").strip()
+    # Must have at least one kind of content
+    if not text and not data.photo_b64 and not data.audio_b64:
+        raise HTTPException(status_code=400, detail="Empty message")
     cid = _conv_id(user["user_id"], peer_id)
     now = now_utc()
     msg = {
@@ -1310,17 +1317,23 @@ async def send_message(peer_id: str, data: MessageIn, user: dict = Depends(get_c
         "conversation_id": cid,
         "sender_id": user["user_id"],
         "sender_name": user.get("name", ""),
-        "text": data.text.strip(),
+        "text": text,
+        "photo_b64": data.photo_b64,
+        "audio_b64": data.audio_b64,
+        "audio_seconds": data.audio_seconds,
+        "reactions": [],
         "at": now.isoformat(),
     }
     await db.messages.insert_one(dict(msg))
+    # last_text preview: prefer text, else hint at media
+    preview = text[:200] if text else ("📷 Photo" if data.photo_b64 else "🎙 Voice note")
     await db.conversations.update_one(
         {"conversation_id": cid},
         {
             "$set": {
                 "conversation_id": cid,
                 "participants": sorted([user["user_id"], peer_id]),
-                "last_text": data.text.strip()[:200],
+                "last_text": preview,
                 "last_at": now.isoformat(),
             },
             "$inc": {f"unread.{peer_id}": 1},
@@ -1328,14 +1341,63 @@ async def send_message(peer_id: str, data: MessageIn, user: dict = Depends(get_c
         upsert=True,
     )
     # Push notification to the recipient
+    push_body = text[:120] if text else ("Sent you a photo" if data.photo_b64 else "Sent you a voice note")
     await send_push(
         peer_id, "message",
         f"{user.get('name', 'Someone')} sent you a message",
-        data.text.strip()[:120],
+        push_body,
         {"route": "/conversation", "peer_id": user["user_id"], "kind": "message"},
     )
     msg.pop("_id", None)
     return {"ok": True, "message": msg}
+
+
+@api.post("/messages/{message_id}/react")
+async def react_message(message_id: str, data: MessageReactIn, user: dict = Depends(get_current_user)):
+    """Toggle a reaction (heart/thumb/fire/laugh/wow/sad) on a DM. Insta-style: one reaction per user per emoji — sending the same again removes it."""
+    msg = await db.messages.find_one({"message_id": message_id})
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    # Must be a participant
+    parts = (msg.get("conversation_id") or "").split(":")  # "conv:uidA:uidB"
+    if user["user_id"] not in [msg.get("sender_id")] + parts[1:]:
+        # fallback: allow if they're in the sorted participants list on the conversation
+        conv = await db.conversations.find_one({"conversation_id": msg.get("conversation_id")})
+        if not conv or user["user_id"] not in conv.get("participants", []):
+            raise HTTPException(status_code=403, detail="Not a participant")
+    existing = [r for r in (msg.get("reactions") or []) if r.get("user_id") == user["user_id"]]
+    already_same = any(r.get("emoji") == data.emoji for r in existing)
+    if already_same:
+        # Toggle off
+        await db.messages.update_one(
+            {"message_id": message_id},
+            {"$pull": {"reactions": {"user_id": user["user_id"], "emoji": data.emoji}}},
+        )
+    else:
+        # Replace any previous reaction from this user with the new one (Insta-style)
+        await db.messages.update_one(
+            {"message_id": message_id},
+            {"$pull": {"reactions": {"user_id": user["user_id"]}}},
+        )
+        await db.messages.update_one(
+            {"message_id": message_id},
+            {"$push": {"reactions": {
+                "user_id": user["user_id"],
+                "name": user.get("name", ""),
+                "emoji": data.emoji,
+                "at": now_utc().isoformat(),
+            }}},
+        )
+        # Push notification to the OTHER participant (the message sender, if it wasn't us)
+        if msg.get("sender_id") and msg["sender_id"] != user["user_id"]:
+            await send_push(
+                msg["sender_id"], "message",
+                f"{user.get('name', 'Someone')} reacted to your message",
+                f"{data.emoji}",
+                {"route": "/conversation", "peer_id": user["user_id"], "kind": "message"},
+            )
+    fresh = await db.messages.find_one({"message_id": message_id}, {"_id": 0, "reactions": 1})
+    return {"ok": True, "reactions": fresh.get("reactions", []) if fresh else []}
 
 
 # =========================================================================

@@ -7,6 +7,7 @@ class RegisterIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
     name: str = Field(min_length=1, max_length=40)
+    terms_accepted: Optional[bool] = None
 
 
 class LoginIn(BaseModel):
@@ -59,7 +60,14 @@ class CommentIn(BaseModel):
 
 
 class MessageIn(BaseModel):
-    text: str = Field(min_length=1, max_length=1000)
+    text: Optional[str] = Field(default=None, max_length=1000)
+    photo_b64: Optional[str] = None  # base64-encoded image (optional)
+    audio_b64: Optional[str] = None  # base64-encoded audio (optional)
+    audio_seconds: Optional[int] = Field(default=None, ge=1, le=60)
+
+
+class MessageReactIn(BaseModel):
+    emoji: Literal["heart", "thumb", "fire", "laugh", "wow", "sad"]
 
 
 class AddFriendIn(BaseModel):

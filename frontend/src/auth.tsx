@@ -62,10 +62,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(res.user);
   };
 
-  const register = async (name: string, email: string, password: string) => {
+  const register = async (name: string, email: string, password: string, opts?: { termsAccepted?: boolean }) => {
     const res = await api<{ user: User; access_token: string }>("/auth/register", {
       method: "POST",
-      body: { name, email, password },
+      body: { name, email, password, terms_accepted: !!opts?.termsAccepted },
     });
     await saveToken(res.access_token);
     setUser(res.user);
