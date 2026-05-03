@@ -31,7 +31,7 @@ export default function Register() {
     setLoading(true);
     try {
       await register(name.trim(), email.trim(), password, { termsAccepted: true });
-      router.replace("/(tabs)/home");
+      router.replace("/(auth)/verify-email?skipSend=1");
     } catch (e: any) {
       setErr(e.message || "Sign up failed");
     } finally {

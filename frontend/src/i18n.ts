@@ -708,6 +708,125 @@ const ar: Dict = {
 };
 
 const LOCALES: Record<LocaleCode, Dict> = { en, fr, es, it, de, pt, ar };
+
+// --- Email verification (OTP) translations — merged into each dict at load ---
+const VERIFY_I18N: Record<LocaleCode, Dict> = {
+  en: {
+    "verify.title": "Verify your email",
+    "verify.subtitle": "We sent a 6-digit code to {email}. Enter it below to confirm.",
+    "verify.placeholder": "6-digit code",
+    "verify.verify": "Verify",
+    "verify.resend": "Send the code again",
+    "verify.resendIn": "You can resend in {sec}s",
+    "verify.sent": "Code sent ✦ check your inbox",
+    "verify.success": "Email verified ✨",
+    "verify.expiresIn": "Expires in {mm}:{ss}",
+    "verify.later": "Not now",
+    "verify.hint": "Check your spam folder if you don't see the email.",
+    "home.verifyBanner.title": "Verify your email",
+    "home.verifyBanner.sub": "Tap to enter the 6-digit code we sent",
+    "home.verifyBanner.cta": "Verify",
+  },
+  fr: {
+    "verify.title": "Vérifie ton e-mail",
+    "verify.subtitle": "Nous avons envoyé un code à 6 chiffres à {email}. Saisis-le ci-dessous pour confirmer.",
+    "verify.placeholder": "Code à 6 chiffres",
+    "verify.verify": "Vérifier",
+    "verify.resend": "Renvoyer le code",
+    "verify.resendIn": "Renvoi possible dans {sec}s",
+    "verify.sent": "Code envoyé ✦ vérifie ta boîte",
+    "verify.success": "E-mail vérifié ✨",
+    "verify.expiresIn": "Expire dans {mm}:{ss}",
+    "verify.later": "Plus tard",
+    "verify.hint": "Pense à regarder tes spams si tu ne vois pas l'e-mail.",
+    "home.verifyBanner.title": "Vérifie ton e-mail",
+    "home.verifyBanner.sub": "Touche pour saisir le code à 6 chiffres envoyé",
+    "home.verifyBanner.cta": "Vérifier",
+  },
+  es: {
+    "verify.title": "Verifica tu correo",
+    "verify.subtitle": "Enviamos un código de 6 dígitos a {email}. Introdúcelo abajo para confirmar.",
+    "verify.placeholder": "Código de 6 dígitos",
+    "verify.verify": "Verificar",
+    "verify.resend": "Volver a enviar el código",
+    "verify.resendIn": "Podrás reenviarlo en {sec}s",
+    "verify.sent": "Código enviado ✦ revisa tu bandeja",
+    "verify.success": "Correo verificado ✨",
+    "verify.expiresIn": "Caduca en {mm}:{ss}",
+    "verify.later": "Más tarde",
+    "verify.hint": "Revisa tu carpeta de spam si no lo ves.",
+    "home.verifyBanner.title": "Verifica tu correo",
+    "home.verifyBanner.sub": "Toca para introducir el código de 6 dígitos",
+    "home.verifyBanner.cta": "Verificar",
+  },
+  it: {
+    "verify.title": "Verifica la tua email",
+    "verify.subtitle": "Abbiamo inviato un codice a 6 cifre a {email}. Inseriscilo qui sotto per confermare.",
+    "verify.placeholder": "Codice a 6 cifre",
+    "verify.verify": "Verifica",
+    "verify.resend": "Invia di nuovo il codice",
+    "verify.resendIn": "Puoi rinviare tra {sec}s",
+    "verify.sent": "Codice inviato ✦ controlla la casella",
+    "verify.success": "Email verificata ✨",
+    "verify.expiresIn": "Scade tra {mm}:{ss}",
+    "verify.later": "Più tardi",
+    "verify.hint": "Controlla la cartella spam se non lo vedi.",
+    "home.verifyBanner.title": "Verifica la tua email",
+    "home.verifyBanner.sub": "Tocca per inserire il codice a 6 cifre",
+    "home.verifyBanner.cta": "Verifica",
+  },
+  de: {
+    "verify.title": "Bestätige deine E-Mail",
+    "verify.subtitle": "Wir haben einen 6-stelligen Code an {email} gesendet. Gib ihn unten ein, um zu bestätigen.",
+    "verify.placeholder": "6-stelliger Code",
+    "verify.verify": "Bestätigen",
+    "verify.resend": "Code erneut senden",
+    "verify.resendIn": "Erneut senden in {sec}s",
+    "verify.sent": "Code gesendet ✦ prüfe dein Postfach",
+    "verify.success": "E-Mail bestätigt ✨",
+    "verify.expiresIn": "Läuft ab in {mm}:{ss}",
+    "verify.later": "Später",
+    "verify.hint": "Schau auch in deinen Spam-Ordner.",
+    "home.verifyBanner.title": "E-Mail bestätigen",
+    "home.verifyBanner.sub": "Tippe, um den 6-stelligen Code einzugeben",
+    "home.verifyBanner.cta": "Bestätigen",
+  },
+  pt: {
+    "verify.title": "Verifica o teu email",
+    "verify.subtitle": "Enviámos um código de 6 dígitos para {email}. Insere-o abaixo para confirmar.",
+    "verify.placeholder": "Código de 6 dígitos",
+    "verify.verify": "Verificar",
+    "verify.resend": "Enviar o código novamente",
+    "verify.resendIn": "Podes reenviar em {sec}s",
+    "verify.sent": "Código enviado ✦ vê a tua caixa",
+    "verify.success": "Email verificado ✨",
+    "verify.expiresIn": "Expira em {mm}:{ss}",
+    "verify.later": "Mais tarde",
+    "verify.hint": "Vê a pasta de spam se não vires o email.",
+    "home.verifyBanner.title": "Verifica o teu email",
+    "home.verifyBanner.sub": "Toca para inserir o código de 6 dígitos",
+    "home.verifyBanner.cta": "Verificar",
+  },
+  ar: {
+    "verify.title": "تأكيد بريدك الإلكتروني",
+    "verify.subtitle": "أرسلنا رمزًا من 6 أرقام إلى {email}. أدخله أدناه للتأكيد.",
+    "verify.placeholder": "رمز من 6 أرقام",
+    "verify.verify": "تأكيد",
+    "verify.resend": "إعادة إرسال الرمز",
+    "verify.resendIn": "يمكنك إعادة الإرسال بعد {sec} ثانية",
+    "verify.sent": "تم إرسال الرمز ✦ تحقق من بريدك",
+    "verify.success": "تم تأكيد البريد ✨",
+    "verify.expiresIn": "ينتهي خلال {mm}:{ss}",
+    "verify.later": "لاحقًا",
+    "verify.hint": "تحقق من مجلد الرسائل غير المرغوب فيها إذا لم تجد الرسالة.",
+    "home.verifyBanner.title": "تأكيد بريدك الإلكتروني",
+    "home.verifyBanner.sub": "اضغط لإدخال الرمز المكوّن من 6 أرقام",
+    "home.verifyBanner.cta": "تأكيد",
+  },
+};
+for (const code of Object.keys(VERIFY_I18N) as LocaleCode[]) {
+  Object.assign(LOCALES[code], VERIFY_I18N[code]);
+}
 const RTL_LOCALES: LocaleCode[] = ["ar"];
 const SUPPORTED: LocaleCode[] = ["en", "fr", "es", "it", "de", "pt", "ar"];
 
@@ -765,10 +884,25 @@ export async function setLocaleOverride(code: LocaleCode | null): Promise<void> 
   notifyChange();
 }
 
-export function t(key: string, fallback?: string): string {
+export function t(key: string, fallbackOrParams?: string | Record<string, string | number>, maybeParams?: Record<string, string | number>): string {
   const loc = currentLocale();
   const dict = LOCALES[loc] || en;
-  return dict[key] || en[key] || fallback || key;
+  // Support both t(key) / t(key, fallback) / t(key, params) / t(key, fallback, params)
+  let fallback: string | undefined;
+  let params: Record<string, string | number> | undefined;
+  if (typeof fallbackOrParams === "string") {
+    fallback = fallbackOrParams;
+    params = maybeParams;
+  } else if (fallbackOrParams && typeof fallbackOrParams === "object") {
+    params = fallbackOrParams;
+  }
+  let out = dict[key] || en[key] || fallback || key;
+  if (params) {
+    for (const k of Object.keys(params)) {
+      out = out.replace(new RegExp(`\\{${k}\\}`, "g"), String(params[k]));
+    }
+  }
+  return out;
 }
 
 /** React hook — re-renders components when the locale changes. */

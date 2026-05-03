@@ -8,11 +8,20 @@ class RegisterIn(BaseModel):
     password: str = Field(min_length=6)
     name: str = Field(min_length=1, max_length=40)
     terms_accepted: Optional[bool] = None
+    lang: Optional[str] = Field(default=None, max_length=5)
 
 
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
+
+
+class SendVerificationIn(BaseModel):
+    lang: Optional[str] = Field(default=None, max_length=5)
+
+
+class VerifyEmailIn(BaseModel):
+    code: str = Field(min_length=4, max_length=10)
 
 
 EMOTION_LITERAL = Literal[

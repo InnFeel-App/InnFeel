@@ -122,6 +122,27 @@ export default function Home() {
             </View>
           </View>
 
+          {user && !user.email_verified_at ? (
+            <TouchableOpacity
+              testID="verify-banner"
+              onPress={() => router.push("/(auth)/verify-email")}
+              activeOpacity={0.85}
+              style={styles.verifyBanner}
+            >
+              <View style={styles.verifyIcon}>
+                <Ionicons name="mail-unread-outline" size={18} color="#A78BFA" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.verifyTitle}>{t("home.verifyBanner.title")}</Text>
+                <Text style={styles.verifySub}>{t("home.verifyBanner.sub")}</Text>
+              </View>
+              <View style={styles.verifyCta}>
+                <Text style={styles.verifyCtaTxt}>{t("home.verifyBanner.cta")}</Text>
+                <Ionicons name="chevron-forward" size={14} color="#050505" />
+              </View>
+            </TouchableOpacity>
+          ) : null}
+
           {!todayMood ? (
             <View style={styles.cta}>
               <Text style={styles.ctaTitle}>{t("home.dropToday")}</Text>
@@ -262,4 +283,22 @@ const styles = StyleSheet.create({
   shareBtnTxt: { color: "#fff", fontSize: 12, fontWeight: "600" },
   locked: { padding: 24, borderRadius: 24, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)", alignItems: "center" },
   lockedTxt: { color: COLORS.textSecondary, fontSize: 14, textAlign: "center", marginTop: 8 },
+  verifyBanner: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    paddingVertical: 12, paddingHorizontal: 14, borderRadius: 18,
+    borderWidth: 1, borderColor: "rgba(167,139,250,0.35)",
+    backgroundColor: "rgba(167,139,250,0.10)",
+    marginBottom: 16,
+  },
+  verifyIcon: {
+    width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center",
+    backgroundColor: "rgba(167,139,250,0.22)",
+  },
+  verifyTitle: { color: "#fff", fontWeight: "700", fontSize: 13 },
+  verifySub: { color: COLORS.textSecondary, fontSize: 11, marginTop: 2 },
+  verifyCta: {
+    flexDirection: "row", alignItems: "center", gap: 3,
+    backgroundColor: "#fff", paddingHorizontal: 10, paddingVertical: 7, borderRadius: 999,
+  },
+  verifyCtaTxt: { color: "#050505", fontWeight: "800", fontSize: 12 },
 });

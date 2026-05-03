@@ -42,8 +42,10 @@ from app_core.models import (
     CheckoutIn, AdminGrantProIn, AdminRevokeProIn,
     PushTokenIn, NotifPrefsIn, IAPValidateIn,
     UpdateProfileIn, UpdateEmailIn, DeleteAccountIn, MessageReactIn,
+    SendVerificationIn, VerifyEmailIn,
 )
 from app_core.push import send_push, EXPO_PUSH_URL
+from app_core.email import send_verification_email
 
 app = FastAPI(title="InnFeel API")
 api = APIRouter(prefix="/api")
@@ -71,6 +73,9 @@ async def startup():
     await db.wellness_cache.create_index([("user_id", 1), ("emotion", 1), ("day_key", 1)], unique=True)
     await db.activity.create_index([("user_id", 1), ("at", -1)])
     await db.activity.create_index([("user_id", 1), ("read", 1)])
+    # Email verification tokens — TTL index for auto-cleanup
+    await db.email_verifications.create_index("user_id")
+    await db.email_verifications.create_index("expires_at", expireAfterSeconds=0)
     # one-time migration: rename legacy admin@mooddrop.app → admin@innfeel.app
     # Order-safe: if BOTH rows exist, delete the legacy one first (no rename).
     legacy_admin = await db.users.find_one({"email": "admin@mooddrop.app"})
@@ -107,13 +112,14 @@ async def startup():
             "friend_count": 0,
             "streak": 0,
             "created_at": now_utc(),
+            "email_verified_at": now_utc(),
         })
         logger.info("Seeded admin user")
     else:
         # Ensure admin flag is set on the seeded admin (idempotent)
         await db.users.update_one(
             {"email": "admin@innfeel.app"},
-            {"$set": {"is_admin": True, "pro": True}},
+            {"$set": {"is_admin": True, "pro": True, "email_verified_at": existing.get("email_verified_at") or now_utc()}},
         )
     # seed a couple of demo friends so feed is not empty
     for (email, name, color, emotion) in [
@@ -134,7 +140,10 @@ async def startup():
                 "friend_count": 0,
                 "streak": 1,
                 "created_at": now_utc(),
+                "email_verified_at": now_utc(),
             })
+        elif not ex.get("email_verified_at"):
+            await db.users.update_one({"email": email}, {"$set": {"email_verified_at": now_utc()}})
 
 
 # =========================================================================
@@ -165,6 +174,11 @@ async def register(data: RegisterIn, response: Response):
     access = create_access_token(uid, email)
     refresh = create_refresh_token(uid)
     set_auth_cookies(response, access, refresh)
+    # Fire off the first verification email (non-blocking UX — failures don't block registration)
+    try:
+        await _issue_verification_code(doc, lang=(data.lang or "en").lower()[:2])
+    except Exception as e:
+        logger.warning(f"Initial verification email failed for {email}: {e}")
     return {"user": sanitize_user(doc), "access_token": access, "refresh_token": refresh}
 
 
@@ -193,6 +207,112 @@ async def logout(response: Response):
 
 
 # =========================================================================
+# Email verification — non-blocking OTP via Resend (6-digit, 10 min TTL, 5 tries)
+# =========================================================================
+import secrets
+
+VERIF_CODE_TTL_MIN = 10
+VERIF_MAX_ATTEMPTS = 5
+VERIF_RESEND_COOLDOWN_SEC = 45
+
+
+def _gen_otp() -> str:
+    """Cryptographically random 6-digit code."""
+    return f"{secrets.randbelow(10**6):06d}"
+
+
+def _hash_code(code: str) -> str:
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+
+async def _issue_verification_code(user: dict, lang: str = "en") -> tuple[bool, Optional[int]]:
+    """Generate & store a new OTP, then send it via Resend.
+
+    Returns (sent_ok, cooldown_remaining_seconds). If the previous code is
+    still within cooldown, returns (False, seconds_left) without resending.
+    """
+    now = now_utc()
+    existing = await db.email_verifications.find_one({"user_id": user["user_id"]})
+    if existing:
+        last_sent = existing.get("last_sent_at")
+        if isinstance(last_sent, datetime):
+            if last_sent.tzinfo is None:
+                last_sent = last_sent.replace(tzinfo=timezone.utc)
+            elapsed = (now - last_sent).total_seconds()
+            if elapsed < VERIF_RESEND_COOLDOWN_SEC:
+                return False, int(VERIF_RESEND_COOLDOWN_SEC - elapsed)
+    code = _gen_otp()
+    doc = {
+        "user_id": user["user_id"],
+        "email": user["email"],
+        "code_hash": _hash_code(code),
+        "attempts": 0,
+        "expires_at": now + timedelta(minutes=VERIF_CODE_TTL_MIN),
+        "last_sent_at": now,
+        "lang": lang,
+    }
+    await db.email_verifications.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": doc},
+        upsert=True,
+    )
+    try:
+        ok = await send_verification_email(user["email"], code, name=user.get("name", ""), lang=lang)
+    except Exception as e:
+        logger.warning(f"send_verification_email raised: {e}")
+        ok = False
+    if not ok:
+        logger.warning(f"[dev] Verification code for {user['email']}: {code}")
+    return ok, None
+
+
+@api.post("/auth/send-verification")
+async def send_verification(data: SendVerificationIn, user: dict = Depends(get_current_user)):
+    """(Re)send the 6-digit verification code to the authenticated user's email."""
+    if user.get("email_verified_at"):
+        return {"ok": True, "already_verified": True}
+    lang = (data.lang or "en").lower()[:2]
+    sent, cooldown = await _issue_verification_code(user, lang=lang)
+    if cooldown:
+        return {"ok": False, "cooldown_seconds": cooldown}
+    return {"ok": True, "sent": sent, "cooldown_seconds": VERIF_RESEND_COOLDOWN_SEC}
+
+
+@api.post("/auth/verify-email")
+async def verify_email(data: VerifyEmailIn, user: dict = Depends(get_current_user)):
+    """Check an OTP and mark the email verified if it matches."""
+    if user.get("email_verified_at"):
+        return {"ok": True, "already_verified": True, "user": sanitize_user(user)}
+    row = await db.email_verifications.find_one({"user_id": user["user_id"]})
+    if not row:
+        raise HTTPException(status_code=400, detail="No pending verification. Request a new code.")
+    exp = row.get("expires_at")
+    if isinstance(exp, datetime):
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp < now_utc():
+            await db.email_verifications.delete_one({"user_id": user["user_id"]})
+            raise HTTPException(status_code=400, detail="Code expired. Request a new one.")
+    if int(row.get("attempts", 0)) >= VERIF_MAX_ATTEMPTS:
+        await db.email_verifications.delete_one({"user_id": user["user_id"]})
+        raise HTTPException(status_code=429, detail="Too many attempts. Request a new code.")
+    submitted = (data.code or "").strip().replace(" ", "").replace("-", "")
+    if _hash_code(submitted) != row.get("code_hash"):
+        await db.email_verifications.update_one(
+            {"user_id": user["user_id"]}, {"$inc": {"attempts": 1}}
+        )
+        remaining = max(0, VERIF_MAX_ATTEMPTS - int(row.get("attempts", 0)) - 1)
+        raise HTTPException(status_code=400, detail=f"Incorrect code. {remaining} attempts left.")
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"email_verified_at": now_utc()}},
+    )
+    await db.email_verifications.delete_one({"user_id": user["user_id"]})
+    fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0, "password_hash": 0})
+    return {"ok": True, "user": sanitize_user(fresh)}
+
+
+# =========================================================================
 # Account management — edit name, email, delete account + all data (GDPR)
 # =========================================================================
 @api.patch("/account/profile")
@@ -214,6 +334,10 @@ async def update_profile(data: UpdateProfileIn, user: dict = Depends(get_current
 @api.post("/account/email")
 async def update_email(data: UpdateEmailIn, user: dict = Depends(get_current_user)):
     """Change email. Requires current password for security."""
+    # Require the user to first verify their current email before they can change it.
+    # Keeps the flow non-blocking for general usage, but prevents address hopping.
+    if not user.get("email_verified_at"):
+        raise HTTPException(status_code=403, detail="Please verify your current email before changing it.")
     current = await db.users.find_one({"user_id": user["user_id"]})
     if not current or not verify_password(data.password, current.get("password_hash", "")):
         raise HTTPException(status_code=401, detail="Incorrect password")
@@ -223,7 +347,12 @@ async def update_email(data: UpdateEmailIn, user: dict = Depends(get_current_use
     existing = await db.users.find_one({"email": new_email})
     if existing and existing.get("user_id") != user["user_id"]:
         raise HTTPException(status_code=409, detail="This email is already in use")
-    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"email": new_email}})
+    # Reset verification status — the NEW email needs to be verified.
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"email": new_email, "email_verified_at": None}},
+    )
+    await db.email_verifications.delete_many({"user_id": user["user_id"]})
     fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0, "password_hash": 0})
     return {"ok": True, "user": sanitize_user(fresh)}
 

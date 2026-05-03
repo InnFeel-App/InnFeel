@@ -15,6 +15,8 @@ REVENUECAT_API_KEY = os.environ.get("REVENUECAT_API_KEY", "")
 REVENUECAT_WEBHOOK_AUTH = os.environ.get("REVENUECAT_WEBHOOK_AUTH", "")
 SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "")
 SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+EMAIL_FROM = os.environ.get("EMAIL_FROM", "InnFeel <noreply@innfeel.app>")
 
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_TTL_MINUTES = 60 * 24 * 7  # 7 days for mobile convenience

@@ -118,4 +118,5 @@ def sanitize_user(u: dict) -> dict:
         "friend_count": u.get("friend_count", 0),
         "streak": u.get("streak", 0),
         "created_at": u.get("created_at").isoformat() if isinstance(u.get("created_at"), datetime) else u.get("created_at"),
+        "email_verified_at": u.get("email_verified_at").isoformat() if isinstance(u.get("email_verified_at"), datetime) else u.get("email_verified_at"),
     }

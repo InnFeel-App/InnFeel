@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { api, saveToken, clearToken } from "./api";
+import { currentLocale } from "./i18n";
 
 export type User = {
   user_id: string;
@@ -13,6 +14,7 @@ export type User = {
   friend_count: number;
   streak: number;
   created_at: string;
+  email_verified_at?: string | null;
 };
 
 type AuthState = {
@@ -65,7 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const register = async (name: string, email: string, password: string, opts?: { termsAccepted?: boolean }) => {
     const res = await api<{ user: User; access_token: string }>("/auth/register", {
       method: "POST",
-      body: { name, email, password, terms_accepted: !!opts?.termsAccepted },
+      body: { name, email, password, terms_accepted: !!opts?.termsAccepted, lang: currentLocale() },
     });
     await saveToken(res.access_token);
     setUser(res.user);
