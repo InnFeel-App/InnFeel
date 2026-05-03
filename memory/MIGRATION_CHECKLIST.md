@@ -47,7 +47,7 @@
 - [ ] **Privacy labels** (obligatoire) : données collectées, à quoi elles servent
 - [ ] **Privacy Policy URL** : `https://innfeel.app/privacy` (page web miroir)
 - [ ] **Terms of Use URL (EULA)** : `https://innfeel.app/terms`
-- [ ] App Review info : comptes de test `admin@innfeel.app` + `luna@innfeel.app`
+- [ ] App Review info : comptes de test `hello@innfeel.app` + `luna@innfeel.app`
 - [ ] TestFlight build uploadé via EAS Build
 - [ ] Permissions iOS déclarées dans `app.json` avec messages courts et explicites
 
@@ -86,7 +86,7 @@
 
 ## 10. Sécurité
 - [ ] Rotation de `JWT_SECRET` effectuée (différent de dev)
-- [ ] Mots de passe admin changés : `admin@innfeel.app` ≠ `admin123`
+- [ ] Mots de passe admin changés : `hello@innfeel.app` ≠ `admin123`
 - [ ] Seed scripts désactivés en production
 - [ ] Dev-only endpoints supprimés ou gated : `/dev/toggle-pro`, `/admin/grant-pro` accessible uniquement aux admins réels
 - [ ] Rate limiting backend (fastapi-limiter) sur endpoints auth

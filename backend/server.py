@@ -69,13 +69,32 @@ async def startup():
     await db.email_verifications.create_index("user_id")
     await db.email_verifications.create_index("expires_at", expireAfterSeconds=0)
 
-    # seed demo admin
-    existing = await db.users.find_one({"email": "admin@innfeel.app"})
+    # One-time migration: rename legacy admin@innfeel.app → hello@innfeel.app
+    # (Apple Custom Domain only allows 3 aliases: hello, support, noreply.)
+    legacy_admin = await db.users.find_one({"email": "admin@innfeel.app"})
+    if legacy_admin:
+        new_admin_exists = await db.users.find_one({"email": "hello@innfeel.app"})
+        if new_admin_exists and new_admin_exists.get("user_id") != legacy_admin.get("user_id"):
+            await db.users.delete_one({"user_id": legacy_admin["user_id"]})
+            logger.info("Removed legacy admin@innfeel.app (hello@innfeel.app already exists)")
+        else:
+            try:
+                await db.users.update_one(
+                    {"user_id": legacy_admin["user_id"]},
+                    {"$set": {"email": "hello@innfeel.app"}},
+                )
+                logger.info("Migrated admin@innfeel.app → hello@innfeel.app")
+            except Exception as e:
+                logger.warning(f"admin → hello rename race ({e}); deleting legacy row.")
+                await db.users.delete_one({"user_id": legacy_admin["user_id"]})
+
+    # seed demo admin (hello@innfeel.app)
+    existing = await db.users.find_one({"email": "hello@innfeel.app"})
     if not existing:
         uid = f"user_{uuid.uuid4().hex[:12]}"
         await db.users.insert_one({
             "user_id": uid,
-            "email": "admin@innfeel.app",
+            "email": "hello@innfeel.app",
             "password_hash": hash_password("admin123"),
             "name": "Admin",
             "avatar_color": "#F472B6",
@@ -87,12 +106,17 @@ async def startup():
             "created_at": now_utc(),
             "email_verified_at": now_utc(),
         })
-        logger.info("Seeded admin user")
+        logger.info("Seeded admin user (hello@innfeel.app)")
     else:
-        # Ensure admin flag is set on the seeded admin (idempotent)
+        # Ensure admin flag is set + Pro never expires on the seeded admin (idempotent)
         await db.users.update_one(
-            {"email": "admin@innfeel.app"},
-            {"$set": {"is_admin": True, "pro": True, "email_verified_at": existing.get("email_verified_at") or now_utc()}},
+            {"email": "hello@innfeel.app"},
+            {"$set": {
+                "is_admin": True,
+                "pro": True,
+                "pro_expires_at": now_utc() + timedelta(days=365),
+                "email_verified_at": existing.get("email_verified_at") or now_utc(),
+            }},
         )
     # seed a couple of demo friends so feed is not empty
     for (email, name, color, emotion) in [

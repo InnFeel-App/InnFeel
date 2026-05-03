@@ -81,7 +81,7 @@ export default function Login() {
 
             <View style={styles.hintBox}>
               <Text style={styles.hintTitle}>Demo account</Text>
-              <Text style={styles.hint}>admin@innfeel.app / admin123</Text>
+              <Text style={styles.hint}>hello@innfeel.app / admin123</Text>
             </View>
           </ScrollView>
         </SafeAreaView>
