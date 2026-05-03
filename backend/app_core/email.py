@@ -1,5 +1,8 @@
 """Email sending via Resend HTTP API + multilingual OTP templates."""
+import base64
 import logging
+import os
+from pathlib import Path
 from typing import Optional
 import httpx
 
@@ -8,6 +11,40 @@ from .config import RESEND_API_KEY, EMAIL_FROM
 logger = logging.getLogger("innfeel.email")
 
 RESEND_API_URL = "https://api.resend.com/emails"
+
+# ---------------------------------------------------------------------------
+# Brand logo — loaded once at import, attached to every email as a CID
+# inline image (most reliable cross-client method: Apple Mail, Gmail, Outlook,
+# iCloud, ProtonMail all render CID-referenced images natively).
+# ---------------------------------------------------------------------------
+_LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "logo-email.png"
+LOGO_CID = "innfeel-logo"  # stable reference — never change or existing emails break on forward
+
+_LOGO_B64: Optional[str] = None
+try:
+    if _LOGO_PATH.is_file():
+        with open(_LOGO_PATH, "rb") as fh:
+            _LOGO_B64 = base64.b64encode(fh.read()).decode("ascii")
+        logger.info(f"Email logo loaded: {_LOGO_PATH} ({len(_LOGO_B64) * 3 // 4} bytes)")
+    else:
+        logger.warning(f"Email logo not found at {_LOGO_PATH} — emails will ship without it")
+except Exception as e:
+    logger.warning(f"Could not read email logo: {e}")
+
+
+def get_logo_attachment() -> Optional[dict]:
+    """Return the Resend attachment dict for the brand logo, or None if the file is missing."""
+    if not _LOGO_B64:
+        return None
+    return {
+        "filename": "innfeel-logo.png",
+        "content": _LOGO_B64,
+        "content_type": "image/png",
+        # Resend accepts content_id for inline CID references (RFC 2392).
+        "content_id": LOGO_CID,
+        "disposition": "inline",
+    }
+
 
 # Supported email locales (keep aligned with /app/frontend/src/i18n.ts)
 SUPPORTED_LANGS = ("en", "fr", "es", "it", "de", "pt", "ar")
@@ -98,22 +135,21 @@ BRAND_TAGLINE = "One aura a day! Twenty seconds. Full color! Share yours. Unlock
 def render_brand_footer_html() -> str:
     """Return a reusable HTML block with the InnFeel logo + tagline.
 
-    Uses the same gradient ✦ mark as the email-signature file (pure HTML/CSS — no external
-    images required so it renders identically on Apple Mail, Gmail, Outlook, Yahoo, ProtonMail).
+    Uses a CID-referenced inline PNG (the real brand logo). Every email shipped via
+    `send_email_resend(..., include_logo=True)` attaches the logo automatically, and
+    this block references it via `src="cid:innfeel-logo"` — the most reliable way to
+    render images in email (works in Apple Mail, Gmail, Outlook, iCloud, ProtonMail).
     """
     return (
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
         'style="max-width:520px;margin-top:16px;">'
         '<tr><td align="center" style="padding:24px 24px 8px 24px;">'
-        # Gradient circular ✦ logo
-        '<div style="display:inline-block;width:48px;height:48px;border-radius:50%;'
-        'background:linear-gradient(135deg,#A78BFA 0%,#F472B6 50%,#FDE047 100%);'
-        'line-height:48px;text-align:center;color:#0B0B0F;font-weight:800;font-size:22px;">✦</div>'
-        # Wordmark
-        '<div style="margin-top:10px;font-size:15px;font-weight:800;color:#fff;'
-        'letter-spacing:-0.2px;">InnFeel</div>'
+        # Real brand logo (CID attachment)
+        f'<img src="cid:{LOGO_CID}" alt="InnFeel" width="84" height="84" '
+        'style="display:block;margin:0 auto;border:0;outline:none;text-decoration:none;'
+        'border-radius:18px;" />'
         # Tagline — brand signature kept in English on purpose (like "Just do it")
-        f'<div style="margin-top:8px;font-size:12px;font-style:italic;color:#9CA3AF;'
+        f'<div style="margin-top:14px;font-size:12px;font-style:italic;color:#9CA3AF;'
         f'line-height:18px;max-width:380px;margin-left:auto;margin-right:auto;">'
         f'{BRAND_TAGLINE}</div>'
         # Contact link
@@ -204,8 +240,18 @@ def render_otp_email(code: str, name: str = "", lang: str = "en") -> tuple[str, 
     return c["subject"], html, text
 
 
-async def send_email_resend(to: str, subject: str, html: str, text: Optional[str] = None) -> bool:
+async def send_email_resend(
+    to: str,
+    subject: str,
+    html: str,
+    text: Optional[str] = None,
+    include_logo: bool = True,
+) -> bool:
     """Send an email via the Resend HTTP API. Returns True on success.
+
+    If include_logo is True (default), the InnFeel logo is attached inline as
+    `cid:innfeel-logo`, so any HTML that references `src="cid:innfeel-logo"` renders
+    the real brand logo in every major mail client.
 
     Gracefully no-ops if RESEND_API_KEY is not configured (dev mode).
     """
@@ -220,6 +266,10 @@ async def send_email_resend(to: str, subject: str, html: str, text: Optional[str
     }
     if text:
         payload["text"] = text
+    if include_logo:
+        att = get_logo_attachment()
+        if att:
+            payload["attachments"] = [att]
     try:
         async with httpx.AsyncClient(timeout=10.0) as client_http:
             r = await client_http.post(
