@@ -40,6 +40,8 @@ class InnFeelIn(BaseModel):
     emotion: EMOTION_LITERAL
     intensity: int = Field(ge=1, le=10)
     photo_b64: Optional[str] = None  # base64 image
+    video_b64: Optional[str] = None  # base64 video (10s max, auto-loops)
+    video_seconds: Optional[int] = Field(default=None, ge=1, le=10)
     text: Optional[str] = Field(default=None, max_length=280)
     audio_b64: Optional[str] = None  # base64 audio
     audio_seconds: Optional[int] = Field(default=None, ge=1, le=30)

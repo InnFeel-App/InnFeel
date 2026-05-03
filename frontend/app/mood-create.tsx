@@ -29,6 +29,7 @@ export default function MoodCreate() {
   const [intensity, setIntensity] = useState(3);
   const [note, setNote] = useState("");
   const [photo, setPhoto] = useState<string | null>(null);
+  const [video, setVideo] = useState<{ b64: string; seconds: number } | null>(null);
   const [privacy, setPrivacy] = useState<"friends" | "close" | "private">("friends");
   const [loading, setLoading] = useState(false);
 
@@ -185,23 +186,84 @@ export default function MoodCreate() {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { Alert.alert("Permission needed", "We need photo access to attach images."); return; }
     const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.6, base64: true });
-    if (!r.canceled && r.assets[0]?.base64) setPhoto(r.assets[0].base64);
+    if (!r.canceled && r.assets[0]?.base64) { setPhoto(r.assets[0].base64); setVideo(null); }
   };
 
   const takePhoto = async () => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) { Alert.alert("Permission needed", "We need camera access to take photos."); return; }
     const r = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.6, base64: true });
-    if (!r.canceled && r.assets[0]?.base64) setPhoto(r.assets[0].base64);
+    if (!r.canceled && r.assets[0]?.base64) { setPhoto(r.assets[0].base64); setVideo(null); }
+  };
+
+  // Video: up to 10s looping. We trust Expo's videoMaxDuration; if user picks a longer video we cap at 10s metadata.
+  const pickVideoFromLibrary = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) { Alert.alert("Permission needed", "We need library access to attach videos."); return; }
+    const r = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      quality: 0.6,
+      videoMaxDuration: 10,
+      base64: true,
+    });
+    if (r.canceled || !r.assets[0]) return;
+    const a = r.assets[0];
+    // Enforce 10s max on our side too
+    const dur = Math.min(10, Math.max(1, Math.round((a.duration || 10000) / 1000)));
+    let b64 = a.base64 || "";
+    if (!b64 && a.uri) {
+      // Fallback: fetch & base64-encode
+      const resp = await fetch(a.uri);
+      const blob = await resp.blob();
+      b64 = await new Promise<string>((res, rej) => {
+        const fr = new FileReader();
+        fr.onerror = () => rej(new Error("read failed"));
+        fr.onloadend = () => res(((fr.result as string) || "").split(",")[1] || "");
+        fr.readAsDataURL(blob);
+      });
+    }
+    if (!b64) { Alert.alert("Couldn't read video"); return; }
+    setVideo({ b64, seconds: dur });
+    setPhoto(null);
+  };
+
+  const recordVideo = async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) { Alert.alert("Permission needed", "We need camera access to record videos."); return; }
+    const r = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      quality: 0.6,
+      videoMaxDuration: 10,
+      base64: true,
+    });
+    if (r.canceled || !r.assets[0]) return;
+    const a = r.assets[0];
+    const dur = Math.min(10, Math.max(1, Math.round((a.duration || 10000) / 1000)));
+    let b64 = a.base64 || "";
+    if (!b64 && a.uri) {
+      const resp = await fetch(a.uri);
+      const blob = await resp.blob();
+      b64 = await new Promise<string>((res, rej) => {
+        const fr = new FileReader();
+        fr.onerror = () => rej(new Error("read failed"));
+        fr.onloadend = () => res(((fr.result as string) || "").split(",")[1] || "");
+        fr.readAsDataURL(blob);
+      });
+    }
+    if (!b64) { Alert.alert("Couldn't read video"); return; }
+    setVideo({ b64, seconds: dur });
+    setPhoto(null);
   };
 
   const pick = () => {
     Alert.alert(
-      "Add a photo",
-      "Choose where to get the photo from.",
+      "Add media",
+      "Photo or 10s looping video.",
       [
         { text: "Take photo", onPress: takePhoto },
-        { text: "Choose from library", onPress: pickFromLibrary },
+        { text: "Pick photo", onPress: pickFromLibrary },
+        { text: "Record video (10s)", onPress: recordVideo },
+        { text: "Pick video (10s)", onPress: pickVideoFromLibrary },
         { text: "Cancel", style: "cancel" },
       ],
     );
@@ -216,7 +278,10 @@ export default function MoodCreate() {
         body: {
           word: word.trim() || null, emotion,
           intensity: Math.max(1, Math.min(maxIntensity, intensity)),
-          photo_b64: photo, text: pro ? note || null : null,
+          photo_b64: photo,
+          video_b64: video?.b64 || null,
+          video_seconds: video?.seconds || null,
+          text: pro ? note || null : null,
           audio_b64: pro ? audioB64 : null,
           audio_seconds: pro && audioB64 ? Math.max(1, recSeconds) : null,
           music: pro && selectedMusic ? {
@@ -300,14 +365,20 @@ export default function MoodCreate() {
               {!pro ? <Text style={styles.proHint}>Pro unlocks 1–10 intensity</Text> : null}
             </View>
 
-            <Text style={styles.section}>{t("create.photo")}</Text>
+            <Text style={styles.section}>Photo or video</Text>
             <TouchableOpacity testID="mood-add-photo" onPress={pick} style={styles.photoBox}>
               {photo ? (
                 <Image source={{ uri: `data:image/jpeg;base64,${photo}` }} style={styles.photoPrev} />
+              ) : video ? (
+                <View style={[styles.photoPrev, { backgroundColor: "#111", alignItems: "center", justifyContent: "center", gap: 8 }]}>
+                  <Ionicons name="videocam" size={28} color="#fff" />
+                  <Text style={{ color: "#fff", fontWeight: "600" }}>Video · {video.seconds}s · loops</Text>
+                  <Text style={{ color: COLORS.textSecondary, fontSize: 11 }}>Tap to change</Text>
+                </View>
               ) : (
                 <View style={styles.photoEmpty}>
                   <Ionicons name="image-outline" size={22} color={COLORS.textSecondary} />
-                  <Text style={styles.photoTxt}>Add a photo</Text>
+                  <Text style={styles.photoTxt}>Add a photo or a 10s video</Text>
                 </View>
               )}
             </TouchableOpacity>

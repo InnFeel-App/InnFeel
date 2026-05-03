@@ -382,6 +382,9 @@ async def create_mood(data: InnFeelIn, user: dict = Depends(get_current_user)):
         "color": EMOTIONS[data.emotion],
         "intensity": data.intensity,
         "photo_b64": data.photo_b64,
+        "video_b64": data.video_b64,
+        "video_seconds": min(10, data.video_seconds) if data.video_b64 and data.video_seconds else (10 if data.video_b64 else None),
+        "has_video": bool(data.video_b64),
         "text": data.text,
         "audio_b64": data.audio_b64,
         "audio_seconds": data.audio_seconds if data.audio_b64 else None,
@@ -752,6 +755,122 @@ async def stats(user: dict = Depends(get_current_user)):
             insights.append("Your emotional intensity has been moderate this month.")
         result["insights"] = insights
     return result
+
+
+# =========================================================================
+# Badges & Leaderboard — gamification between friends
+# =========================================================================
+BADGE_CATALOG = [
+    {"key": "first_aura",      "label": "First Aura",       "icon": "sparkles",         "color": "#FACC15", "hint": "Share your first aura"},
+    {"key": "streak_7",        "label": "Week Warrior",     "icon": "flame",            "color": "#FB923C", "hint": "7-day streak"},
+    {"key": "streak_30",       "label": "Zen Master",       "icon": "ribbon",           "color": "#A855F7", "hint": "30-day streak"},
+    {"key": "streak_100",      "label": "Century",          "icon": "trophy",           "color": "#FACC15", "hint": "100-day streak"},
+    {"key": "explorer_10",     "label": "Emotion Explorer", "icon": "compass",          "color": "#22D3EE", "hint": "Used 10 different emotions"},
+    {"key": "explorer_all",    "label": "Full Spectrum",    "icon": "color-palette",    "color": "#EC4899", "hint": "Used all 24 emotions"},
+    {"key": "social_5",        "label": "Connector",        "icon": "people",           "color": "#34D399", "hint": "5 or more friends"},
+    {"key": "social_25",       "label": "Community",        "icon": "people-circle",    "color": "#10B981", "hint": "25 or more friends"},
+    {"key": "loved_50",        "label": "Loved",            "icon": "heart",            "color": "#F472B6", "hint": "Received 50 reactions"},
+    {"key": "loved_250",       "label": "Beloved",          "icon": "heart-circle",     "color": "#EC4899", "hint": "Received 250 reactions"},
+    {"key": "prolific_30",     "label": "Prolific",         "icon": "create",           "color": "#60A5FA", "hint": "Shared 30 auras total"},
+    {"key": "prolific_100",    "label": "Virtuoso",         "icon": "medal",            "color": "#38BDF8", "hint": "Shared 100 auras total"},
+]
+
+
+async def _compute_badges_for(user_id: str) -> tuple[list[str], dict]:
+    """Compute which badge keys a given user has earned + the underlying metrics."""
+    # Totals
+    moods_count = await db.moods.count_documents({"user_id": user_id})
+    friends = await db.friendships.count_documents({"user_id": user_id})
+    # Unique emotions used
+    emos = set()
+    async for m in db.moods.find({"user_id": user_id}, {"emotion": 1}):
+        if m.get("emotion"): emos.add(m["emotion"])
+    # Total reactions received on one's moods
+    reactions_rx = 0
+    async for m in db.moods.find({"user_id": user_id}, {"reactions": 1}):
+        reactions_rx += len(m.get("reactions") or [])
+    streak = await compute_streak(user_id)
+    earned: list[str] = []
+    if moods_count >= 1:   earned.append("first_aura")
+    if streak   >= 7:      earned.append("streak_7")
+    if streak   >= 30:     earned.append("streak_30")
+    if streak   >= 100:    earned.append("streak_100")
+    if len(emos) >= 10:    earned.append("explorer_10")
+    if len(emos) >= 24:    earned.append("explorer_all")
+    if friends  >= 5:      earned.append("social_5")
+    if friends  >= 25:     earned.append("social_25")
+    if reactions_rx >= 50: earned.append("loved_50")
+    if reactions_rx >= 250: earned.append("loved_250")
+    if moods_count >= 30:  earned.append("prolific_30")
+    if moods_count >= 100: earned.append("prolific_100")
+    metrics = {
+        "moods_count": moods_count,
+        "friends": friends,
+        "unique_emotions": len(emos),
+        "reactions_received": reactions_rx,
+        "streak": streak,
+    }
+    return earned, metrics
+
+
+@api.get("/badges")
+async def get_badges(user: dict = Depends(get_current_user)):
+    """Return the signed-in user's badges (earned + locked) and progress metrics."""
+    earned, metrics = await _compute_badges_for(user["user_id"])
+    catalog = []
+    for b in BADGE_CATALOG:
+        catalog.append({**b, "earned": b["key"] in earned})
+    return {"badges": catalog, "earned_count": len(earned), "metrics": metrics}
+
+
+@api.get("/friends/leaderboard")
+async def friends_leaderboard(user: dict = Depends(get_current_user)):
+    """Top-3 leaderboard between the user and their friends, across three categories.
+
+    Categories: `streak` (current consecutive-day streak), `moods` (total auras shared),
+    `loved` (reactions received).
+    Each category returns the top 3 including the signed-in user's rank if outside top 3.
+    """
+    # Gather candidates = self + friends
+    fids = set()
+    async for f in db.friendships.find({"user_id": user["user_id"]}, {"friend_id": 1}):
+        fids.add(f.get("friend_id"))
+    fids.add(user["user_id"])
+    # Gather stats for each candidate
+    rows = []
+    for uid in fids:
+        u = await db.users.find_one({"user_id": uid}, {"_id": 0, "user_id": 1, "name": 1, "avatar_color": 1, "avatar_b64": 1})
+        if not u:
+            continue
+        _, m = await _compute_badges_for(uid)
+        rows.append({
+            "user_id": u["user_id"],
+            "name": u.get("name", ""),
+            "avatar_color": u.get("avatar_color"),
+            "avatar_b64": u.get("avatar_b64"),
+            "streak": m["streak"],
+            "moods": m["moods_count"],
+            "loved": m["reactions_received"],
+        })
+
+    def rank(key: str):
+        sorted_rows = sorted(rows, key=lambda r: (-int(r[key]), r["name"].lower()))
+        top3 = sorted_rows[:3]
+        my_idx = next((i for i, r in enumerate(sorted_rows) if r["user_id"] == user["user_id"]), None)
+        my_rank = (my_idx + 1) if my_idx is not None else None
+        return {
+            "top3": [
+                {**r, "value": r[key], "rank": i + 1} for i, r in enumerate(top3)
+            ],
+            "my_rank": my_rank,
+            "total": len(sorted_rows),
+        }
+
+    return {
+        "streak": rank("streak"),
+        "moods":  rank("moods"),
+        "loved":  rank("loved"),
+    }
 
 
 # =========================================================================

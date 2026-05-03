@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Image, ActivityIndicator } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Audio } from "expo-av";
+import { useVideoPlayer, VideoView } from "expo-video";
 import { Ionicons } from "@expo/vector-icons";
 import { EMOTION_COLORS, COLORS, REACTIONS } from "../theme";
 import { api } from "../api";
@@ -13,6 +14,9 @@ type Mood = {
   emotion: string;
   intensity: number;
   photo_b64?: string | null;
+  video_b64?: string | null;
+  video_seconds?: number | null;
+  has_video?: boolean;
   text?: string | null;
   audio_b64?: string | null;
   has_audio?: boolean;
@@ -223,7 +227,9 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
         <Text style={styles.intensityLabel}>{mood.intensity}/{mood.intensity > 5 ? 10 : 5}</Text>
       </View>
 
-      {mood.photo_b64 ? (
+      {mood.video_b64 ? (
+        <LoopingVideo b64={mood.video_b64} />
+      ) : mood.photo_b64 ? (
         <Image source={{ uri: `data:image/jpeg;base64,${mood.photo_b64}` }} style={styles.photo} />
       ) : null}
 
@@ -348,8 +354,28 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
   );
 }
 
-const styles = StyleSheet.create({
-  card: {
+/** Short looping video attached to an aura. Uses expo-video for efficient playback. */
+function LoopingVideo({ b64 }: { b64: string }) {
+  const source = `data:video/mp4;base64,${b64}`;
+  const player = useVideoPlayer(source, (p) => {
+    p.loop = true;
+    p.muted = true;
+    p.play();
+  });
+  return (
+    <View style={styles.photo}>
+      <VideoView
+        player={player}
+        style={{ width: "100%", height: "100%" }}
+        contentFit="cover"
+        nativeControls={false}
+      />
+    </View>
+  );
+}
+
+
+const styles = StyleSheet.create({  card: {
     backgroundColor: COLORS.glass,
     borderWidth: 1,
     borderColor: COLORS.border,

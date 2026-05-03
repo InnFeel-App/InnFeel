@@ -87,6 +87,11 @@ export default function Profile() {
             <Ionicons name="chevron-forward" size={18} color={COLORS.textTertiary} />
           </TouchableOpacity>
 
+          <TouchableOpacity testID="go-achievements" style={styles.link} onPress={() => router.push("/achievements")}>
+            <Ionicons name="trophy-outline" size={20} color="#FACC15" />
+            <Text style={styles.linkTxt}>Achievements · Leaderboard</Text>
+          </TouchableOpacity>
+
           <TouchableOpacity testID="go-settings" style={styles.link} onPress={() => router.push("/settings")}>
             <Ionicons name="settings-outline" size={20} color="#fff" />
             <Text style={styles.linkTxt}>{t("profile.settings")}</Text>

@@ -146,10 +146,11 @@ export default function Home() {
                         userName: user?.name,
                       })
                     }
-                    style={styles.shareBtn}
+                    style={styles.shareBtnXL}
+                    activeOpacity={0.85}
                   >
-                    <Ionicons name="share-outline" size={14} color="#fff" />
-                    <Text style={styles.shareBtnTxt}>Share</Text>
+                    <Ionicons name="share-social" size={18} color="#000" />
+                    <Text style={styles.shareBtnXLTxt}>Share your aura</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     testID="redo-my-mood"
@@ -255,6 +256,8 @@ const styles = StyleSheet.create({
   myMoodHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   myMoodActions: { flexDirection: "row", gap: 8, marginBottom: 10 },
   shareBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: COLORS.border },
+  shareBtnXL: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 18, paddingVertical: 12, borderRadius: 999, backgroundColor: "#fff", shadowColor: "#fff", shadowOpacity: 0.25, shadowRadius: 14, shadowOffset: { width: 0, height: 4 }, elevation: 6 },
+  shareBtnXLTxt: { color: "#000", fontSize: 14, fontWeight: "800", letterSpacing: 0.3 },
   redoBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, backgroundColor: "rgba(239,68,68,0.12)", borderWidth: 1, borderColor: "rgba(239,68,68,0.35)" },
   shareBtnTxt: { color: "#fff", fontSize: 12, fontWeight: "600" },
   locked: { padding: 24, borderRadius: 24, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)", alignItems: "center" },
