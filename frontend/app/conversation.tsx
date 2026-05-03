@@ -127,6 +127,13 @@ export default function Conversation() {
       setRecording(null);
       const secs = recordSeconds;
       setRecordSeconds(0);
+      // Reset audio mode to playback so the next taps on voice notes use the main speaker (not earpiece)
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        staysActiveInBackground: false,
+      });
       if (!uri) return;
       // Fetch the audio file and base64-encode it
       const resp = await fetch(uri);
@@ -151,6 +158,15 @@ export default function Conversation() {
     try { await recording?.stopAndUnloadAsync(); } catch {}
     setRecording(null);
     setRecordSeconds(0);
+    // Restore playback audio mode after cancelling
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        staysActiveInBackground: false,
+      });
+    } catch {}
   };
 
   // --- Play audio message ---
@@ -167,17 +183,29 @@ export default function Conversation() {
         await soundRef.current.unloadAsync();
         soundRef.current = null;
       }
-      const { sound } = await Audio.Sound.createAsync({
-        uri: `data:audio/m4a;base64,${m.audio_b64}`,
+      // Always force playback mode before creating the sound (critical on iOS after recording/mute switch)
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        staysActiveInBackground: false,
       });
+      if (!m?.audio_b64) {
+        Alert.alert("Voice note unavailable", "This message has no audio data.");
+        return;
+      }
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: `data:audio/m4a;base64,${m.audio_b64}` },
+        { shouldPlay: true, volume: 1.0 },
+      );
       soundRef.current = sound;
       setPlayingId(m.message_id);
       sound.setOnPlaybackStatusUpdate((st: any) => {
         if (st?.didJustFinish) { setPlayingId(null); sound.unloadAsync().catch(() => {}); }
       });
-      await sound.playAsync();
     } catch (e: any) {
       Alert.alert("Playback error", e?.message || "Try again.");
+      setPlayingId(null);
     }
   };
 

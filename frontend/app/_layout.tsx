@@ -3,6 +3,7 @@ import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { Audio } from "expo-av";
 import { AuthProvider, useAuth } from "../src/auth";
 import { ensureDailyRandomNotification, registerForPushNotificationsAsync } from "../src/notifications";
 import { loadLocaleOverride } from "../src/i18n";
@@ -34,6 +35,15 @@ export default function RootLayout() {
   useEffect(() => {
     // Preload the saved locale override before first render of screens so UI strings are correct.
     loadLocaleOverride().finally(() => setLocaleReady(true));
+    // Global audio session config — ensures voice notes & music always play through
+    // the main speaker (not earpiece) and work even when iOS silent switch is on.
+    Audio.setAudioModeAsync({
+      allowsRecordingIOS: false,
+      playsInSilentModeIOS: true,
+      shouldDuckAndroid: true,
+      staysActiveInBackground: false,
+      playThroughEarpieceAndroid: false,
+    }).catch(() => {});
   }, []);
   // We don't block on the locale — if it's slow, first frame uses device default; strings update on change.
   void localeReady;
