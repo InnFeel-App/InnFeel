@@ -118,13 +118,12 @@ const styles = StyleSheet.create({
   wrap: { flex: 1, position: "relative" },
   glow: {
     position: "absolute",
-    top: -6, bottom: -6, left: -10, right: -10,
+    top: -4, bottom: -4, left: -8, right: -8,
     borderRadius: 999,
     overflow: "hidden",
-    // Subtle blur via opacity layering — glow sits behind the button.
   },
   btn: {
-    height: 52,
+    height: 42,
     borderRadius: 999,
     overflow: "hidden",
     borderWidth: 1,
@@ -133,20 +132,20 @@ const styles = StyleSheet.create({
   },
   shimmer: {
     position: "absolute",
-    top: 0, bottom: 0, width: 90,
+    top: 0, bottom: 0, width: 70,
   },
   content: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 22,
-    gap: 10,
+    paddingHorizontal: 16,
+    gap: 8,
   },
-  sparkle: { color: "#fff", fontSize: 18, fontWeight: "900", textShadowColor: "rgba(0,0,0,0.25)", textShadowRadius: 4 },
+  sparkle: { color: "#fff", fontSize: 15, fontWeight: "900", textShadowColor: "rgba(0,0,0,0.25)", textShadowRadius: 4 },
   label: {
     color: "#fff",
     fontWeight: "800",
-    fontSize: 15,
+    fontSize: 13,
     letterSpacing: 0.3,
     textShadowColor: "rgba(0,0,0,0.25)",
     textShadowRadius: 4,
