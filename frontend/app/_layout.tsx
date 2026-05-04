@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from "../src/auth";
 import { ensureDailyRandomNotification, registerForPushNotificationsAsync } from "../src/notifications";
 import { loadLocaleOverride } from "../src/i18n";
 import { initIAP, identifyIAP } from "../src/iap";
+import ErrorBoundary from "../src/components/ErrorBoundary";
 
 function NotificationScheduler() {
   const { user } = useAuth();
@@ -50,17 +51,19 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: "#050505" }}>
       <SafeAreaProvider>
-        <AuthProvider>
-          <NotificationScheduler />
-          <StatusBar style="light" />
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: "#050505" },
-              animation: "fade",
-            }}
-          />
-        </AuthProvider>
+        <ErrorBoundary>
+          <AuthProvider>
+            <NotificationScheduler />
+            <StatusBar style="light" />
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: "#050505" },
+                animation: "fade",
+              }}
+            />
+          </AuthProvider>
+        </ErrorBoundary>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
