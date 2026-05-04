@@ -1,375 +1,295 @@
-"""Session 19 backend test — focus on /api/share/reel/{mood_id} fixes.
-
-Tests:
-1) Owner happy path with NO photo/video/music (fallback gradient + Ken Burns + silent track).
-2) Owner path with a real small photo (Ken Burns photo path).
-3) Event-loop responsiveness during encoding (asyncio.to_thread proof).
-4) 401 / 403 / 404 regressions.
-5) Regression spot-check of previously-green endpoints.
 """
-from __future__ import annotations
+Session 20 Path C item B2 — Backend test for GET /api/moods/insights.
 
-import base64
-import io
+Tests per review request:
+  1) Happy path (luna) — shape + ready:true + tone validation
+  2) Cold-start fresh user — ready:false, needed>=1, empty insights
+  3) Auth required — 401
+  4) /moods/stats regression (luna)
+  5) Spot check: /auth/me (admin) + /share/reel/{mood_id} (luna)
+"""
 import os
-import threading
+import re
+import sys
 import time
-from typing import Any, Optional
-
+import json
 import httpx
+from pathlib import Path
 
-BASE = "https://charming-wescoff-8.preview.emergentagent.com/api"
+# Resolve base URL from the frontend env
+FRONTEND_ENV = Path("/app/frontend/.env")
+BASE_URL = None
+for line in FRONTEND_ENV.read_text().splitlines():
+    if line.startswith("EXPO_PUBLIC_BACKEND_URL="):
+        BASE_URL = line.split("=", 1)[1].strip().strip('"').strip("'") + "/api"
+        break
+assert BASE_URL, "Could not read EXPO_PUBLIC_BACKEND_URL"
+print(f"BASE_URL = {BASE_URL}")
+
 ADMIN_EMAIL = "hello@innfeel.app"
 ADMIN_PASS = "admin123"
 LUNA_EMAIL = "luna@innfeel.app"
 LUNA_PASS = "demo1234"
 
-REEL_TIMEOUT = 25.0
+TONES_ALLOWED = {"positive", "neutral", "warning"}
+IONICON_RE = re.compile(r"^[a-z][a-z0-9-]*$")  # alphabetic lowercase with dashes
+
+results = []  # list of (ok: bool, label: str, detail: str)
 
 
-results: list[tuple[str, bool, str]] = []
+def record(ok, label, detail=""):
+    mark = "PASS" if ok else "FAIL"
+    print(f"  [{mark}] {label}" + (f" — {detail}" if detail else ""))
+    results.append((ok, label, detail))
 
 
-def log(name: str, ok: bool, detail: str = "") -> None:
-    tag = "PASS" if ok else "FAIL"
-    print(f"[{tag}] {name}  {detail}")
-    results.append((name, ok, detail))
+def _client():
+    # Do NOT persist cookies between calls — tests pass Bearer tokens and the
+    # server prefers cookies over Authorization when both are set. A fresh
+    # client per call eliminates that pitfall observed in prior sessions.
+    return httpx.Client(timeout=30.0, follow_redirects=True)
 
 
-def _client(token: Optional[str] = None, timeout: float = 30.0) -> httpx.Client:
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
-    return httpx.Client(base_url=BASE, headers=headers, timeout=timeout, follow_redirects=False)
-
-
-def login(email: str, password: str) -> str:
+def login(email, password):
     with _client() as c:
-        r = c.post("/auth/login", json={"email": email, "password": password})
-        assert r.status_code == 200, f"login {email} failed: {r.status_code} {r.text}"
-        return r.json()["access_token"]
+        r = c.post(f"{BASE_URL}/auth/login", json={"email": email, "password": password})
+    assert r.status_code == 200, f"login {email} failed: {r.status_code} {r.text}"
+    body = r.json()
+    tok = body.get("access_token")
+    uid = (body.get("user") or {}).get("user_id") or body.get("user_id")
+    assert tok and uid, f"login missing token/user_id: {body}"
+    return tok, uid
 
 
-def ensure_luna_mood_basic(token: str) -> str:
-    """Delete today's mood and re-post a minimal one (no photo/video/music)."""
-    with _client(token) as c:
-        c.delete("/moods/today")
-        r = c.post(
-            "/moods",
-            json={"emotion": "calm", "word": "peaceful", "intensity": 2, "privacy": "private"},
+def auth_headers(tok):
+    return {"Authorization": f"Bearer {tok}"}
+
+
+# -------------------------------------------------------------------------
+# 1) HAPPY PATH (luna) — /moods/insights returns ready:true with valid cards
+# -------------------------------------------------------------------------
+def test_happy_path():
+    print("\n=== 1) Happy path — luna /moods/insights ===")
+    tok, uid = login(LUNA_EMAIL, LUNA_PASS)
+    with _client() as c:
+        r = c.get(f"{BASE_URL}/moods/insights", headers=auth_headers(tok))
+    record(r.status_code == 200, "Status 200", f"got {r.status_code} body={r.text[:200]}")
+    if r.status_code != 200:
+        return
+    body = r.json()
+
+    record("insights" in body, "has key 'insights'", str(list(body.keys())))
+    record("ready" in body, "has key 'ready'", str(list(body.keys())))
+    record("computed_for" in body, "has key 'computed_for'", str(list(body.keys())))
+
+    record(body.get("ready") is True, "ready is True", f"ready={body.get('ready')}")
+    record(isinstance(body.get("insights"), list), "insights is a list", f"type={type(body.get('insights')).__name__}")
+
+    # Card validation
+    cards = body.get("insights") or []
+    print(f"  (luna has {len(cards)} insight cards)")
+    ionicon_found = False
+    for idx, card in enumerate(cards):
+        for key in ("id", "icon", "title", "tone"):
+            v = card.get(key)
+            record(
+                isinstance(v, str) and v.strip() != "",
+                f"card[{idx}].{key} is non-empty string",
+                f"got {v!r}",
+            )
+        tone = card.get("tone")
+        record(
+            tone in TONES_ALLOWED,
+            f"card[{idx}].tone in {TONES_ALLOWED}",
+            f"tone={tone!r}",
         )
-        assert r.status_code == 200, f"POST /moods failed: {r.status_code} {r.text}"
-        data = r.json()
-        mood = data.get("mood") or data
-        mid = mood.get("mood_id") or data.get("mood_id")
-        assert mid, f"no mood_id in response: {data}"
-        return mid
+        icon = card.get("icon") or ""
+        if IONICON_RE.match(icon):
+            ionicon_found = True
+        # value/subtitle optional — just check type if present
+        if "value" in card and card["value"] is not None:
+            record(isinstance(card["value"], str), f"card[{idx}].value is string or absent", f"got {type(card['value']).__name__}")
+        if "subtitle" in card and card["subtitle"] is not None:
+            record(isinstance(card["subtitle"], str), f"card[{idx}].subtitle is string or absent", f"got {type(card['subtitle']).__name__}")
 
+    if cards:
+        record(ionicon_found, "At least one card has a valid Ionicons name pattern",
+               f"icons={[c.get('icon') for c in cards]}")
+    else:
+        record(True, "Empty insights array on ready:true is acceptable (no patterns detected)", "")
 
-def ensure_luna_mood_with_photo(token: str) -> str:
-    """Post a mood with a small photo_b64 (tiny yellow JPEG)."""
+    # computed_for is ISO timestamp
+    cf = body.get("computed_for")
     try:
-        from PIL import Image
-    except Exception:
-        Image = None
+        from datetime import datetime
+        datetime.fromisoformat(cf.replace("Z", "+00:00") if cf and cf.endswith("Z") else cf)
+        record(True, "computed_for is ISO-parseable", f"value={cf}")
+    except Exception as e:
+        record(False, "computed_for is ISO-parseable", f"value={cf} err={e}")
 
-    if Image is not None:
-        img = Image.new("RGB", (800, 800), (255, 215, 40))
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=80)
-        photo_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-    else:
-        # Fallback: 1x1 yellow JPEG (base64).
-        photo_b64 = (
-            "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP////////////////////////////////////////"
-            "////////////////////////////////////////////2wBDAf////////////////////////"
-            "////////////////////////////////////////////////////////////////////////wAA"
-            "RCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAA"
-            "AAAAAP/EABQBAQAAAAAAAAAAAAAAAAAAAAD/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIR"
-            "AxEAPwB/AD//2Q=="
-        )
-
-    with _client(token) as c:
-        c.delete("/moods/today")
-        r = c.post(
-            "/moods",
-            json={
-                "emotion": "joy",
-                "word": "sunshine",
-                "intensity": 3,
-                "privacy": "private",
-                "photo_b64": photo_b64,
-            },
-        )
-        if r.status_code != 200:
-            return ""
-        data = r.json()
-        mood = data.get("mood") or data
-        return mood.get("mood_id") or data.get("mood_id") or ""
+    # Log the cards for visibility
+    print("  cards:", json.dumps(cards, indent=2)[:1200])
 
 
-# ────────────────────────────────────────────────────────────────────────────────
-# 1) Owner happy path — minimal content (fallback gradient + silent track)
-# ────────────────────────────────────────────────────────────────────────────────
-def test_reel_happy_path_minimal(luna_token: str) -> str:
-    print("\n=== TEST 1: Reel happy path (no photo/video/music) ===")
-    mood_id = ensure_luna_mood_basic(luna_token)
-    log("test1.setup_mood", bool(mood_id), f"mood_id={mood_id}")
+# -------------------------------------------------------------------------
+# 2) COLD-START — fresh user gets ready:false, needed>=1
+# -------------------------------------------------------------------------
+def test_cold_start():
+    print("\n=== 2) Cold-start — fresh user /moods/insights ===")
+    ts = int(time.time())
+    email = f"coldstart_{ts}@mailinator.com"
+    password = "ColdStart#2026!"
+    name = "Cold Start"
 
-    t0 = time.time()
-    with _client(luna_token, timeout=REEL_TIMEOUT) as c:
-        r = c.post(f"/share/reel/{mood_id}")
-    elapsed = time.time() - t0
-    log("test1.reel_status_200", r.status_code == 200, f"status={r.status_code} elapsed={elapsed:.2f}s body={r.text[:400]}")
-    if r.status_code != 200:
-        return mood_id
-
-    log("test1.reel_under_15s", elapsed <= 15.0, f"elapsed={elapsed:.2f}s")
-    body = r.json()
-    log("test1.ok_true", body.get("ok") is True, f"body.ok={body.get('ok')}")
-    log("test1.has_url", isinstance(body.get("url"), str) and body["url"].startswith("http"), f"url={str(body.get('url'))[:80]}")
-    log("test1.has_key_prefix", str(body.get("key", "")).startswith("shares/reel_"), f"key={body.get('key')}")
-    log("test1.duration_15", body.get("duration") == 15, f"duration={body.get('duration')}")
-    log("test1.has_video_false", body.get("has_video") is False, f"has_video={body.get('has_video')}")
-    log("test1.has_audio_false", body.get("has_audio") is False, f"has_audio={body.get('has_audio')}")
-
-    # Download the URL and check content-type + content-length.
-    url = body.get("url")
-    if url:
-        with httpx.Client(timeout=30.0, follow_redirects=True) as c:
-            r2 = c.get(url)
-        ctype = r2.headers.get("Content-Type", "")
-        size = int(r2.headers.get("Content-Length") or len(r2.content))
-        log("test1.download_200", r2.status_code == 200, f"status={r2.status_code}")
-        log("test1.content_type_mp4", "video/mp4" in ctype, f"ctype={ctype}")
-        log("test1.content_length_gt_50kb", size > 50000, f"size={size}")
-
-    return mood_id
-
-
-# ────────────────────────────────────────────────────────────────────────────────
-# 2) Reel with photo (Ken Burns photo path)
-# ────────────────────────────────────────────────────────────────────────────────
-def test_reel_with_photo(luna_token: str) -> None:
-    print("\n=== TEST 2: Reel with real photo (Ken Burns path) ===")
-    mood_id = ensure_luna_mood_with_photo(luna_token)
-    if not mood_id:
-        log("test2.setup_mood", False, "photo_b64 mood could not be created — skipping")
-        return
-    log("test2.setup_mood", True, f"mood_id={mood_id}")
-
-    t0 = time.time()
-    with _client(luna_token, timeout=REEL_TIMEOUT) as c:
-        r = c.post(f"/share/reel/{mood_id}")
-    elapsed = time.time() - t0
-
-    log("test2.reel_status_200", r.status_code == 200, f"status={r.status_code} elapsed={elapsed:.2f}s body={r.text[:400]}")
+    with _client() as c:
+        r = c.post(f"{BASE_URL}/auth/register", json={
+            "email": email,
+            "password": password,
+            "name": name,
+            "lang": "en",
+            "terms_accepted": True,
+        })
+    record(r.status_code == 200, "Register fresh user 200", f"status={r.status_code} body={r.text[:150]}")
     if r.status_code != 200:
         return
-
-    log("test2.reel_under_20s", elapsed <= 20.0, f"elapsed={elapsed:.2f}s")
     body = r.json()
-    log("test2.ok_true", body.get("ok") is True)
-    log("test2.has_video_false", body.get("has_video") is False, f"has_video={body.get('has_video')} (photo path)")
-    log("test2.has_audio_false", body.get("has_audio") is False, f"has_audio={body.get('has_audio')}")
+    tok = body.get("access_token")
+    uid = (body.get("user") or {}).get("user_id")
+    record(bool(tok and uid), "Token + user_id present", "")
 
-    url = body.get("url")
-    if url:
-        with httpx.Client(timeout=30.0, follow_redirects=True) as c:
-            r2 = c.get(url)
-        size = int(r2.headers.get("Content-Length") or len(r2.content))
-        log("test2.download_200", r2.status_code == 200, f"status={r2.status_code}")
-        log("test2.content_length_gt_200kb", size > 200_000, f"size={size}")
+    # Query insights
+    with _client() as c:
+        r = c.get(f"{BASE_URL}/moods/insights", headers=auth_headers(tok))
+    record(r.status_code == 200, "GET /moods/insights 200", f"status={r.status_code}")
+    if r.status_code == 200:
+        body2 = r.json()
+        record(body2.get("ready") is False, "ready is False", f"ready={body2.get('ready')}")
+        record(isinstance(body2.get("needed"), int) and body2["needed"] >= 1,
+               "needed is int >= 1", f"needed={body2.get('needed')}")
+        msg = body2.get("message")
+        record(isinstance(msg, str) and msg.strip() != "",
+               "message is non-empty string", f"message={msg!r}")
+        record(body2.get("insights") == [], "insights is empty list", f"insights={body2.get('insights')}")
+
+    # Cleanup — DELETE /account
+    with _client() as c:
+        r = c.request(
+            "DELETE",
+            f"{BASE_URL}/account",
+            json={"password": password, "confirm": "DELETE"},
+            headers=auth_headers(tok),
+        )
+    record(r.status_code == 200, "Cleanup DELETE /account 200", f"status={r.status_code} body={r.text[:150]}")
 
 
-# ────────────────────────────────────────────────────────────────────────────────
-# 3) Event-loop responsiveness during encoding
-# ────────────────────────────────────────────────────────────────────────────────
-def test_event_loop_responsive(luna_token: str, admin_token: str, mood_id: str) -> None:
-    print("\n=== TEST 3: Event-loop responsive during ffmpeg encode ===")
-    if not mood_id:
-        log("test3.precondition", False, "no mood_id available for reel call")
+# -------------------------------------------------------------------------
+# 3) AUTH REQUIRED — 401 without Authorization
+# -------------------------------------------------------------------------
+def test_auth_required():
+    print("\n=== 3) Auth required — no Authorization ===")
+    with _client() as c:
+        r = c.get(f"{BASE_URL}/moods/insights")
+    record(r.status_code == 401, "GET /moods/insights with no auth → 401", f"status={r.status_code} body={r.text[:150]}")
+
+
+# -------------------------------------------------------------------------
+# 4) REGRESSION — /moods/stats (luna)
+# -------------------------------------------------------------------------
+def test_stats_regression():
+    print("\n=== 4) /moods/stats regression (luna) ===")
+    tok, _ = login(LUNA_EMAIL, LUNA_PASS)
+    with _client() as c:
+        r = c.get(f"{BASE_URL}/moods/stats", headers=auth_headers(tok))
+    record(r.status_code == 200, "GET /moods/stats 200", f"status={r.status_code}")
+    if r.status_code != 200:
         return
-
-    reel_result: dict = {}
-    auth_result: dict = {}
-
-    def call_reel() -> None:
-        t0 = time.time()
-        try:
-            with _client(luna_token, timeout=REEL_TIMEOUT) as c:
-                r = c.post(f"/share/reel/{mood_id}")
-            reel_result["status"] = r.status_code
-            reel_result["elapsed"] = time.time() - t0
-            reel_result["body"] = r.text[:300]
-        except Exception as e:
-            reel_result["err"] = str(e)
-            reel_result["elapsed"] = time.time() - t0
-
-    def call_auth_me() -> None:
-        # Wait 200ms so A is already in ffmpeg territory.
-        time.sleep(0.2)
-        t0 = time.time()
-        try:
-            with _client(admin_token, timeout=10.0) as c:
-                r = c.get("/auth/me")
-            auth_result["status"] = r.status_code
-            auth_result["elapsed"] = time.time() - t0
-        except Exception as e:
-            auth_result["err"] = str(e)
-            auth_result["elapsed"] = time.time() - t0
-
-    t_reel = threading.Thread(target=call_reel)
-    t_auth = threading.Thread(target=call_auth_me)
-    t_reel.start()
-    t_auth.start()
-    t_auth.join(timeout=20.0)
-    t_reel.join(timeout=30.0)
-
-    log(
-        "test3.reel_eventually_200",
-        reel_result.get("status") == 200,
-        f"reel status={reel_result.get('status')} elapsed={reel_result.get('elapsed', 0):.2f}s err={reel_result.get('err')}",
-    )
-    log(
-        "test3.auth_me_200",
-        auth_result.get("status") == 200,
-        f"auth status={auth_result.get('status')} elapsed={auth_result.get('elapsed', 0):.2f}s err={auth_result.get('err')}",
-    )
-    log(
-        "test3.auth_me_under_2s",
-        auth_result.get("elapsed", 99) < 2.0,
-        f"auth elapsed={auth_result.get('elapsed', 0):.2f}s (must be <2.0s to prove event loop free)",
-    )
-    log(
-        "test3.auth_me_under_5s_hard",
-        auth_result.get("elapsed", 99) < 5.0,
-        f"auth elapsed={auth_result.get('elapsed', 0):.2f}s (hard cutoff — >5s proves threading broken)",
-    )
+    body = r.json()
+    for k in ("streak", "drops_this_week", "dominant", "distribution", "by_weekday"):
+        record(k in body, f"has key '{k}'", f"keys={list(body.keys())}")
 
 
-# ────────────────────────────────────────────────────────────────────────────────
-# 4) 401 / 403 / 404 regressions
-# ────────────────────────────────────────────────────────────────────────────────
-def test_auth_regressions(luna_token: str, admin_token: str, luna_mood_id: str) -> None:
-    print("\n=== TEST 4: 401 / 403 / 404 regressions ===")
+# -------------------------------------------------------------------------
+# 5) SPOT CHECK — /auth/me (admin) + /share/reel/{mood_id} (luna)
+# -------------------------------------------------------------------------
+def test_spot_checks():
+    print("\n=== 5) Spot-check: /auth/me admin + /share/reel/{mood_id} luna ===")
 
-    # 401: no auth header
-    with httpx.Client(base_url=BASE, timeout=20.0) as c:
-        r = c.post(f"/share/reel/{luna_mood_id}")
-    log("test4.unauth_401", r.status_code == 401, f"status={r.status_code} body={r.text[:200]}")
-
-    # 403: admin tries luna's aura
-    with _client(admin_token, timeout=REEL_TIMEOUT) as c:
-        r = c.post(f"/share/reel/{luna_mood_id}")
-    log(
-        "test4.not_your_aura_403",
-        r.status_code == 403 and "Not your aura" in r.text,
-        f"status={r.status_code} body={r.text[:200]}",
-    )
-
-    # 404: nonexistent mood_id
-    with _client(luna_token, timeout=20.0) as c:
-        r = c.post("/share/reel/mood_does_not_exist")
-    log(
-        "test4.not_found_404",
-        r.status_code == 404 and "Aura not found" in r.text,
-        f"status={r.status_code} body={r.text[:200]}",
-    )
-
-
-# ────────────────────────────────────────────────────────────────────────────────
-# 5) Regression spot-check (previously green endpoints)
-# ────────────────────────────────────────────────────────────────────────────────
-def test_regression(admin_token: str, luna_token: str) -> None:
-    print("\n=== TEST 5: Regression spot-check ===")
-
-    with _client(admin_token) as c:
-        r = c.get("/auth/me")
-    log("test5.admin_auth_me", r.status_code == 200 and r.json().get("email") == ADMIN_EMAIL, f"status={r.status_code}")
-
-    with _client(luna_token) as c:
-        r = c.get("/moods/feed")
-    log("test5.luna_moods_feed", r.status_code == 200, f"status={r.status_code} body={r.text[:200]}")
-
-    with _client(luna_token) as c:
-        r = c.get("/friends")
+    # /auth/me admin
+    admin_tok, _ = login(ADMIN_EMAIL, ADMIN_PASS)
+    with _client() as c:
+        r = c.get(f"{BASE_URL}/auth/me", headers=auth_headers(admin_tok))
+    record(r.status_code == 200, "GET /auth/me (admin) 200", f"status={r.status_code}")
     if r.status_code == 200:
-        friends = r.json().get("friends") if isinstance(r.json(), dict) else r.json()
-        friends = friends or []
-        no_email = all("email" not in f for f in friends) if isinstance(friends, list) else True
-        log("test5.luna_friends_200", True, f"count={len(friends) if isinstance(friends, list) else '?'}")
-        log("test5.luna_friends_no_email", no_email, f"email field absent on all rows")
-    else:
-        log("test5.luna_friends_200", False, f"status={r.status_code}")
+        body = r.json()
+        user_obj = body.get("user") if "user" in body else body
+        record(user_obj.get("email") == ADMIN_EMAIL, "admin /auth/me email matches",
+               f"email={user_obj.get('email')}")
 
-    # Find a message to react to in luna's conversations
-    with _client(luna_token) as c:
-        r = c.get("/messages/conversations")
-    convo_peer = None
+    # /share/reel as luna
+    luna_tok, luna_uid = login(LUNA_EMAIL, LUNA_PASS)
+
+    with _client() as c:
+        r = c.get(f"{BASE_URL}/moods/today", headers=auth_headers(luna_tok))
+    mood_id = None
     if r.status_code == 200:
-        convs = r.json()
-        if isinstance(convs, dict):
-            convs = convs.get("conversations") or []
-        if convs:
-            convo_peer = convs[0].get("peer_id") or (convs[0].get("peer") or {}).get("user_id")
-    msg_id = None
-    if convo_peer:
-        with _client(luna_token) as c:
-            r = c.get(f"/messages/with/{convo_peer}")
+        mood = (r.json() or {}).get("mood")
+        if mood:
+            mood_id = mood.get("mood_id")
+
+    if not mood_id:
+        with _client() as c:
+            r = c.post(
+                f"{BASE_URL}/moods",
+                headers=auth_headers(luna_tok),
+                json={"emotion": "calm", "word": "gentle", "intensity": 2, "privacy": "friends"},
+            )
         if r.status_code == 200:
-            msgs = r.json()
-            if isinstance(msgs, dict):
-                msgs = msgs.get("messages") or []
-            if msgs:
-                msg_id = msgs[-1].get("message_id")
-    if msg_id:
-        with _client(luna_token) as c:
-            r = c.post(f"/messages/{msg_id}/react", json={"emoji": "love_eyes"})
-        # Note: spec says love_eyes should be 200. But session 16 showed the accepted emoji set
-        # does NOT include love_eyes. Accept 200 or 422 and just record.
-        log(
-            "test5.message_react_love_eyes",
-            r.status_code == 200,
-            f"status={r.status_code} body={r.text[:250]}",
-        )
-    else:
-        log("test5.message_react_love_eyes", False, "no message found to react on")
+            mood_id = ((r.json() or {}).get("mood") or {}).get("mood_id")
+
+    record(bool(mood_id), "luna has a mood for today", f"mood_id={mood_id}")
+
+    if mood_id:
+        with _client() as c:
+            r = c.post(f"{BASE_URL}/share/reel/{mood_id}", headers=auth_headers(luna_tok), timeout=60.0)
+        record(r.status_code == 200, "POST /share/reel/<mood_id> (luna) 200",
+               f"status={r.status_code} body={r.text[:200]}")
+        if r.status_code == 200:
+            body = r.json()
+            record(body.get("ok") is True, "share body.ok is True", f"body={json.dumps(body)[:200]}")
 
 
-# ────────────────────────────────────────────────────────────────────────────────
-# Main
-# ────────────────────────────────────────────────────────────────────────────────
-def main() -> None:
-    print(f"BASE URL: {BASE}")
-    admin_token = login(ADMIN_EMAIL, ADMIN_PASS)
-    luna_token = login(LUNA_EMAIL, LUNA_PASS)
+def main():
+    try:
+        test_happy_path()
+    except Exception as e:
+        record(False, "test_happy_path raised", str(e))
+    try:
+        test_cold_start()
+    except Exception as e:
+        record(False, "test_cold_start raised", str(e))
+    try:
+        test_auth_required()
+    except Exception as e:
+        record(False, "test_auth_required raised", str(e))
+    try:
+        test_stats_regression()
+    except Exception as e:
+        record(False, "test_stats_regression raised", str(e))
+    try:
+        test_spot_checks()
+    except Exception as e:
+        record(False, "test_spot_checks raised", str(e))
 
-    # Test 1 — minimal content
-    luna_mood_basic = test_reel_happy_path_minimal(luna_token)
-
-    # Test 2 — photo path (creates a new today's mood, overwriting test1's)
-    test_reel_with_photo(luna_token)
-
-    # For Test 3 we want a minimal reel (faster encode) so recreate minimal mood.
-    luna_mood_basic = ensure_luna_mood_basic(luna_token)
-
-    # Test 3 — event loop responsiveness
-    test_event_loop_responsive(luna_token, admin_token, luna_mood_basic)
-
-    # Test 4 — 401/403/404
-    test_auth_regressions(luna_token, admin_token, luna_mood_basic)
-
-    # Test 5 — regression spot-check
-    test_regression(admin_token, luna_token)
-
-    print("\n\n============ SUMMARY ============")
-    passed = sum(1 for _, ok, _ in results if ok)
-    failed = sum(1 for _, ok, _ in results if not ok)
-    for name, ok, detail in results:
-        tag = "PASS" if ok else "FAIL"
-        print(f"  [{tag}] {name}")
-        if not ok and detail:
-            print(f"         ↳ {detail[:400]}")
-    print(f"\nTOTAL: {passed} pass / {failed} fail / {len(results)} total")
+    total = len(results)
+    passed = sum(1 for ok, *_ in results if ok)
+    failed = [(l, d) for ok, l, d in results if not ok]
+    print("\n" + "=" * 70)
+    print(f"SUMMARY: {passed}/{total} PASS")
+    if failed:
+        print(f"\n{len(failed)} FAIL(S):")
+        for l, d in failed:
+            print(f"  - {l}" + (f" ({d})" if d else ""))
+    sys.exit(0 if not failed else 1)
 
 
 if __name__ == "__main__":

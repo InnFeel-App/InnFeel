@@ -1841,3 +1841,166 @@ agent_communication:
           d) Spot-check previously passing endpoints didn't regress.
         
         Skip 4-encode stress tests — single concurrent call test covers the key regression.
+
+    - agent: "main"
+      message: |
+        Session 20 — Path C, item B2: Mood Patterns Insights.
+        
+        NEW ENDPOINT: GET /api/moods/insights (routes/moods.py)
+        
+        Returns up to 6 personalized insight cards from the user's last 90 days of auras:
+          1) trend_30: positivity score this 30d vs prev 30d (only when |diff| >= 8%)
+          2) best_dow: brightest weekday (only when score >= 0.4)
+          3) worst_dow: hardest weekday (only when score <= -0.4 and != best)
+          4) dominant_30: most-frequent emotion (only when >= 30% of all auras)
+          5) streak_current: current streak (only when >= 3 days)
+          6) streak_best: personal best run (only when >= 7 days and beats current)
+          7) diversity: # distinct emotions (only when >= 5)
+          8) favorite_time: morning/afternoon/evening/night (only when >= 50% concentration)
+        
+        Each card shape: { id, icon, title, value, subtitle, tone: "positive"|"neutral"|"warning", [color] }
+        
+        Cold-start guard: if user has < 3 moods, returns {ready: false, needed, message}.
+        
+        TESTING REQUEST:
+          a) As luna, GET /api/moods/insights → 200, returns insights array (luna has many auras).
+             Verify each card has: id, icon, title, tone. Verify tone is one of {positive, neutral, warning}.
+             Verify "ready: true" and "computed_for" timestamp present.
+          b) Cold-start: register a fresh user, immediately GET /moods/insights → 200, ready:false, needed > 0.
+          c) Edge case: user with 3+ auras but no clear patterns → should NOT include cards that fail their thresholds (e.g. weekday score < 0.4 means no best_dow card).
+          d) 401 if no auth.
+          e) Regression: GET /moods/stats still returns the same shape it did before.
+
+
+backend_session20:
+  - task: "Mood Patterns Insights — GET /api/moods/insights (Session 20 Path C B2)"
+    implemented: true
+    working: false
+    file: "/app/backend/routes/moods.py"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            New GET /api/moods/insights endpoint added at routes/moods.py L456+. Returns up to
+            6 personalised insight cards computed from the last 90 days of auras. Cold-start
+            guard (<3 moods in 90d) returns {ready:false, needed, message, insights:[]}. Each
+            card has shape {id, icon, title, value, subtitle, tone, [color]} with
+            tone ∈ {positive, neutral, warning}.
+        - working: false
+          agent: "testing"
+          comment: |
+            Session 20 B2 insights backend test — 20/21 PASS with ONE CRITICAL 500 on the
+            primary happy path. Harness: /app/backend_test.py vs
+            https://charming-wescoff-8.preview.emergentagent.com/api.
+            Creds: hello@innfeel.app / admin123, luna@innfeel.app / demo1234.
+
+            ❌ FAILING — 1) HAPPY PATH (luna) returns HTTP 500 "Internal Server Error":
+              · GET /api/moods/insights as luna → 500.
+              · backend.err.log shows the exact stack trace:
+
+                File "/app/backend/routes/moods.py", line 483, in get_insights
+                  rows_30 = [r for r in rows_90 if r["created_at"] >= since_30]
+                TypeError: can't compare offset-naive and offset-aware datetimes
+
+              · ROOT CAUSE: `since_30/60/90 = now - timedelta(...)` where `now = now_utc()`
+                is timezone-AWARE, but at least some `r["created_at"]` rows in the DB are
+                timezone-NAIVE (legacy moods created before tz-aware migration OR motor is
+                returning naive by default — Mongo stores BSON datetime as naive UTC unless
+                motor client is configured with `tz_aware=True`). This is the exact same
+                bug pattern that bit /admin/pro-grants in session 4.
+              · The cold-start path (2) did NOT hit the bug because a brand-new user has
+                zero rows_90 and short-circuits before the comparison.
+              · FIX OPTIONS (testing agent did NOT modify code):
+                  Option A — strip tz on the boundary variables:
+                      since_30 = (now - timedelta(days=30)).replace(tzinfo=None)
+                      since_60 = (now - timedelta(days=60)).replace(tzinfo=None)
+                      since_90 = (now - timedelta(days=90)).replace(tzinfo=None)
+                      now_naive = now.replace(tzinfo=None)  (use elsewhere)
+                  Option B — coerce each row's created_at to aware:
+                      for r in rows_90:
+                          if r["created_at"].tzinfo is None:
+                              r["created_at"] = r["created_at"].replace(tzinfo=timezone.utc)
+                  Option C — configure motor with tz_aware=True globally (riskier —
+                  touches every existing query in the codebase).
+                Recommend Option A (minimal, localised to the new endpoint).
+
+            ✅ PASSING — remainder (20/21):
+              2) COLD-START — 6/6 PASS: Registered coldstart_1777917645@mailinator.com →
+                 200, access_token issued. GET /moods/insights → 200 with {ready:false,
+                 needed:3, message:"Drop a few more auras to unlock personalised insights ✦",
+                 insights:[]}. Cleanup DELETE /account with {password, confirm:"DELETE"} →
+                 200 {ok:true, deleted:true}. All shape checks pass.
+              3) AUTH REQUIRED — 1/1 PASS: GET /moods/insights with no Authorization header
+                 → 401 {"detail":"Not authenticated"}.
+              4) /moods/stats REGRESSION (luna) — 6/6 PASS: 200 with keys {streak,
+                 drops_this_week, dominant, dominant_color, distribution, by_weekday,
+                 range_30, range_90, range_365, insights} — backwards-compatible; luna
+                 DOES currently receive range_30/90/365 (means luna has pro=true at the
+                 moment — both states are allowed per spec).
+              5) SPOT-CHECK — 5/5 PASS: GET /auth/me (admin) 200 with
+                 email=hello@innfeel.app; POST /share/reel/<luna_mood_id> as luna → 200
+                 with {ok:true, url:"https://cdn.innfeel.app/shares/...", duration:15}
+                 — Session 19 reel endpoint still working.
+
+            BACKEND HEALTH:
+              · The only exception in backend.err.log during this run is the exact
+                TypeError shown above — no other regressions.
+              · Purge daemon healthy: "[purge] {moods_deleted:0, r2_objects_deleted:0,
+                users_checked:65}".
+
+            CONCLUSION: The Session 20 B2 insights endpoint is FUNCTIONAL for the
+            cold-start branch but BROKEN for any user who actually has >= 3 moods in the
+            last 90 days (i.e., the whole reason to ship the endpoint). This must be
+            fixed before the feature ships. No testing-agent code fixes applied.
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Session 20 Path C B2 (Mood Patterns Insights) backend test COMPLETE — 20/21 PASS
+        with ONE CRITICAL BUG on the main happy path.
+        Harness: /app/backend_test.py.
+        Backend URL: https://charming-wescoff-8.preview.emergentagent.com/api.
+
+        ❌ CRITICAL — GET /api/moods/insights returns 500 for users with existing moods
+           (the primary use case). Traceback:
+
+             File "/app/backend/routes/moods.py", line 483, in get_insights
+               rows_30 = [r for r in rows_90 if r["created_at"] >= since_30]
+             TypeError: can't compare offset-naive and offset-aware datetimes
+
+           `now_utc()` returns a tz-AWARE datetime, but Mongo-persisted `created_at`
+           values come back NAIVE via motor's default. Same footgun that hit session 4's
+           /admin/pro-grants.
+
+           RECOMMENDED FIX (minimal, localised):
+             since_30 = (now - timedelta(days=30)).replace(tzinfo=None)
+             since_60 = (now - timedelta(days=60)).replace(tzinfo=None)
+             since_90 = (now - timedelta(days=90)).replace(tzinfo=None)
+           and use `now.replace(tzinfo=None)` wherever `now` is compared to row times.
+
+        ✅ OTHER TESTS ALL PASS:
+          • Cold-start (fresh user with 0 moods): GET /moods/insights → 200
+            {ready:false, needed:3, message:"Drop a few more auras to unlock personalised
+            insights ✦", insights:[]}. DELETE /account cleanup → 200.
+          • No-auth: GET /moods/insights → 401 "Not authenticated".
+          • /moods/stats regression (luna): 200 with all legacy keys + Pro range_*/insights.
+          • Spot-check: /auth/me admin 200; /share/reel/<luna_mood_id> luna 200 with signed
+            cdn.innfeel.app URL (Session 19 still healthy).
+
+        No backend code was modified by the testing agent.
+
+metadata:
+  created_by: "main_agent"
+  version: "1.8"
+  test_sequence: 9
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Mood Patterns Insights — GET /api/moods/insights (Session 20 Path C B2)"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"

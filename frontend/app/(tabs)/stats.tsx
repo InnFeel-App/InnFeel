@@ -28,12 +28,22 @@ function volatilityLabel(v: number): string {
 export default function Stats() {
   const { user } = useAuth();
   const [stats, setStats] = useState<any>(null);
+  const [insights, setInsights] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [range, setRange] = useState<30 | 90 | 365>(30);
   const router = useRouter();
   const { share, Renderer: ShareRenderer } = useShareToStories();
 
-  const load = useCallback(async () => { try { setStats(await api("/moods/stats")); } catch {} }, []);
+  const load = useCallback(async () => {
+    try {
+      const [s, ins] = await Promise.all([
+        api("/moods/stats"),
+        api("/moods/insights").catch(() => null),
+      ]);
+      setStats(s);
+      setInsights(ins);
+    } catch {}
+  }, []);
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const pro = user?.pro;
@@ -85,6 +95,68 @@ export default function Stats() {
               <Text style={styles.shareBtnTxt}>Share</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Mood Patterns Insights — surfaces non-obvious things about the user's
+              emotional life (best weekday, trend, dominant emotion, streaks, time-of-day).
+              Hidden when the user hasn't dropped enough auras yet (≥3 needed). */}
+          {insights?.ready && Array.isArray(insights?.insights) && insights.insights.length > 0 ? (
+            <View style={styles.insightsBlock} testID="insights-block">
+              <View style={styles.insightsHeader}>
+                <Ionicons name="sparkles" size={14} color="#A78BFA" />
+                <Text style={styles.insightsTitle}>Insights ✦</Text>
+              </View>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: 10, paddingRight: 16 }}
+              >
+                {insights.insights.map((it: any) => {
+                  const tone = it.tone || "neutral";
+                  const accent =
+                    it.color
+                      ? it.color
+                      : tone === "positive"
+                        ? "#22C55E"
+                        : tone === "warning"
+                          ? "#F97316"
+                          : "#A78BFA";
+                  return (
+                    <View
+                      key={it.id}
+                      testID={`insight-${it.id}`}
+                      style={[
+                        styles.insightCard,
+                        {
+                          borderColor: accent + "55",
+                          backgroundColor: accent + "10",
+                          shadowColor: accent,
+                        },
+                      ]}
+                    >
+                      <View style={[styles.insightIconWrap, { backgroundColor: accent + "30" }]}>
+                        <Ionicons name={(it.icon || "sparkles") as any} size={16} color={accent} />
+                      </View>
+                      <Text style={[styles.insightTitle, { color: accent }]} numberOfLines={2}>
+                        {it.title}
+                      </Text>
+                      {it.subtitle ? (
+                        <Text style={styles.insightSubtitle} numberOfLines={2}>
+                          {it.subtitle}
+                        </Text>
+                      ) : null}
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          ) : insights && !insights.ready && insights.needed > 0 ? (
+            <View style={styles.insightsTeaser}>
+              <Ionicons name="sparkles-outline" size={16} color="#A78BFA" />
+              <Text style={styles.insightsTeaserTxt}>
+                Drop {insights.needed} more aura{insights.needed > 1 ? "s" : ""} to unlock personalised insights ✦
+              </Text>
+            </View>
+          ) : null}
 
           <View style={styles.statRow}>
             <View style={styles.statCard} testID="stat-streak">
@@ -245,6 +317,42 @@ const styles = StyleSheet.create({
   distPct: { color: COLORS.textSecondary, width: 38, textAlign: "right", fontSize: 12 },
   empty: { color: COLORS.textSecondary, textAlign: "center" },
   insights: { padding: 16, borderRadius: 20, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)", gap: 8 },
+  insightsBlock: { marginBottom: 14 },
+  insightsHeader: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 10, paddingHorizontal: 4 },
+  insightsTitle: { color: "#fff", fontSize: 13, fontWeight: "700", letterSpacing: 0.5 },
+  insightCard: {
+    width: 200,
+    padding: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    gap: 10,
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
+  },
+  insightIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  insightTitle: { fontSize: 14, fontWeight: "700", lineHeight: 18 },
+  insightSubtitle: { color: "rgba(255,255,255,0.65)", fontSize: 11, lineHeight: 14 },
+  insightsTeaser: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(167,139,250,0.3)",
+    backgroundColor: "rgba(167,139,250,0.08)",
+  },
+  insightsTeaserTxt: { color: "#fff", fontSize: 12, flex: 1 },
   insight: { color: "#fff", fontSize: 14 },
   subInsight: { color: COLORS.textTertiary, fontSize: 12, marginTop: 6 },
   proCta: { padding: 20, borderRadius: 22, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.04)", gap: 12, alignItems: "center", marginTop: 14 },

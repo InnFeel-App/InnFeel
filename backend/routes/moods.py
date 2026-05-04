@@ -423,3 +423,215 @@ async def stats(user: dict = Depends(get_current_user)):
             insights.append("Your emotional intensity has been moderate this month.")
         result["insights"] = insights
     return result
+
+
+
+# ============================================================================
+# Mood Patterns Insights — data-driven discoveries about the user's emotional life.
+#
+# Returns 3-6 cards that surface non-obvious truths from the last 30/90 days:
+#   • Best / worst weekday for each emotion
+#   • Trend direction (positivity score change vs previous month)
+#   • Streak milestones (current vs personal best)
+#   • Mood diversity score
+#   • Time-of-day preferences (when the user typically logs their aura)
+#
+# Computed live (no cache) since the dataset per-user is tiny (≤ 365 docs). If perf
+# becomes an issue we can memoize per (user_id, day_key) in users.insights_cache.
+# ============================================================================
+_POSITIVE_EMOTIONS = {"joy", "calm", "love", "gratitude", "hope", "pride"}
+_NEGATIVE_EMOTIONS = {"sad", "anxious", "angry", "tired", "lonely", "stressed"}
+_DOW_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+def _emotion_polarity(emotion: str) -> int:
+    """+1 positive, -1 negative, 0 neutral. Used for trend computation."""
+    if emotion in _POSITIVE_EMOTIONS:
+        return 1
+    if emotion in _NEGATIVE_EMOTIONS:
+        return -1
+    return 0
+
+
+@router.get("/moods/insights")
+async def get_insights(user: dict = Depends(get_current_user)):
+    """Surface non-obvious patterns the user hasn't noticed about their auras.
+
+    Each insight is shaped as { id, icon, title, value, subtitle, tone } so the
+    client can render a uniform card layout without per-insight branching.
+    """
+    user_id = user["user_id"]
+    now = now_utc()
+    since_30 = now - timedelta(days=30)
+    since_60 = now - timedelta(days=60)
+    since_90 = now - timedelta(days=90)
+
+    # Pull lightweight projection — we only need emotion, day_key, intensity, created_at.
+    rows_90 = await db.moods.find(
+        {"user_id": user_id, "created_at": {"$gte": since_90}},
+        {"_id": 0, "emotion": 1, "intensity": 1, "day_key": 1, "created_at": 1},
+    ).to_list(500)
+
+    if len(rows_90) < 3:
+        return {
+            "insights": [],
+            "ready": False,
+            "needed": max(0, 3 - len(rows_90)),
+            "message": "Drop a few more auras to unlock personalised insights ✦",
+        }
+
+    rows_30 = [r for r in rows_90 if r["created_at"] >= since_30]
+    rows_30_60 = [r for r in rows_90 if since_60 <= r["created_at"] < since_30]
+
+    insights: list[dict] = []
+
+    # 1) Trend — positivity score this month vs previous month
+    if rows_30 and rows_30_60:
+        score_now = sum(_emotion_polarity(r["emotion"]) for r in rows_30) / len(rows_30)
+        score_prev = sum(_emotion_polarity(r["emotion"]) for r in rows_30_60) / len(rows_30_60)
+        diff = round((score_now - score_prev) * 100)
+        if abs(diff) >= 8:  # only surface when it's noticeable
+            tone = "positive" if diff > 0 else "warning"
+            arrow = "↗︎" if diff > 0 else "↘︎"
+            verb = "more positive" if diff > 0 else "tougher"
+            insights.append({
+                "id": "trend_30",
+                "icon": "trending-up" if diff > 0 else "trending-down",
+                "title": f"{arrow} {abs(diff)}% {verb}",
+                "value": f"{abs(diff)}%",
+                "subtitle": "vs the previous 30 days",
+                "tone": tone,
+            })
+
+    # 2) Best weekday — which day-of-week has the most positive auras
+    by_dow: dict[int, list[int]] = {i: [] for i in range(7)}
+    for r in rows_30:
+        d = r["created_at"]
+        if isinstance(d, str):
+            d = datetime.fromisoformat(d)
+        by_dow[d.weekday()].append(_emotion_polarity(r["emotion"]))
+    dow_scores = {
+        i: (sum(scores) / len(scores)) if scores else None
+        for i, scores in by_dow.items()
+    }
+    populated = {i: s for i, s in dow_scores.items() if s is not None and len(by_dow[i]) >= 2}
+    if populated:
+        best_dow = max(populated, key=populated.get)
+        if populated[best_dow] >= 0.4:
+            insights.append({
+                "id": "best_dow",
+                "icon": "sunny",
+                "title": f"{_DOW_NAMES[best_dow]} is your brightest day",
+                "value": _DOW_NAMES[best_dow],
+                "subtitle": f"{int(populated[best_dow] * 100)}% positive auras",
+                "tone": "positive",
+            })
+        worst_dow = min(populated, key=populated.get)
+        if populated[worst_dow] <= -0.4 and worst_dow != best_dow:
+            insights.append({
+                "id": "worst_dow",
+                "icon": "rainy",
+                "title": f"{_DOW_NAMES[worst_dow]} hits harder",
+                "value": _DOW_NAMES[worst_dow],
+                "subtitle": "Be gentle with yourself on this day",
+                "tone": "warning",
+            })
+
+    # 3) Dominant emotion 30d
+    dist: dict[str, int] = {}
+    for r in rows_30:
+        dist[r["emotion"]] = dist.get(r["emotion"], 0) + 1
+    if dist:
+        dominant_emo = max(dist, key=dist.get)
+        pct = round(dist[dominant_emo] / len(rows_30) * 100)
+        if pct >= 30:  # only highlight when truly dominant
+            insights.append({
+                "id": "dominant_30",
+                "icon": "color-palette",
+                "title": f"Mostly {dominant_emo}",
+                "value": f"{pct}%",
+                "subtitle": "of your auras these 30 days",
+                "tone": "positive" if dominant_emo in _POSITIVE_EMOTIONS else "neutral",
+                "color": EMOTIONS.get(dominant_emo),
+            })
+
+    # 4) Streak insights — current vs personal best
+    current_streak = await compute_streak(user_id)
+    if current_streak >= 3:
+        insights.append({
+            "id": "streak_current",
+            "icon": "flame",
+            "title": f"{current_streak}-day streak 🔥",
+            "value": str(current_streak),
+            "subtitle": "Daily check-ins build self-awareness",
+            "tone": "positive",
+        })
+    # Personal best: longest run anywhere in last 90 days
+    posted_days = sorted({r["day_key"] for r in rows_90})
+    if posted_days:
+        best_run = 1
+        run = 1
+        for i in range(1, len(posted_days)):
+            prev = datetime.strptime(posted_days[i - 1], "%Y-%m-%d")
+            cur = datetime.strptime(posted_days[i], "%Y-%m-%d")
+            if (cur - prev).days == 1:
+                run += 1
+                best_run = max(best_run, run)
+            else:
+                run = 1
+        if best_run >= 7 and best_run > current_streak:
+            insights.append({
+                "id": "streak_best",
+                "icon": "trophy",
+                "title": f"Personal best: {best_run} days",
+                "value": str(best_run),
+                "subtitle": "Can you beat it this month?",
+                "tone": "neutral",
+            })
+
+    # 5) Mood diversity — how many distinct emotions in last 30 days
+    unique_count = len({r["emotion"] for r in rows_30})
+    if unique_count >= 5:
+        insights.append({
+            "id": "diversity",
+            "icon": "prism",
+            "title": f"{unique_count} different emotions",
+            "value": str(unique_count),
+            "subtitle": "You're tuned in to subtle nuances",
+            "tone": "positive",
+        })
+
+    # 6) Time of day — when do they typically post?
+    hour_buckets = {"morning": 0, "afternoon": 0, "evening": 0, "night": 0}
+    for r in rows_30:
+        d = r["created_at"]
+        if isinstance(d, str):
+            d = datetime.fromisoformat(d)
+        h = d.hour
+        if 5 <= h < 12:
+            hour_buckets["morning"] += 1
+        elif 12 <= h < 17:
+            hour_buckets["afternoon"] += 1
+        elif 17 <= h < 22:
+            hour_buckets["evening"] += 1
+        else:
+            hour_buckets["night"] += 1
+    if rows_30:
+        favorite_time = max(hour_buckets, key=hour_buckets.get)
+        if hour_buckets[favorite_time] / len(rows_30) >= 0.5:
+            time_emoji = {"morning": "🌅", "afternoon": "☀️", "evening": "🌆", "night": "🌙"}[favorite_time]
+            insights.append({
+                "id": "favorite_time",
+                "icon": "time",
+                "title": f"You're a {favorite_time} reflector {time_emoji}",
+                "value": favorite_time.capitalize(),
+                "subtitle": f"{int(hour_buckets[favorite_time] / len(rows_30) * 100)}% of your auras",
+                "tone": "neutral",
+            })
+
+    # Cap at 6 most informative cards (already roughly ordered by importance).
+    return {
+        "insights": insights[:6],
+        "ready": True,
+        "computed_for": now.isoformat(),
+    }
