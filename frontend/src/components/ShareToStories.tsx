@@ -68,7 +68,7 @@ export function useShareToStories() {
   const [payload, setPayload] = React.useState<Payload | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [busyLabel, setBusyLabel] = React.useState<string>("Preparing your share…");
-  const [pending, setPending] = React.useState<Pending | null>(null);
+  const [pickerOpen, setPickerOpen] = React.useState(false);
 
   const buildMessage = (p: Payload, dest?: ShareDestination): string => {
     const appLink = "https://innfeel.app";
@@ -291,108 +291,88 @@ export function useShareToStories() {
     }
   };
 
-  /** Public entry point — call this from any screen. */
+  /**
+   * Public entry point — opens the destination picker IMMEDIATELY (no build).
+   * The actual file rendering (~1s for PNG, ~10s for MP4 reel) happens AFTER
+   * the user picks a destination — see onPickDestination below. This keeps
+   * "Share your aura" instant and only builds what's needed for the chosen
+   * destination.
+   */
   const share = async (p: Payload) => {
-    if (busy) return;
-    setBusy(true);
-    setBusyLabel(
-      p.kind === "mood"      ? "Building your aura…"
-      : p.kind === "stats"   ? "Preparing your stats…"
-      : p.kind === "leaderboard" ? "Preparing your leaderboard…"
-      : "Preparing your share…",
-    );
+    if (busy || pickerOpen) return;
     setPayload(p);
-    await new Promise((r) => setTimeout(r, 200)); // mount offscreen card
+    // Mount the offscreen card now so captureRef has a head start when the
+    // user actually picks a destination.
+    setPickerOpen(true);
+  };
+
+  /**
+   * Build the right file format based on the picked destination, then dispatch.
+   *
+   * Strategy:
+   *   • Reel (mood with video) → server-rendered MP4 (~10s, the slow path)
+   *   • Everything else → static PNG of the offscreen ShareCard (~1s, fast)
+   *
+   * This is what shrinks the perceived share time from "always 10s" to
+   * "1s for stories / DMs / messaging apps, 10s only for Reel".
+   */
+  const onPickDestination = async (dest: ShareDestination) => {
+    if (!payload) return;
+    setPickerOpen(false);
+    setBusy(true);
+
+    const p = payload;
+    let file: Pending | null = null;
 
     try {
-      if (p.kind === "stats") {
-        // 1) Enrich, 2) Render PNG, 3) Open destination picker
-        setBusyLabel("Loading your insights…");
-        const rich = await enrichStatsPayload(p);
-        setBusyLabel("Rendering your card…");
-        const uri = await captureCardAsPng(rich);
-        setPending({
+      // ─── Reel path (slow, only when user explicitly wants Reel) ────────
+      if (p.kind === "mood" && dest === "reel") {
+        setBusyLabel("Building your reel… (~10s)");
+        const res = await buildReelFile(p);
+        if (res.ok) {
+          file = {
+            uri: res.uri,
+            mimeType: "video/mp4",
+            uti: "public.mpeg-4",
+            msg: buildMessage(p, dest),
+            hasVideo: res.hasVideo,
+          };
+        } else {
+          // Reel build failed — fall back to PNG silently rather than asking
+          // the user (we already promised them a Reel; static is the closest).
+          setBusyLabel("Falling back to image…");
+        }
+      }
+
+      // ─── Fast PNG path (default for stories/DM/WhatsApp/Telegram/etc.) ──
+      if (!file) {
+        setBusyLabel("Rendering your aura…");
+        let richProps: any = p;
+        if (p.kind === "stats") {
+          richProps = await enrichStatsPayload(p);
+        }
+        const uri = await captureCardAsPng(richProps);
+        file = {
           uri,
           mimeType: "image/png",
           uti: "public.png",
-          msg: buildMessage(p),
+          msg: buildMessage(p, dest),
           hasVideo: false,
-        });
-        return;
+        };
       }
-      if (p.kind === "leaderboard") {
-        setBusyLabel("Rendering your leaderboard…");
-        const uri = await captureCardAsPng(p);
-        setPending({
-          uri,
-          mimeType: "image/png",
-          uti: "public.png",
-          msg: buildMessage(p),
-          hasVideo: false,
-        });
-        return;
-      }
-      // Mood — build the dynamic reel
-      const res = await buildReelFile(p);
-      if (res.ok) {
-        setPending({
-          uri: res.uri,
-          mimeType: "video/mp4",
-          uti: "public.mpeg-4",
-          msg: buildMessage(p),
-          hasVideo: res.hasVideo,
-        });
-        return;
-      }
-      // Reel failed → ask the user whether they want the static fallback.
-      Alert.alert(
-        "Reel build failed",
-        `${res.reason}.\n\nWould you like to share a static image instead?`,
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Share image",
-            onPress: async () => {
-              try {
-                const uri = await captureCardAsPng({
-                  kind: "mood",
-                  word: p.word,
-                  emotion: p.emotion,
-                  intensity: p.intensity,
-                  userName: p.userName,
-                  music: p.music,
-                });
-                setPending({
-                  uri,
-                  mimeType: "image/png",
-                  uti: "public.png",
-                  msg: buildMessage(p),
-                  hasVideo: false,
-                });
-              } catch (e: any) {
-                Alert.alert("Share failed", e?.message || "Try again.");
-              }
-            },
-          },
-        ],
-      );
+
+      // ─── Hand off to the OS ────────────────────────────────────────────
+      await dispatchShare(p, dest, file);
+    } catch (e: any) {
+      Alert.alert("Share failed", e?.message || "Try again.");
     } finally {
       setBusy(false);
+      setTimeout(() => setPayload(null), 400);
     }
   };
 
-  const onPickDestination = async (dest: ShareDestination) => {
-    if (!pending || !payload) return;
-    const file = pending;
-    const p = payload;
-    setPending(null);
-    await dispatchShare(p, dest, file);
-    // Keep payload mounted briefly so any pending capture can finish.
-    setTimeout(() => setPayload(null), 600);
-  };
-
   const onCancelDestination = () => {
-    setPending(null);
+    setPickerOpen(false);
     setTimeout(() => setPayload(null), 400);
   };
 
@@ -431,15 +411,15 @@ export function useShareToStories() {
           </View>
         ) : null}
         <ShareDestinationPicker
-          visible={!!pending}
-          hasVideo={!!pending?.hasVideo}
+          visible={pickerOpen}
+          hasVideo={payload?.kind === "mood"}
           kind={(payload?.kind as any) || "mood"}
           onPick={onPickDestination}
           onCancel={onCancelDestination}
         />
       </>
     );
-  }, [payload, busy, busyLabel, pending]);
+  }, [payload, busy, busyLabel, pickerOpen]);
 
   return { share, Renderer, busy };
 }

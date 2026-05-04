@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, StyleSheet, Modal, TouchableOpacity, Platform, ScrollView } from "react-native";
+import { View, Text, StyleSheet, Modal, TouchableOpacity, Platform, ScrollView, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { COLORS } from "../theme";
@@ -146,8 +146,16 @@ function DestinationRow({
   onPress: () => void;
   testID?: string;
 }) {
+  // Pressable is more reliable than TouchableOpacity inside a Modal/ScrollView
+  // chain on iOS — TouchableOpacity sometimes loses gesture priority to the
+  // ScrollView for items below the visible fold and silently swallows taps.
   return (
-    <TouchableOpacity activeOpacity={0.85} onPress={onPress} style={styles.row} testID={testID}>
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.row, pressed && { opacity: 0.7 }]}
+      testID={testID}
+      hitSlop={8}
+    >
       <View style={styles.iconWrap}>
         <LinearGradient
           colors={gradient as any}
@@ -162,7 +170,7 @@ function DestinationRow({
         <Text style={styles.rowSubtitle}>{subtitle}</Text>
       </View>
       <Ionicons name="chevron-forward" size={18} color={COLORS.textTertiary} />
-    </TouchableOpacity>
+    </Pressable>
   );
 }
 
