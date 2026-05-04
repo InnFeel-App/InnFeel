@@ -1,12 +1,11 @@
 import React, { useRef } from "react";
-import { View, Alert, Platform, StyleSheet, ActivityIndicator, Linking, Text } from "react-native";
+import { View, Alert, Platform, StyleSheet, ActivityIndicator, Text } from "react-native";
 import { captureRef } from "react-native-view-shot";
 import * as Sharing from "expo-sharing";
 // Expo SDK 54 refactored expo-file-system. The legacy import keeps the simpler
 // downloadAsync + cacheDirectory surface alive (still maintained, just deprecation-warned).
 import * as LegacyFS from "expo-file-system/legacy";
 import ShareCard from "./ShareCard";
-import ShareDestinationPicker, { ShareDestination } from "./ShareDestinationPicker";
 import { api } from "../api";
 
 type MoodShare = {
@@ -68,18 +67,9 @@ export function useShareToStories() {
   const [payload, setPayload] = React.useState<Payload | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [busyLabel, setBusyLabel] = React.useState<string>("Preparing your share…");
-  const [pickerOpen, setPickerOpen] = React.useState(false);
 
-  const buildMessage = (p: Payload, dest?: ShareDestination): string => {
+  const buildMessage = (p: Payload): string => {
     const appLink = "https://innfeel.app";
-    const tabHint =
-      dest === "story"     ? "→ Tap STORY in Instagram"
-      : dest === "reel"    ? "→ Tap REEL in Instagram"
-      : dest === "dm"      ? "→ Tap DIRECT in Instagram"
-      : dest === "whatsapp"? "→ Pick WhatsApp"
-      : dest === "telegram"? "→ Pick Telegram"
-      : dest === "messages"? "→ Pick Messages"
-      : "";
     if (p.kind === "mood") {
       const parts = [`My aura today: ${p.word || p.emotion} ✦`];
       if (p.music?.title) {
@@ -87,7 +77,6 @@ export function useShareToStories() {
       }
       parts.push(`One aura a day! Share yours. Unlock the others!`);
       parts.push(appLink);
-      if (tabHint) parts.push(tabHint);
       return parts.join("\n");
     }
     if (p.kind === "leaderboard") {
@@ -96,29 +85,12 @@ export function useShareToStories() {
       const top = streakCat?.top3?.[0];
       if (top) lines.push(`👑 ${top.name} — ${top.value} day streak`);
       lines.push(appLink);
-      if (tabHint) lines.push(tabHint);
       return lines.join("\n");
     }
-    const lines = [
+    return [
       `My InnFeel journey: ${p.streak} day streak ✦ Mostly feeling ${p.dominant}.`,
       appLink,
-    ];
-    if (tabHint) lines.push(tabHint);
-    return lines.join("\n");
-  };
-
-  // Direct deep-link schemes per destination. We try these AFTER the system share
-  // sheet so the user can pick the app from inside our flow without leaving InnFeel
-  // forever stuck. NOTE: with media, only the iOS share sheet can deliver the file
-  // — these schemes only carry text. We use them as a last resort fallback for the
-  // "More" button or when the user installed the app but the share sheet hangs.
-  const DEEP_LINKS: Partial<Record<ShareDestination, (msg: string) => string>> = {
-    whatsapp: (msg) => `whatsapp://send?text=${encodeURIComponent(msg)}`,
-    telegram: (msg) => `tg://msg?text=${encodeURIComponent(msg)}`,
-    messages: (msg) => Platform.OS === "ios" ? `sms:&body=${encodeURIComponent(msg)}` : `sms:?body=${encodeURIComponent(msg)}`,
-    story:    () => `instagram://story-camera`,
-    reel:     () => `instagram://reels-camera`,
-    dm:       () => `instagram://direct-inbox`,
+    ].join("\n");
   };
 
   /**
@@ -213,140 +185,54 @@ export function useShareToStories() {
   };
 
   /**
-   * Hand off the prepared file. Strategy (June 2026 v3):
-   *
-   *   PRIMARY: Sharing.shareAsync — the OS share sheet. This is the ONLY
-   *   path that actually transfers the media (PNG/MP4) to the destination
-   *   app. The user picks the destination from the OS sheet (we hint which
-   *   one to pick via dialogTitle).
-   *
-   *   FALLBACK: Linking.openURL — only fires if the share sheet is
-   *   unavailable. Opens the destination app but WITHOUT media (deep links
-   *   carry text only). User would have to manually attach media in the
-   *   destination app.
-   *
-   *   IMPORTANT: a 600ms delay so iOS fully dismisses our picker before
-   *   presenting UIActivityViewController. Below that, iOS can silently
-   *   drop the activity controller because two modals would conflict.
-   */
-  const dispatchShare = async (p: Payload, dest: ShareDestination, file: Pending) => {
-    // Long-enough dismiss window for the picker's slide animation + iOS
-    // modal-controller turnover. 380ms wasn't always enough.
-    await new Promise((r) => setTimeout(r, 600));
-
-    // PRIMARY — system share sheet (transfers the file).
-    let shareSheetTried = false;
-    try {
-      if (await Sharing.isAvailableAsync()) {
-        shareSheetTried = true;
-        await Sharing.shareAsync(file.uri, {
-          mimeType: file.mimeType,
-          dialogTitle: buildMessage(p, dest),
-          UTI: Platform.OS === "ios" ? file.uti : undefined,
-        });
-        return;
-      }
-    } catch (e: any) {
-      // User cancelled the share sheet — that's OK, no-op.
-      if (/cancel/i.test(e?.message || "")) return;
-      // Otherwise fall through to deep-link fallback below.
-    }
-
-    // FALLBACK — open the destination app via URL scheme (no media).
-    // Only useful when the share sheet is genuinely unavailable.
-    if (dest !== "more") {
-      const builder = DEEP_LINKS[dest];
-      if (builder) {
-        const url = builder(buildMessage(p, dest));
-        try {
-          await Linking.openURL(url);
-          // Tell the user the app opened but media wasn't attached.
-          Alert.alert(
-            `${appLabel(dest)} opened`,
-            "We couldn't transfer the visual automatically — your aura is saved in InnFeel, you can re-share via 'More apps…' for full handoff.",
-          );
-          return;
-        } catch {}
-      }
-    }
-
-    if (!shareSheetTried) {
-      Alert.alert(
-        "Sharing unavailable",
-        "Your device doesn't expose a share sheet. Try on a real device.",
-      );
-    }
-  };
-
-  // Pretty label for each destination — used in error messages.
-  const appLabel = (dest: ShareDestination): string => {
-    switch (dest) {
-      case "whatsapp": return "WhatsApp";
-      case "telegram": return "Telegram";
-      case "messages": return "Messages";
-      case "story":
-      case "reel":
-      case "dm":      return "Instagram";
-      default:         return "the app";
-    }
-  };
-
-  /**
-   * Public entry point — opens the destination picker IMMEDIATELY (no build).
-   * The actual file rendering (~1s for PNG, ~10s for MP4 reel) happens AFTER
-   * the user picks a destination — see onPickDestination below. This keeps
-   * "Share your aura" instant and only builds what's needed for the chosen
-   * destination.
+   * Public entry point. Single button → single flow:
+   *   1. Build the dynamic file:
+   *      - Mood   → server-rendered MP4 reel (photo/video + audio + Ken Burns,
+   *        ~10s build). FALLBACK to PNG if the server reel fails.
+   *      - Stats  → static PNG of the offscreen ShareCard (~1s).
+   *      - LB     → static PNG of the offscreen ShareCard (~1s).
+   *   2. Hand off to the OS share sheet (Sharing.shareAsync) — which lets the
+   *      user pick ANY installed app (IG, WA, TG, Messages, Mail, etc.) and
+   *      transfers the file to it. This is the only API that actually moves
+   *      media to the destination app — there is no reliable way to bypass
+   *      the share sheet to open IG/WA directly with attached media in Expo
+   *      Go without a native module + UIPasteboard tricks.
    */
   const share = async (p: Payload) => {
-    if (busy || pickerOpen) return;
-    setPayload(p);
-    // Mount the offscreen card now so captureRef has a head start when the
-    // user actually picks a destination.
-    setPickerOpen(true);
-  };
-
-  /**
-   * Build the right file format based on the picked destination, then dispatch.
-   *
-   * Strategy:
-   *   • Reel (mood with video) → server-rendered MP4 (~10s, the slow path)
-   *   • Everything else → static PNG of the offscreen ShareCard (~1s, fast)
-   *
-   * This is what shrinks the perceived share time from "always 10s" to
-   * "1s for stories / DMs / messaging apps, 10s only for Reel".
-   */
-  const onPickDestination = async (dest: ShareDestination) => {
-    if (!payload) return;
-    setPickerOpen(false);
+    if (busy) return;
     setBusy(true);
+    setBusyLabel(
+      p.kind === "mood"      ? "Building your aura… (~10s)"
+      : p.kind === "stats"   ? "Rendering your stats…"
+      : p.kind === "leaderboard" ? "Rendering your leaderboard…"
+      : "Preparing your share…",
+    );
+    setPayload(p);
 
-    const p = payload;
     let file: Pending | null = null;
-
     try {
-      // ─── Reel path (slow, only when user explicitly wants Reel) ────────
-      if (p.kind === "mood" && dest === "reel") {
-        setBusyLabel("Building your reel… (~10s)");
+      // ─── Mood: dynamic MP4 reel from the server (preferred) ──────────────
+      if (p.kind === "mood") {
         const res = await buildReelFile(p);
         if (res.ok) {
           file = {
             uri: res.uri,
             mimeType: "video/mp4",
             uti: "public.mpeg-4",
-            msg: buildMessage(p, dest),
+            msg: buildMessage(p),
             hasVideo: res.hasVideo,
           };
         } else {
-          // Reel build failed — fall back to PNG silently rather than asking
-          // the user (we already promised them a Reel; static is the closest).
-          setBusyLabel("Falling back to image…");
+          // Server reel failed — silently fall back to a static PNG render
+          // so the user still gets a share. We don't gate this behind an
+          // alert because the user just wants to share, not debug.
+          setBusyLabel("Rendering your aura…");
         }
       }
 
-      // ─── Fast PNG path (default for stories/DM/WhatsApp/Telegram/etc.) ──
+      // ─── Stats / Leaderboard / Mood-fallback: render the offscreen card
+      //     as a high-res 1080×1920 PNG (~1s). ──────────────────────────────
       if (!file) {
-        setBusyLabel("Rendering your aura…");
         let richProps: any = p;
         if (p.kind === "stats") {
           richProps = await enrichStatsPayload(p);
@@ -356,24 +242,35 @@ export function useShareToStories() {
           uri,
           mimeType: "image/png",
           uti: "public.png",
-          msg: buildMessage(p, dest),
+          msg: buildMessage(p),
           hasVideo: false,
         };
       }
 
-      // ─── Hand off to the OS ────────────────────────────────────────────
-      await dispatchShare(p, dest, file);
+      // ─── Hand off to the OS share sheet ─────────────────────────────────
+      // Tiny pause so the busy overlay's last "Rendering…" message is
+      // visible — otherwise the share sheet appears mid-flicker.
+      await new Promise((r) => setTimeout(r, 120));
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(file.uri, {
+          mimeType: file.mimeType,
+          dialogTitle: file.msg,
+          UTI: Platform.OS === "ios" ? file.uti : undefined,
+        });
+      } else {
+        Alert.alert("Sharing unavailable", "Your device doesn't support sharing.");
+      }
     } catch (e: any) {
-      Alert.alert("Share failed", e?.message || "Try again.");
+      // User-cancellation throws on iOS — that's fine, no-op.
+      if (!/cancel/i.test(e?.message || "")) {
+        Alert.alert("Share failed", e?.message || "Try again.");
+      }
     } finally {
       setBusy(false);
+      // Keep the offscreen card mounted for a moment in case captureRef is
+      // still flushing, then unmount.
       setTimeout(() => setPayload(null), 400);
     }
-  };
-
-  const onCancelDestination = () => {
-    setPickerOpen(false);
-    setTimeout(() => setPayload(null), 400);
   };
 
   const Renderer = React.useCallback(() => {
@@ -410,16 +307,9 @@ export function useShareToStories() {
             </View>
           </View>
         ) : null}
-        <ShareDestinationPicker
-          visible={pickerOpen}
-          hasVideo={payload?.kind === "mood"}
-          kind={(payload?.kind as any) || "mood"}
-          onPick={onPickDestination}
-          onCancel={onCancelDestination}
-        />
       </>
     );
-  }, [payload, busy, busyLabel, pickerOpen]);
+  }, [payload, busy, busyLabel]);
 
   return { share, Renderer, busy };
 }
