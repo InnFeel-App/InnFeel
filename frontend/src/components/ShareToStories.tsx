@@ -1,5 +1,5 @@
 import React, { useRef } from "react";
-import { View, Alert, Platform, StyleSheet, ActivityIndicator } from "react-native";
+import { View, Alert, Platform, StyleSheet, ActivityIndicator, Linking } from "react-native";
 import { captureRef } from "react-native-view-shot";
 import * as Sharing from "expo-sharing";
 // Expo SDK 54 refactored expo-file-system. The legacy import keeps the simpler
@@ -57,9 +57,12 @@ export function useShareToStories() {
   const buildMessage = (p: Payload, dest?: ShareDestination): string => {
     const appLink = "https://innfeel.app";
     const tabHint =
-      dest === "story" ? "→ Tap STORY in Instagram"
-      : dest === "reel" ? "→ Tap REEL in Instagram"
-      : dest === "dm"   ? "→ Tap DIRECT in Instagram"
+      dest === "story"     ? "→ Tap STORY in Instagram"
+      : dest === "reel"    ? "→ Tap REEL in Instagram"
+      : dest === "dm"      ? "→ Tap DIRECT in Instagram"
+      : dest === "whatsapp"? "→ Pick WhatsApp"
+      : dest === "telegram"? "→ Pick Telegram"
+      : dest === "messages"? "→ Pick Messages"
       : "";
     if (p.kind === "mood") {
       const parts = [`My aura today: ${p.word || p.emotion} ✦`];
@@ -77,6 +80,20 @@ export function useShareToStories() {
     ];
     if (tabHint) lines.push(tabHint);
     return lines.join("\n");
+  };
+
+  // Direct deep-link schemes per destination. We try these AFTER the system share
+  // sheet so the user can pick the app from inside our flow without leaving InnFeel
+  // forever stuck. NOTE: with media, only the iOS share sheet can deliver the file
+  // — these schemes only carry text. We use them as a last resort fallback for the
+  // "More" button or when the user installed the app but the share sheet hangs.
+  const DEEP_LINKS: Partial<Record<ShareDestination, (msg: string) => string>> = {
+    whatsapp: (msg) => `whatsapp://send?text=${encodeURIComponent(msg)}`,
+    telegram: (msg) => `tg://msg?text=${encodeURIComponent(msg)}`,
+    messages: (msg) => Platform.OS === "ios" ? `sms:&body=${encodeURIComponent(msg)}` : `sms:?body=${encodeURIComponent(msg)}`,
+    story:    () => `instagram://story-camera`,
+    reel:     () => `instagram://reels-camera`,
+    dm:       () => `instagram://direct-inbox`,
   };
 
   /**
@@ -163,21 +180,61 @@ export function useShareToStories() {
     return { ok: true, uri: dest, hasVideo: !!reel.has_video };
   };
 
-  /** Hand off the prepared file to the OS share sheet. */
+  /**
+   * Hand off the prepared file. Strategy:
+   *   1. Try the system share sheet (Sharing.shareAsync). It supports media transfer
+   *      to ALL apps (Instagram, WhatsApp, Telegram, Messages, etc.). On a real
+   *      device this opens the iOS/Android sheet — user picks the app from there.
+   *   2. If the share sheet is unavailable AND we have a deep-link for the picked
+   *      destination, fall back to opening the app via Linking (text-only payload).
+   *
+   * IMPORTANT: We wait ~350ms BEFORE invoking shareAsync so iOS has time to dismiss
+   * our own modal. Otherwise iOS refuses to present a UIActivityViewController on top
+   * of an animating modal, and the user sees "nothing happens".
+   */
   const dispatchShare = async (p: Payload, dest: ShareDestination, file: Pending) => {
-    if (!(await Sharing.isAvailableAsync())) {
-      Alert.alert("Sharing unavailable", "Your device doesn't support sharing.");
-      return;
+    // Wait for our modal's slide-down animation to fully clear.
+    await new Promise((r) => setTimeout(r, 380));
+
+    const sheetAvailable = await Sharing.isAvailableAsync().catch(() => false);
+
+    if (sheetAvailable) {
+      try {
+        await Sharing.shareAsync(file.uri, {
+          mimeType: file.mimeType,
+          dialogTitle: buildMessage(p, dest),
+          UTI: Platform.OS === "ios" ? file.uti : undefined,
+        });
+        return;
+      } catch (e: any) {
+        // shareAsync sometimes throws when the user cancels — that's fine, no-op.
+        if (typeof e?.message === "string" && /cancel/i.test(e.message)) return;
+        // Otherwise fall through to deep-link fallback.
+      }
     }
-    try {
-      await Sharing.shareAsync(file.uri, {
-        mimeType: file.mimeType,
-        dialogTitle: buildMessage(p, dest),
-        UTI: Platform.OS === "ios" ? file.uti : undefined,
-      });
-    } catch (e: any) {
-      Alert.alert("Share failed", e?.message || "Try again.");
+
+    // Fallback path — text-only deep link (no media). Tell the user the link was
+    // opened so they don't think nothing happened.
+    const builder = DEEP_LINKS[dest];
+    if (builder) {
+      const url = builder(buildMessage(p, dest));
+      const can = await Linking.canOpenURL(url).catch(() => false);
+      if (can) {
+        try {
+          await Linking.openURL(url);
+          Alert.alert(
+            "Heads up",
+            "Your aura was prepared but the share sheet wasn't available, so we opened the app with the link instead. Paste your aura there manually if needed.",
+          );
+          return;
+        } catch {}
+      }
     }
+
+    Alert.alert(
+      "Sharing unavailable",
+      "Your device or simulator doesn't expose a share sheet. Try on a real device.",
+    );
   };
 
   /** Public entry point — call this from any screen. */
