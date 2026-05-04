@@ -17,18 +17,26 @@ import { uploadMedia } from "../src/media";
 import { COLORS } from "../src/theme";
 
 // Insta-style DM picker reactions (heart is NOT here — it's reserved for double-tap).
+// 12 slots = 2 rows of 6 on typical phone widths. Chosen to cover the emotional palette
+// of a mood-sharing app (love, support, awe, comfort, prayer/gratitude).
 const REACTIONS: {
-  key: "thumb" | "fire" | "laugh" | "wow" | "sad" | "clap" | "hundred" | "touched";
+  key:
+    | "thumb" | "fire" | "laugh" | "wow" | "sad" | "clap"
+    | "hundred" | "touched" | "love_eyes" | "pray" | "rainbow" | "hug_arms";
   emoji: string;
 }[] = [
-  { key: "thumb",   emoji: "👍" },
-  { key: "fire",    emoji: "🔥" },
-  { key: "laugh",   emoji: "😂" },
-  { key: "wow",     emoji: "😮" },
-  { key: "sad",     emoji: "😢" },
-  { key: "clap",    emoji: "👏" },
-  { key: "hundred", emoji: "💯" },
-  { key: "touched", emoji: "🥹" },
+  { key: "thumb",     emoji: "👍" },
+  { key: "fire",      emoji: "🔥" },
+  { key: "laugh",     emoji: "😂" },
+  { key: "wow",       emoji: "😮" },
+  { key: "sad",       emoji: "😢" },
+  { key: "clap",      emoji: "👏" },
+  { key: "hundred",   emoji: "💯" },
+  { key: "touched",   emoji: "🥹" },
+  { key: "love_eyes", emoji: "🥰" },
+  { key: "pray",      emoji: "🙏" },
+  { key: "rainbow",   emoji: "🌈" },
+  { key: "hug_arms",  emoji: "🫂" },
 ];
 // Heart is still a valid server-side key — we just send it from the double-tap gesture.
 const HEART_EMOJI = "❤️";

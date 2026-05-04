@@ -140,6 +140,9 @@ async def friends_feed(user: dict = Depends(get_current_user)):
     friend_ids = [f["friend_id"] for f in friendships]
     if not friend_ids:
         return {"locked": False, "items": []}
+    # Friends that *I* marked as close (for sort priority — appear first).
+    my_close_friend_ids = {f["friend_id"] for f in friendships if f.get("close")}
+    # Friends that marked *me* as close (so I can see their `close`-privacy auras).
     close_edges = await db.friendships.find(
         {"user_id": {"$in": friend_ids}, "friend_id": user["user_id"], "close": True},
         {"_id": 0, "user_id": 1},
@@ -173,9 +176,14 @@ async def friends_feed(user: dict = Depends(get_current_user)):
         it["author_name"] = a.get("name", "Friend")
         it["author_color"] = a.get("avatar_color", "#A78BFA")
         it["author_avatar_b64"] = a.get("avatar_b64")
+        # Flag so the client can style close-friends' cards if desired.
+        it["author_is_close"] = it["user_id"] in my_close_friend_ids
         if a.get("avatar_key"):
             it["author_avatar_url"] = _r2.generate_get_url(a["avatar_key"])
         resolve_media(it)
+    # Two-tier sort: close friends first, then by created_at desc within each tier.
+    # `sorted` is stable — items already come pre-sorted by created_at desc.
+    items.sort(key=lambda x: 0 if x.get("author_is_close") else 1)
     return {"locked": False, "items": items}
 
 

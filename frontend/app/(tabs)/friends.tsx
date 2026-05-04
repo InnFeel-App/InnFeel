@@ -136,12 +136,7 @@ export default function Friends() {
                 <Text style={styles.avatarTxt}>{(f.name || "?").slice(0, 1).toUpperCase()}</Text>
               </View>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                  <Text style={styles.name} numberOfLines={1}>{f.name}</Text>
-                  {f.is_close ? (
-                    <Ionicons name="star" size={14} color="#FACC15" style={{ marginLeft: 2 }} />
-                  ) : null}
-                </View>
+                <Text style={styles.name} numberOfLines={1}>{f.name}</Text>
                 {typeof f.streak === "number" && f.streak > 0 ? (
                   <Text style={styles.streakTxt}>{f.streak}🔥</Text>
                 ) : null}

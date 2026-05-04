@@ -90,9 +90,13 @@ class MessageIn(BaseModel):
 
 
 class MessageReactIn(BaseModel):
-    # Expanded to Insta-like set. `heart` stays for double-tap gesture;
-    # remaining emojis are the ones shown in the picker.
-    emoji: Literal["heart", "thumb", "fire", "laugh", "wow", "sad", "clap", "hundred", "touched"]
+    # Expanded Insta-like set. `heart` stays valid (reserved for the double-tap
+    # gesture client-side, not shown in the picker).
+    emoji: Literal[
+        "heart", "thumb", "fire", "laugh", "wow", "sad",
+        "clap", "hundred", "touched",
+        "love_eyes", "pray", "rainbow", "hug_arms",
+    ]
 
 
 class AddFriendIn(BaseModel):

@@ -520,19 +520,24 @@ const styles = StyleSheet.create({  card: {
 
   reactWrap: { marginTop: 16, paddingTop: 14, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.08)" },
   sectionLabel: { color: COLORS.textTertiary, fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 },
-  reactRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  // 2 lignes × 4 réactions : flexBasis ~23% garantit 4 colonnes quel que soit l'écran.
+  reactRow: { flexDirection: "row", flexWrap: "wrap", columnGap: 6, rowGap: 6 },
   reactBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    height: 34,
-    borderRadius: 18,
+    justifyContent: "center",
+    gap: 4,
+    paddingHorizontal: 4,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: "rgba(255,255,255,0.06)",
     borderWidth: 1,
     borderColor: COLORS.border,
+    flexBasis: "23.5%",
+    flexGrow: 1,
+    minWidth: 0,
   },
-  reactLabel: { color: "#fff", fontSize: 12, fontWeight: "600" },
+  reactLabel: { color: "#fff", fontSize: 11, fontWeight: "600", flexShrink: 1 },
 
   actionRow: { flexDirection: "row", gap: 8, marginTop: 12, alignItems: "center", flexWrap: "wrap" },
   actionBtn: {

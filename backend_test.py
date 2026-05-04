@@ -1,299 +1,255 @@
-"""Session 17 backend test — Instagram Reel share endpoint + regressions.
-
-Test plan:
- 1) Owner happy path (luna): POST /api/share/reel/<mood_id> → 200 with ok,url,key,duration=15.
-    Verify downloading the presigned URL returns HTTP 200, video/mp4, >10KB.
- 2) Not your aura: admin trying to share luna's mood → 403.
- 3) Not found: fake mood_id → 404.
- 4) Unauth: no auth → 401.
- 5) Minimal content (no photo/video/music) still succeeds with has_audio:false, has_video:false.
- 6) Regression spot-check: /auth/me, /moods/feed, /friends (no email), /messages/unread-count,
-    /notifications/prefs (includes weekly_recap).
-"""
+"""Session 18 backend test — DM reaction emoji expansion + close-friends-first feed sort."""
 import asyncio
 import sys
-
+from typing import Optional
 import httpx
 
 BASE = "https://charming-wescoff-8.preview.emergentagent.com/api"
-
 ADMIN_EMAIL = "hello@innfeel.app"
-ADMIN_PWD = "admin123"
+ADMIN_PASS = "admin123"
 LUNA_EMAIL = "luna@innfeel.app"
-LUNA_PWD = "demo1234"
+LUNA_PASS = "demo1234"
 
-OK = 0
-FAIL = 0
-LINES = []
+results = []
 
 
-def log(tag, ok, detail=""):
-    global OK, FAIL
+def rec(name, ok, detail=""):
+    results.append((name, ok, detail))
     mark = "PASS" if ok else "FAIL"
-    if ok:
-        OK += 1
-    else:
-        FAIL += 1
-    line = f"[{mark}] {tag} :: {detail}"
-    print(line, flush=True)
-    LINES.append(line)
+    print(f"[{mark}] {name} :: {detail}")
 
 
-async def login(client, email, pwd):
-    client.cookies.clear()
-    r = await client.post(f"{BASE}/auth/login", json={"email": email, "password": pwd})
-    r.raise_for_status()
-    data = r.json()
-    return data.get("access_token"), data.get("user", {})
+def H(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
 
 
-def hdr(tok):
-    return {"Authorization": f"Bearer {tok}"}
-
-
-async def api_get(client, path, tok, **kw):
-    client.cookies.clear()
-    return await client.get(f"{BASE}{path}", headers=hdr(tok), **kw)
-
-
-async def api_post(client, path, tok, json=None, **kw):
-    client.cookies.clear()
-    return await client.post(f"{BASE}{path}", headers=hdr(tok), json=json, **kw)
-
-
-async def api_del(client, path, tok, **kw):
-    client.cookies.clear()
-    return await client.delete(f"{BASE}{path}", headers=hdr(tok), **kw)
-
-
-async def ensure_luna_mood(client, tok, minimal=False, want_rich=False):
-    """Ensure luna has a mood today. If minimal=True, ensure no photo/video/music attached."""
-    r = await api_get(client, "/moods/today", tok)
-    today = r.json().get("mood") if r.status_code == 200 else None
-    if minimal:
-        # Delete and recreate simple mood.
-        await api_del(client, "/moods/today", tok)
-        payload = {"emotion": "calm", "word": "quiet", "intensity": 2}
-        r = await api_post(client, "/moods", tok, json=payload)
-        if r.status_code != 200:
-            log("ensure_minimal_mood", False, f"POST /moods {r.status_code} {r.text[:200]}")
-            return None
-        return r.json().get("mood", {}).get("mood_id") or r.json().get("mood_id")
-    if today and today.get("mood_id"):
-        return today["mood_id"]
-    payload = {"emotion": "joy", "word": "Radiant", "intensity": 3, "text": "testing reel"}
-    r = await api_post(client, "/moods", tok, json=payload)
+async def login(client: httpx.AsyncClient, email: str, password: str) -> Optional[dict]:
+    r = await client.post(f"{BASE}/auth/login", json={"email": email, "password": password})
     if r.status_code != 200:
-        log("ensure_mood", False, f"POST /moods {r.status_code} {r.text[:200]}")
+        rec(f"login {email}", False, f"status={r.status_code} body={r.text[:200]}")
         return None
-    j = r.json()
-    return j.get("mood", {}).get("mood_id") or j.get("mood_id")
+    body = r.json()
+    rec(f"login {email}", True, f"user_id={body.get('user',{}).get('user_id','?')}")
+    client.cookies.clear()
+    return body
+
+
+async def get_me(client: httpx.AsyncClient, token: str) -> dict:
+    client.cookies.clear()
+    r = await client.get(f"{BASE}/auth/me", headers=H(token))
+    return r.json() if r.status_code == 200 else {}
+
+
+async def ensure_pro(client: httpx.AsyncClient, token: str, who: str):
+    me = await get_me(client, token)
+    if me.get("pro"):
+        rec(f"{who} already Pro", True, f"pro_source={me.get('pro_source')}")
+        return
+    client.cookies.clear()
+    r = await client.post(f"{BASE}/dev/toggle-pro", headers=H(token))
+    rec(f"{who} dev/toggle-pro to Pro",
+        r.status_code == 200 and r.json().get("pro") is True,
+        f"status={r.status_code} body={r.text[:160]}")
+
+
+async def ensure_today_mood(client: httpx.AsyncClient, token: str, who: str,
+                            emotion="joy", word="ok"):
+    client.cookies.clear()
+    r = await client.get(f"{BASE}/moods/today", headers=H(token))
+    if r.status_code == 200 and (r.json() or {}).get("mood"):
+        rec(f"{who} today mood exists", True,
+            f"mood_id={r.json()['mood'].get('mood_id')}")
+        return r.json()["mood"]
+    client.cookies.clear()
+    r = await client.post(
+        f"{BASE}/moods", headers=H(token),
+        json={"word": word, "emotion": emotion, "intensity": 3, "privacy": "friends"},
+    )
+    ok = r.status_code == 200
+    rec(f"{who} POST /moods today", ok, f"status={r.status_code} body={r.text[:160]}")
+    return r.json().get("mood") if ok else None
+
+
+async def ensure_friends(client: httpx.AsyncClient, admin_tok: str):
+    client.cookies.clear()
+    r = await client.post(f"{BASE}/friends/add", headers=H(admin_tok),
+                          json={"email": LUNA_EMAIL})
+    rec("admin /friends/add luna (idempotent)",
+        r.status_code in (200, 400),
+        f"status={r.status_code} body={r.text[:160]}")
+
+
+async def get_or_create_message_luna_to_friend(client: httpx.AsyncClient,
+                                               luna_tok: str, peer_id: str):
+    client.cookies.clear()
+    r = await client.post(f"{BASE}/messages/with/{peer_id}", headers=H(luna_tok),
+                          json={"text": "session 18 reaction test"})
+    if r.status_code != 200:
+        rec("luna POST /messages/with/peer", False,
+            f"status={r.status_code} body={r.text[:200]}")
+        return None
+    msg_id = r.json().get("message", {}).get("message_id")
+    rec("luna POST /messages/with/peer", bool(msg_id), f"message_id={msg_id}")
+    return msg_id
+
+
+async def react(client: httpx.AsyncClient, tok: str, msg_id: str, emoji: str):
+    client.cookies.clear()
+    return await client.post(f"{BASE}/messages/{msg_id}/react",
+                             headers=H(tok), json={"emoji": emoji})
 
 
 async def main():
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
-        # --- LOGIN ---
-        try:
-            luna_tok, luna_user = await login(client, LUNA_EMAIL, LUNA_PWD)
-            log("login.luna", True, f"user_id={luna_user.get('user_id')}")
-        except Exception as e:
-            log("login.luna", False, str(e))
+    async with httpx.AsyncClient(timeout=60.0, follow_redirects=False) as client:
+        admin_body = await login(client, ADMIN_EMAIL, ADMIN_PASS)
+        luna_body = await login(client, LUNA_EMAIL, LUNA_PASS)
+        if not admin_body or not luna_body:
+            print("FATAL: login failed")
             return
-        try:
-            admin_tok, admin_user = await login(client, ADMIN_EMAIL, ADMIN_PWD)
-            log("login.admin", True, f"user_id={admin_user.get('user_id')}")
-        except Exception as e:
-            log("login.admin", False, str(e))
-            return
+        admin_tok = admin_body["access_token"]
+        luna_tok = luna_body["access_token"]
+        admin_id = admin_body["user"]["user_id"]
+        luna_id = luna_body["user"]["user_id"]
 
-        # =================== 1) OWNER HAPPY PATH ===================
-        mood_id = await ensure_luna_mood(client, luna_tok)
-        log("1.ensure_mood", bool(mood_id), f"mood_id={mood_id}")
+        await ensure_friends(client, admin_tok)
 
-        if mood_id:
-            import time
-            t0 = time.time()
-            r = await api_post(client, f"/share/reel/{mood_id}", luna_tok, timeout=30.0)
-            elapsed = time.time() - t0
-            log(
-                "1.share_reel.status",
-                r.status_code == 200,
-                f"status={r.status_code} body={r.text[:400]} elapsed={elapsed:.2f}s",
-            )
-            if r.status_code == 200:
-                j = r.json()
-                log("1.share_reel.ok", j.get("ok") is True, f"ok={j.get('ok')}")
-                url = j.get("url") or ""
-                log("1.share_reel.url_https", url.startswith("https"), f"url={url[:100]}")
-                key = j.get("key") or ""
-                log("1.share_reel.key_prefix", key.startswith("shares/reel_"), f"key={key}")
-                log("1.share_reel.duration", j.get("duration") == 15, f"duration={j.get('duration')}")
-
-                if url:
-                    # Download the presigned URL.
-                    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as cc:
-                        dr = await cc.get(url)
-                    log(
-                        "1.download.status",
-                        dr.status_code == 200,
-                        f"status={dr.status_code}",
+        # ----- (a) DM reactions: 4 new emojis + invalid -----
+        msg_id = await get_or_create_message_luna_to_friend(client, luna_tok, admin_id)
+        if msg_id:
+            for emoji in ("love_eyes", "pray", "rainbow", "hug_arms"):
+                r = await react(client, luna_tok, msg_id, emoji)
+                ok = r.status_code == 200
+                if ok:
+                    body = r.json()
+                    reactions = body.get("reactions") or []
+                    has_luna = any(
+                        rr.get("user_id") == luna_id and rr.get("emoji") == emoji
+                        for rr in reactions
                     )
-                    ct = dr.headers.get("Content-Type", "")
-                    log(
-                        "1.download.content_type",
-                        ct.startswith("video/mp4"),
-                        f"content-type={ct}",
-                    )
-                    body_len = len(dr.content) if dr.status_code == 200 else 0
-                    log(
-                        "1.download.size",
-                        body_len > 10000,
-                        f"bytes={body_len}",
-                    )
+                    luna_count = sum(1 for rr in reactions if rr.get("user_id") == luna_id)
+                    rec(f"react emoji={emoji}",
+                        ok and has_luna and luna_count == 1,
+                        f"status={r.status_code} luna_count={luna_count} has={has_luna}")
+                else:
+                    rec(f"react emoji={emoji}", False,
+                        f"status={r.status_code} body={r.text[:200]}")
+            r = await react(client, luna_tok, msg_id, "bad_key_xyz")
+            rec("react emoji=bad_key_xyz → 422",
+                r.status_code == 422,
+                f"status={r.status_code} body={r.text[:200]}")
+        else:
+            rec("DM reactions block", False, "no message_id")
 
-        # =================== 2) NOT YOUR AURA ===================
-        if mood_id:
-            r = await api_post(client, f"/share/reel/{mood_id}", admin_tok, timeout=30.0)
-            detail = ""
-            try:
-                detail = r.json().get("detail", "")
-            except Exception:
-                pass
-            log(
-                "2.not_your_aura.status",
-                r.status_code == 403,
-                f"status={r.status_code} detail={detail}",
-            )
-            log(
-                "2.not_your_aura.detail",
-                detail == "Not your aura",
-                f"detail={detail!r}",
-            )
+        # ----- (b) Feed close-first sort -----
+        await ensure_pro(client, luna_tok, "luna")
+        await ensure_today_mood(client, luna_tok, "luna", "joy", "luna-test")
+        await ensure_today_mood(client, admin_tok, "admin", "calm", "admin-test")
 
-        # =================== 3) NOT FOUND ===================
-        r = await api_post(
-            client, "/share/reel/mood_nonexistent_xxx", luna_tok, timeout=30.0
-        )
-        log(
-            "3.not_found.status",
-            r.status_code == 404,
-            f"status={r.status_code} body={r.text[:200]}",
-        )
-
-        # =================== 4) UNAUTH ===================
+        # Toggle close on admin (we may need to call twice if it was already off after un-mark in earlier sessions)
         client.cookies.clear()
-        r = await client.post(
-            f"{BASE}/share/reel/{mood_id or 'xyz'}",
-            timeout=30.0,
-        )
-        log(
-            "4.unauth.status",
-            r.status_code in (401, 403),  # 401 expected; some FastAPI setups use 403
-            f"status={r.status_code} body={r.text[:150]}",
-        )
-        log(
-            "4.unauth.is_401",
-            r.status_code == 401,
-            f"status={r.status_code}",
-        )
+        r1 = await client.post(f"{BASE}/friends/close/{admin_id}", headers=H(luna_tok))
+        rec("luna POST /friends/close/admin (toggle 1)",
+            r1.status_code == 200,
+            f"status={r1.status_code} body={r1.text[:200]}")
+        is_close = (r1.json() or {}).get("is_close") if r1.status_code == 200 else None
+        if is_close is False:
+            client.cookies.clear()
+            r1b = await client.post(f"{BASE}/friends/close/{admin_id}", headers=H(luna_tok))
+            rec("luna POST /friends/close/admin (toggle ON)",
+                r1b.status_code == 200 and (r1b.json() or {}).get("is_close") is True,
+                f"status={r1b.status_code} body={r1b.text[:200]}")
 
-        # =================== 5) MINIMAL CONTENT (no photo/video/music) ===================
-        mood_id_min = await ensure_luna_mood(client, luna_tok, minimal=True)
-        log("5.ensure_minimal_mood", bool(mood_id_min), f"mood_id={mood_id_min}")
-        if mood_id_min:
-            r = await api_post(
-                client, f"/share/reel/{mood_id_min}", luna_tok, timeout=30.0
-            )
-            log(
-                "5.minimal.status",
-                r.status_code == 200,
-                f"status={r.status_code} body={r.text[:400]}",
-            )
-            if r.status_code == 200:
-                j = r.json()
-                log(
-                    "5.minimal.has_audio_false",
-                    j.get("has_audio") is False,
-                    f"has_audio={j.get('has_audio')}",
-                )
-                log(
-                    "5.minimal.has_video_false",
-                    j.get("has_video") is False,
-                    f"has_video={j.get('has_video')}",
-                )
-                log(
-                    "5.minimal.url_present",
-                    bool(j.get("url")),
-                    f"url_prefix={(j.get('url') or '')[:80]}",
-                )
-
-        # =================== 6) REGRESSION ===================
-        # 6a) /auth/me (admin)
-        r = await api_get(client, "/auth/me", admin_tok)
-        ok = r.status_code == 200
-        log("6a.auth_me_admin", ok, f"status={r.status_code}")
-        if ok:
-            data = r.json()
-            email = data.get("email") or data.get("user", {}).get("email")
-            log(
-                "6a.auth_me_admin.email",
-                email == ADMIN_EMAIL,
-                f"email={email}",
-            )
-
-        # 6b) /moods/feed (luna)
-        r = await api_get(client, "/moods/feed", luna_tok)
-        log(
-            "6b.moods_feed_luna",
-            r.status_code == 200,
-            f"status={r.status_code}",
-        )
-
-        # 6c) /friends (luna) — should NOT include email per friend
-        r = await api_get(client, "/friends", luna_tok)
-        log("6c.friends_luna.status", r.status_code == 200, f"status={r.status_code}")
+        client.cookies.clear()
+        r = await client.get(f"{BASE}/moods/feed", headers=H(luna_tok))
         if r.status_code == 200:
-            data = r.json()
-            friends = data if isinstance(data, list) else data.get("friends") or []
-            has_email = any("email" in (f or {}) for f in friends)
-            log(
-                "6c.friends_luna.no_email",
-                not has_email,
-                f"count={len(friends)} any_has_email={has_email} sample_keys={sorted(list(friends[0].keys())) if friends else []}",
+            items = (r.json() or {}).get("items") or []
+            has_field = all("author_is_close" in it for it in items) if items else False
+            first_admin_close = (
+                len(items) > 0
+                and items[0].get("user_id") == admin_id
+                and items[0].get("author_is_close") is True
             )
+            rec("GET /moods/feed → 200 (with items)", len(items) > 0,
+                f"items={len(items)}")
+            rec("All items carry author_is_close", has_field,
+                f"missing={sum(1 for it in items if 'author_is_close' not in it)}")
+            rec("items[0] is admin & author_is_close=true",
+                first_admin_close,
+                f"first={{user_id:{items[0].get('user_id') if items else None},"
+                f" close:{items[0].get('author_is_close') if items else None}}}")
+        else:
+            rec("GET /moods/feed (close-first)", False,
+                f"status={r.status_code} body={r.text[:200]}")
 
-        # 6d) /messages/unread-count (luna)
-        r = await api_get(client, "/messages/unread-count", luna_tok)
-        log(
-            "6d.unread_count_luna",
-            r.status_code == 200,
-            f"status={r.status_code} body={r.text[:200]}",
-        )
+        # ----- (c) Fallback: un-mark close, all author_is_close=false -----
+        client.cookies.clear()
+        r2 = await client.post(f"{BASE}/friends/close/{admin_id}", headers=H(luna_tok))
+        rec("luna POST /friends/close/admin (un-mark)",
+            r2.status_code == 200 and (r2.json() or {}).get("is_close") is False,
+            f"status={r2.status_code} body={r2.text[:200]}")
 
-        # 6e) /notifications/prefs (luna) includes weekly_recap
-        r = await api_get(client, "/notifications/prefs", luna_tok)
-        log(
-            "6e.notif_prefs_luna.status",
-            r.status_code == 200,
-            f"status={r.status_code}",
-        )
+        client.cookies.clear()
+        r = await client.get(f"{BASE}/moods/feed", headers=H(luna_tok))
         if r.status_code == 200:
-            prefs = r.json()
-            log(
-                "6e.notif_prefs_luna.weekly_recap_key",
+            items = (r.json() or {}).get("items") or []
+            all_false = all(it.get("author_is_close") is False for it in items)
+            rec("Feed items all author_is_close=false after un-mark",
+                all_false, f"items={len(items)}")
+        else:
+            rec("GET /moods/feed (fallback)", False,
+                f"status={r.status_code} body={r.text[:200]}")
+
+        # ----- (d) Regression spot-check -----
+        client.cookies.clear()
+        r = await client.get(f"{BASE}/auth/me", headers=H(admin_tok))
+        rec("GET /auth/me (admin)",
+            r.status_code == 200 and (r.json() or {}).get("email") == ADMIN_EMAIL,
+            f"status={r.status_code}")
+
+        client.cookies.clear()
+        r = await client.get(f"{BASE}/friends", headers=H(luna_tok))
+        if r.status_code == 200:
+            friends = (r.json() or {}).get("friends") or []
+            any_email = any("email" in f for f in friends)
+            rec("/friends (luna) — no email field on rows",
+                not any_email, f"count={len(friends)} any_email={any_email}")
+        else:
+            rec("/friends (luna)", False, f"status={r.status_code}")
+
+        client.cookies.clear()
+        r = await client.get(f"{BASE}/moods/today", headers=H(luna_tok))
+        luna_mood = (r.json() or {}).get("mood") if r.status_code == 200 else None
+        if luna_mood:
+            mid = luna_mood.get("mood_id")
+            client.cookies.clear()
+            r = await client.post(f"{BASE}/share/reel/{mid}", headers=H(luna_tok))
+            ok = r.status_code == 200 and (r.json() or {}).get("ok") is True
+            rec("POST /share/reel/{luna_mood_id} (owner)", ok,
+                f"status={r.status_code} body={r.text[:240]}")
+        else:
+            rec("POST /share/reel owner check", False, "luna mood not available")
+
+        client.cookies.clear()
+        r = await client.get(f"{BASE}/notifications/prefs", headers=H(luna_tok))
+        if r.status_code == 200:
+            body = r.json() or {}
+            prefs = body.get("prefs") if "prefs" in body else body
+            rec("/notifications/prefs (luna) includes weekly_recap",
                 "weekly_recap" in prefs,
-                f"keys={sorted(prefs.keys())}",
-            )
+                f"keys={list(prefs.keys())}")
+        else:
+            rec("/notifications/prefs (luna)", False, f"status={r.status_code}")
 
-        # === SUMMARY ===
-        print("\n========== SUMMARY ==========", flush=True)
-        print(f"PASS: {OK}  FAIL: {FAIL}  TOTAL: {OK + FAIL}", flush=True)
+        # ----- SUMMARY -----
+        passed = sum(1 for _, ok, _ in results if ok)
+        total = len(results)
+        print("\n" + "=" * 78)
+        print(f"SESSION 18 RESULTS: {passed}/{total} PASS")
+        print("=" * 78)
+        for name, ok, detail in results:
+            mark = "OK " if ok else "BAD"
+            print(f"  [{mark}] {name}  -- {detail}")
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        print(f"HARNESS CRASH: {e}", flush=True)
-        sys.exit(2)
-    sys.exit(0 if FAIL == 0 else 1)
+    asyncio.run(main())

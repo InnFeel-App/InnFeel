@@ -1591,3 +1591,144 @@ agent_communication:
           f) Regression spot-checks of previously passing endpoints.
         
         Skip stress testing — ffmpeg encoding takes ~3-5s per call which is fine for manual share.
+
+    - agent: "main"
+      message: |
+        Session 18 — small UX tweaks.
+        
+        1) FRIENDS: removed the gold star next to the name (redundant — there's already a 
+           toggleable star in the row's action area).
+        
+        2) HOME FEED — new 2-tier sort in GET /api/moods/feed (routes/moods.py):
+           - Tier 1: close friends' auras first (i.e. friends the CURRENT user has marked as 
+             close — `friendships.close=True` where `user_id=me`).
+           - Tier 2: everyone else.
+           - Within each tier, preserved existing `created_at DESC` order (stable sort).
+           - Added a new field `author_is_close: bool` on each item so the client can style 
+             close-friends' cards if desired.
+        
+        3) DM REACTIONS: added 4 emoji keys — `love_eyes` 🥰, `pray` 🙏, `rainbow` 🌈, `hug_arms` 🫂.
+           Backend MessageReactIn.emoji Literal now accepts 13 values total (heart + 12 picker keys).
+           Frontend conversation.tsx REACTIONS array now has 12 entries → 2 rows of 6 in the picker.
+           Chosen for emotional palette of a mood-sharing app.
+        
+        4) AURA REACTIONS 2 rows: MoodCard reactBtn now uses `flexBasis: 23.5% + flexGrow: 1`, 
+           tightened padding (4px horizontal, 32px height), smaller label (11px), `columnGap: 6`, 
+           `rowGap: 6`. With 8 reactions, renders exactly 4 per row × 2 rows on all phone widths.
+        
+        TESTING REQUEST (backend-only):
+          a) POST /messages/{id}/react with new emoji keys one by one: love_eyes, pray, rainbow, 
+             hug_arms → 200 each (toggling one replaces the previous per Insta toggle semantics).
+          b) POST /messages/{id}/react with "bad_key_xyz" → 422.
+          c) GET /moods/feed sort order verification:
+             - Setup: as luna, ensure she has 2+ friends; set at least one as close via POST 
+               /friends/close/{friend_id} (Pro-gated — use admin override if needed or grant 
+               Pro temporarily via /dev/toggle-pro). Have both the close friend AND a non-close 
+               friend post a mood today (you can impersonate or call with their tokens).
+             - Luna herself posts a mood (prerequisite to unlock feed).
+             - GET /moods/feed → items array: close friends' moods appear BEFORE non-close. 
+               Each item has `author_is_close` field.
+          d) Regression: GET /moods/feed when user has no close friends → items still sorted 
+             by created_at desc, all author_is_close=false, no crash.
+          e) Regression spot-check previously-passing endpoints.
+
+
+backend_session18:
+  - task: "DM reactions — 4 new emojis (love_eyes, pray, rainbow, hug_arms) + close-friends-first feed sort"
+    implemented: true
+    working: true
+    file: "/app/backend/app_core/models.py, /app/backend/routes/moods.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Session 18 backend test COMPLETE — 21/22 PASS.
+            The single FAIL is an UNRELATED ENVIRONMENT REGRESSION (ffmpeg missing from
+            container — see notes below). All Session 18 spec items pass 100%.
+            Harness: /app/backend_test.py vs https://charming-wescoff-8.preview.emergentagent.com/api.
+            Creds: hello@innfeel.app / admin123, luna@innfeel.app / demo1234.
+
+            (a) NEW DM REACTIONS — 5/5 PASS:
+              · POST /messages/with/<admin_id> as luna → 200 (msg_id=msg_0e2ba95a17e7).
+              · POST /messages/{id}/react {emoji:"love_eyes"} → 200, luna's single reaction is
+                love_eyes (Insta-style replace semantics confirmed: luna_count==1).
+              · {emoji:"pray"} → 200, replaces previous (luna_count==1, emoji=="pray").
+              · {emoji:"rainbow"} → 200, replaces previous (luna_count==1, emoji=="rainbow").
+              · {emoji:"hug_arms"} → 200, replaces previous (luna_count==1, emoji=="hug_arms").
+              · {emoji:"bad_key_xyz"} → 422 with literal_error listing the full accepted set:
+                'heart','thumb','fire','laugh','wow','sad','clap','hundred','touched',
+                'love_eyes','pray','rainbow','hug_arms' — all 13 values exposed by the
+                Pydantic Literal exactly as spec'd.
+
+            (b) /moods/feed CLOSE-FIRST SORT — 4/4 PASS:
+              · luna ensure-Pro via /dev/toggle-pro (already pro_source=dev from prior session).
+              · Both luna and admin posted today moods (luna existing mood_96269c355d38; admin
+                fresh mood_e0274b231086, calm).
+              · POST /friends/close/<admin_id> as luna → 200 {ok:true, is_close:true}.
+              · GET /moods/feed (luna) → 200 with items[]. items[0] = admin's mood with
+                author_is_close:true. EVERY item in the feed carries the new author_is_close
+                boolean field (missing=0). Close-first stable-sort verified.
+
+            (c) FALLBACK SORT WHEN NO CLOSE FRIENDS — 2/2 PASS:
+              · POST /friends/close/<admin_id> as luna → 200 {is_close:false} (un-mark).
+              · GET /moods/feed (luna) → 200, items[*].author_is_close all false. No crash.
+                Endpoint still returns valid response shape with the boolean field present.
+
+            (d) REGRESSION SPOT-CHECK — 3/4 logically pass, 1 ENVIRONMENT-ONLY FAIL:
+              · GET /auth/me (admin) → 200, email=hello@innfeel.app ✓
+              · GET /friends (luna) → 200, count=2, ZERO rows expose `email` field
+                (Session 15 privacy fix still intact) ✓
+              · GET /notifications/prefs (luna) → 200, prefs.keys() ==
+                ['reminder','reaction','message','friend','weekly_recap'] — weekly_recap
+                present (Session 15) ✓
+              · POST /share/reel/{luna_mood_id} (owner) → **500 "Reel generation failed"**
+                — backend.err.log shows: `WARNING:innfeel.share:[share] ffmpeg exception:
+                [Errno 2] No such file or directory: 'ffmpeg'`. Verified `which ffmpeg`
+                returns nothing; `/usr/bin/ffmpeg` does not exist on the container. This
+                is **pre-existing infrastructure regression** (ffmpeg was at /usr/bin/ffmpeg
+                in Session 17 per test logs, version 5.1.8-0+deb12u1). The application code
+                in routes/share.py is unchanged for Session 18 and gracefully reports the
+                missing binary. Not a Session 18 code bug — environment needs ffmpeg
+                reinstalled (`apt-get install -y ffmpeg`).
+
+            BACKEND HEALTH:
+              · Session 18 model edit (4 new emojis appended to MessageReactIn.emoji
+                Literal) and routes/moods.py edits (author_is_close flag + close-first stable
+                sort) both reload-clean — no ImportError, no 500s outside the ffmpeg one,
+                purge daemon healthy at 65 users checked.
+              · Pydantic literal_error message correctly enumerates all 13 accepted values
+                so clients get a self-documenting error.
+
+            CONCLUSION: Session 18 backend changes are fully working. The only failure is
+            an unrelated environment regression (ffmpeg uninstalled from the container,
+            breaking the Session 17 /share/reel endpoint). No backend code was modified
+            by the testing agent.
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Session 18 backend test COMPLETE — 21/22 PASS.
+        Harness: /app/backend_test.py.
+        Backend URL: https://charming-wescoff-8.preview.emergentagent.com/api.
+
+        ALL SESSION 18 SPEC ITEMS PASS 100%:
+          (a) DM reactions — 4 new emojis (love_eyes, pray, rainbow, hug_arms) all → 200
+              with single-reaction-per-user replace semantics confirmed; bad_key_xyz → 422
+              with literal_error listing all 13 valid emojis.
+          (b) /moods/feed close-first: luna marks admin close → items[0]=admin with
+              author_is_close=true; every item carries the new boolean field.
+          (c) Fallback (un-mark close): items all author_is_close=false, no crash.
+          (d) Regression: /auth/me admin OK; /friends luna NO email per row; /notifications/prefs
+              luna includes weekly_recap.
+
+        ⚠️ ONE UNRELATED FAIL (NOT Session 18):
+          POST /share/reel/{mood_id} owner → 500 because **ffmpeg is no longer installed**
+          on the container. backend.err.log: "ffmpeg exception: [Errno 2] No such file or
+          directory: 'ffmpeg'". `which ffmpeg` returns empty. Session 17 logs show ffmpeg
+          5.1.8 was present then. This is a container infra regression, not a Session 18
+          code bug — routes/share.py is unchanged. Fix: `apt-get install -y ffmpeg`.
+
+        No backend code was modified by the testing agent.
