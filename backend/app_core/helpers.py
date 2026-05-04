@@ -32,21 +32,40 @@ def resolve_media(doc: dict) -> dict:
 
 
 async def compute_streak(user_id: str) -> int:
-    """Count consecutive posting days ending today for the given user."""
+    """Count consecutive posting days ending today, accounting for active streak freezes.
+
+    A streak freeze is a per-month "skip" voucher (1/month for Pro, 3/month for Zen).
+    Each frozen day is counted as if the user had posted, so missing a day doesn't reset
+    the streak — but no streak day is incremented for a frozen day either (it just bridges).
+
+    Freezes live in `users.streak_freezes` as a list of {day_key: "YYYY-MM-DD", ts: dt}.
+    They're consumed on read (here) — if the day was already missed, we use a freeze.
+    """
     cursor = db.moods.find({"user_id": user_id}, {"_id": 0, "day_key": 1}).sort("day_key", -1)
     rows = await cursor.to_list(400)
     if not rows:
         return 0
     posted_days = {r["day_key"] for r in rows}
+
+    # Pull the user's used-freeze ledger so we don't double-spend.
+    user_doc = await db.users.find_one(
+        {"user_id": user_id},
+        {"_id": 0, "streak_freezes": 1, "streak_freezes_month": 1, "is_pro": 1, "pro_expires_at": 1, "plan": 1},
+    ) or {}
+    used_freezes: set[str] = {f.get("day_key") for f in (user_doc.get("streak_freezes") or []) if f.get("day_key")}
+
     streak = 0
     d = now_utc()
     for _ in range(400):
         key = d.strftime("%Y-%m-%d")
         if key in posted_days:
             streak += 1
-            d = d - timedelta(days=1)
+        elif key in used_freezes:
+            # Bridged day — streak continues but doesn't increment.
+            pass
         else:
             break
+        d = d - timedelta(days=1)
     return streak
 
 

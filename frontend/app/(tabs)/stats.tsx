@@ -10,6 +10,7 @@ import { useAuth } from "../../src/auth";
 import { t } from "../../src/i18n";
 import { Ionicons } from "@expo/vector-icons";
 import { useShareToStories } from "../../src/components/ShareToStories";
+import ShareAuraButton from "../../src/components/ShareAuraButton";
 
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const RANGES: { key: 30 | 90 | 365; label: string }[] = [
@@ -77,23 +78,6 @@ export default function Stats() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} tintColor="#fff" />}>
           <View style={styles.topHeader}>
             <Text style={styles.title}>{t("stats.title")}</Text>
-            <TouchableOpacity
-              testID="share-stats"
-              onPress={() =>
-                share({
-                  kind: "stats",
-                  streak: stats?.streak || 0,
-                  dropsThisWeek: stats?.drops_this_week || 0,
-                  dominant: stats?.dominant || "joy",
-                  distribution: stats?.distribution || {},
-                  userName: user?.name,
-                })
-              }
-              style={styles.shareBtn}
-            >
-              <Ionicons name="share-outline" size={14} color="#fff" />
-              <Text style={styles.shareBtnTxt}>Share</Text>
-            </TouchableOpacity>
           </View>
 
           {/* Mood Patterns Insights — surfaces non-obvious things about the user's
@@ -282,6 +266,23 @@ export default function Stats() {
               <Button testID="go-paywall-from-stats" label={t("profile.goPro")} onPress={() => router.push("/paywall")} />
             </View>
           )}
+          {/* Big funky share button at bottom — same component as Home for consistency. */}
+          <View style={styles.shareBottom}>
+            <ShareAuraButton
+              testID="share-stats"
+              label="Share my stats"
+              onPress={() =>
+                share({
+                  kind: "stats",
+                  streak: stats?.streak || 0,
+                  dropsThisWeek: stats?.drops_this_week || 0,
+                  dominant: stats?.dominant || "joy",
+                  distribution: stats?.distribution || {},
+                  userName: user?.name,
+                })
+              }
+            />
+          </View>
           <View style={{ height: 120 }} />
         </ScrollView>
         <ShareRenderer />
@@ -368,5 +369,6 @@ const styles = StyleSheet.create({
   rangeCardHdr: { color: COLORS.textSecondary, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.2, fontWeight: "700", marginBottom: 4 },
   topHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
   shareBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: COLORS.border },
+  shareBottom: { marginTop: 24, marginBottom: 8, paddingHorizontal: 24, alignItems: "center" },
   shareBtnTxt: { color: "#fff", fontSize: 13, fontWeight: "600" },
 });
