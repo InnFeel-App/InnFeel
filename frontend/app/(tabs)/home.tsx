@@ -11,6 +11,7 @@ import { t } from "../../src/i18n";
 import { COLORS, EMOTION_COLORS } from "../../src/theme";
 import { Ionicons } from "@expo/vector-icons";
 import { useShareToStories } from "../../src/components/ShareToStories";
+import ShareAuraButton from "../../src/components/ShareAuraButton";
 import { notifyIfNew } from "../../src/notifications";
 
 export default function Home() {
@@ -165,8 +166,9 @@ export default function Home() {
                 testIDPrefix="my-mood"
               />
               <View style={styles.myMoodActions}>
-                <TouchableOpacity
+                <ShareAuraButton
                   testID="share-my-mood"
+                  label="Share your aura"
                   onPress={() =>
                     share({
                       kind: "mood",
@@ -177,32 +179,18 @@ export default function Home() {
                       music: todayMood.music || undefined,
                     })
                   }
-                  style={styles.shareBtnXL}
-                  activeOpacity={0.85}
-                >
-                  <Ionicons name="share-social" size={18} color="#000" />
-                  <Text style={styles.shareBtnXLTxt}>Share your aura</Text>
-                </TouchableOpacity>
+                />
                 <TouchableOpacity
                   testID="redo-my-mood"
                   onPress={() =>
                     Alert.alert(
-                      "Redo today's aura?",
-                      "Your current mood will be deleted and you'll be taken to the drop screen.",
+                      "Update today's aura?",
+                      "You'll be taken to the create screen. Your day count and streak are preserved — only the content changes.",
                       [
                         { text: "Cancel", style: "cancel" },
                         {
-                          text: "Delete & redo",
-                          style: "destructive",
-                          onPress: async () => {
-                            try {
-                              await api("/moods/today", { method: "DELETE" });
-                              setTodayMood(null);
-                              router.push("/mood-create");
-                            } catch (e: any) {
-                              Alert.alert("Failed", e.message || "Could not delete drop");
-                            }
-                          },
+                          text: "Edit",
+                          onPress: () => router.push("/mood-create?edit=1"),
                         },
                       ],
                     )

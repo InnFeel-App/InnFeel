@@ -242,10 +242,15 @@ async def delete_mood(mood_id: str, user: dict = Depends(get_current_user)):
 
 @api.post("/moods")
 async def create_mood(data: InnFeelIn, user: dict = Depends(get_current_user)):
+    """Create OR replace today's aura.
+
+    If an aura already exists for the user today, the existing record is updated in place
+    (preserving mood_id + day_key + created_at + streak) and reactions/comments are reset
+    because the content changed. This is the "Redo" flow on the home screen — it lets the
+    user edit their daily aura without losing the day count in their history/streak.
+    """
     key = today_key()
     existing = await db.moods.find_one({"user_id": user["user_id"], "day_key": key})
-    if existing:
-        raise HTTPException(status_code=400, detail="You already shared your aura today. Come back tomorrow!")
 
     pro = is_pro(user)
     has_audio = bool(data.audio_b64 or data.audio_key)
@@ -265,7 +270,19 @@ async def create_mood(data: InnFeelIn, user: dict = Depends(get_current_user)):
     if data.music:
         music_obj = data.music.model_dump()
 
-    mood_id = f"mood_{uuid.uuid4().hex[:12]}"
+    # If we're replacing an existing aura, garbage-collect the old R2 objects so storage stays lean.
+    if existing:
+        for fld in ("photo_key", "video_key", "audio_key"):
+            old_key = existing.get(fld)
+            new_key = getattr(data, fld) if hasattr(data, fld) else None
+            if old_key and old_key != new_key:
+                try:
+                    _r2.delete_object(old_key)
+                except Exception as e:
+                    logger.warning(f"R2 cleanup failed for {old_key}: {e}")
+
+    mood_id = existing["mood_id"] if existing else f"mood_{uuid.uuid4().hex[:12]}"
+    created_at = existing.get("created_at") if existing else now_utc()
     doc = {
         "mood_id": mood_id,
         "user_id": user["user_id"],
@@ -274,7 +291,6 @@ async def create_mood(data: InnFeelIn, user: dict = Depends(get_current_user)):
         "emotion": data.emotion,
         "color": EMOTIONS[data.emotion],
         "intensity": data.intensity,
-        # R2-first: prefer keys, keep _b64 for legacy clients during migration
         "photo_key": data.photo_key,
         "photo_b64": data.photo_b64 if not data.photo_key else None,
         "video_key": data.video_key,
@@ -288,18 +304,26 @@ async def create_mood(data: InnFeelIn, user: dict = Depends(get_current_user)):
         "has_audio": has_audio,
         "music": music_obj,
         "privacy": data.privacy,
+        # On a replace, reset reactions/comments since content changed
         "reactions": [],
-        "created_at": now_utc(),
+        "comments": [],
+        "created_at": created_at,
+        "updated_at": now_utc() if existing else None,
     }
-    await db.moods.insert_one(doc)
-    # Update streak
+    if existing:
+        await db.moods.replace_one({"mood_id": mood_id}, doc)
+    else:
+        await db.moods.insert_one(doc)
+    # Update streak (no-op when replacing; keeps the same count)
     streak = await compute_streak(user["user_id"])
     await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"streak": streak}})
     doc.pop("_id", None)
     if isinstance(doc.get("created_at"), datetime):
         doc["created_at"] = doc["created_at"].isoformat()
+    if isinstance(doc.get("updated_at"), datetime):
+        doc["updated_at"] = doc["updated_at"].isoformat()
     resolve_media(doc)
-    return {"mood": doc, "streak": streak}
+    return {"mood": doc, "streak": streak, "replaced": bool(existing)}
 
 
 @api.get("/moods/feed")

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Image, Alert, KeyboardAvoidingView, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { Audio } from "expo-av";
 import Slider from "@react-native-community/slider";
@@ -21,6 +21,8 @@ const MAX_AUDIO_SECONDS = 10;
 
 export default function MoodCreate() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ edit?: string }>();
+  const isEdit = params.edit === "1";
   const { user, refresh } = useAuth();
   const pro = !!user?.pro;
 
@@ -105,6 +107,32 @@ export default function MoodCreate() {
       if (musicSoundRef.current) { musicSoundRef.current.unloadAsync().catch(() => {}); }
     };
   }, []);
+
+  // Edit mode: prefill the form with today's existing aura when ?edit=1
+  useEffect(() => {
+    if (!isEdit) return;
+    (async () => {
+      try {
+        const r = await api<{ mood: any }>("/moods/today");
+        const m = r?.mood;
+        if (!m) return;
+        if (m.emotion) setEmotion(m.emotion);
+        if (typeof m.intensity === "number") setIntensity(m.intensity);
+        if (m.word) setWord(m.word);
+        if (m.text) setNote(m.text);
+        if (m.privacy) setPrivacy(m.privacy);
+        if (m.photo_url) setPhoto({ uri: m.photo_url, key: m.photo_key });
+        if (m.video_url && m.video_seconds) setVideo({ uri: m.video_url, key: m.video_key, seconds: m.video_seconds });
+        if (m.audio_url) {
+          setAudioUri(m.audio_url);
+          setAudioKey(m.audio_key);
+          if (m.audio_seconds) setRecSeconds(m.audio_seconds);
+        }
+        if (m.music) setSelectedMusic(m.music);
+      } catch {}
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEdit]);
 
   const startRecording = async () => {
     try {
