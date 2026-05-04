@@ -155,6 +155,7 @@ from routes.media import router as media_router
 from routes.moods import router as moods_router
 from routes.friends import router as friends_router
 from routes.messages import router as messages_router
+from routes.share import router as share_router
 from app_core import r2 as _r2
 from app_core.helpers import compute_streak
 api.include_router(auth_router)
@@ -163,6 +164,7 @@ api.include_router(media_router)
 api.include_router(moods_router)
 api.include_router(friends_router)
 api.include_router(messages_router)
+api.include_router(share_router)
 
 
 

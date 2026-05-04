@@ -13,10 +13,15 @@ import { Ionicons } from "@expo/vector-icons";
 import { useShareToStories } from "../../src/components/ShareToStories";
 import ShareAuraButton from "../../src/components/ShareAuraButton";
 import { notifyIfNew } from "../../src/notifications";
+import { useScreenCaptureGuard } from "../../src/hooks/useScreenCaptureGuard";
 
 export default function Home() {
   const router = useRouter();
   const { user } = useAuth();
+  // Block screenshots of friends' auras — this screen only. Admins bypass so they can
+  // triage bug reports. Anywhere else in the app screenshots stay enabled so users can
+  // share error states with support.
+  useScreenCaptureGuard(!!user?.is_admin);
   const [todayMood, setTodayMood] = useState<any>(null);
   const [feed, setFeed] = useState<{ locked: boolean; items: any[] }>({ locked: true, items: [] });
   const [refreshing, setRefreshing] = useState(false);
@@ -172,6 +177,7 @@ export default function Home() {
                   onPress={() =>
                     share({
                       kind: "mood",
+                      mood_id: todayMood.mood_id,
                       word: todayMood.word,
                       emotion: todayMood.emotion,
                       intensity: todayMood.intensity,

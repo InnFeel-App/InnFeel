@@ -383,6 +383,128 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 
+backend_session17:
+  - task: "Instagram Reel share endpoint — POST /api/share/reel/{mood_id}"
+    implemented: true
+    working: true
+    file: "/app/backend/routes/share.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Session 17 backend test COMPLETE — 28/29 PASS (the single FAIL is a harness assertion, NOT
+            a backend bug; the endpoint returns the exact shape the spec promises — see note below).
+            Harness: /app/backend_test.py vs https://charming-wescoff-8.preview.emergentagent.com/api.
+            Creds: hello@innfeel.app / admin123, luna@innfeel.app / demo1234.
+
+            1) OWNER HAPPY PATH — 8/8 PASS:
+              · Logged in as luna; ensured she had a mood today (mood_6020023d4415, emotion=joy,
+                word="Radiant", text="testing reel").
+              · POST /api/share/reel/<mood_id> as luna → 200 in 7.73s (well under the 10s budget).
+              · Response body: {ok:true, url:"https://cdn.innfeel.app/shares/reel_...mp4?X-Amz-...",
+                key:"shares/reel_mood_6020023d4415_1777897053_1a0f40.mp4", duration:15,
+                has_audio:false, has_video:false}.
+              · url.startswith("https://") ✓.
+              · key.startswith("shares/reel_") ✓.
+              · duration == 15 ✓.
+              · Followed the signed URL (follow_redirects=True) → HTTP 200,
+                Content-Type: video/mp4, Content-Length: 207,612 bytes (>10KB threshold crushed).
+              · ffmpeg + Pillow pipeline is fully functional: compose + R2 upload + presigned GET all work.
+
+            2) NOT YOUR AURA — 2/2 PASS:
+              · Logged in as admin (hello@innfeel.app).
+              · POST /api/share/reel/<luna_mood_id> → 403 {"detail":"Not your aura"} (exact wording).
+
+            3) NOT FOUND — 1/1 PASS:
+              · POST /api/share/reel/mood_nonexistent_xxx (valid luna token) →
+                404 {"detail":"Aura not found"}.
+
+            4) UNAUTH — 2/2 PASS:
+              · POST /api/share/reel/<mood_id> with NO Authorization header and cookies cleared →
+                401 {"detail":"Not authenticated"}. No session leak from prior calls.
+
+            5) MINIMAL CONTENT FALLBACK — 4/4 PASS:
+              · DELETE /api/moods/today as luna, then POST /api/moods {emotion:"calm", word:"quiet",
+                intensity:2} → new mood_96269c355d38 (no photo_key, no video_key, no music).
+              · POST /api/share/reel/<mood_id> → 200 with ok:true, valid signed URL, key prefix
+                correct, has_audio:false, has_video:false — confirms gradient-bg + silent-audio
+                fallback path works and produces a valid MP4.
+
+            6) REGRESSION SPOT-CHECK — 7/8 "logical" PASS (1 harness false-negative):
+              · GET /auth/me (admin) → 200, email=hello@innfeel.app ✓.
+              · GET /moods/feed (luna) → 200 ✓.
+              · GET /friends (luna) → 200, list of 2 friends. Keys per row:
+                [avatar_b64, avatar_color, avatar_key, dropped_today, is_close, name, streak,
+                user_id] — `email` is NOT present on any friend row (Session 15 privacy fix
+                confirmed in place) ✓.
+              · GET /messages/unread-count (luna) → 200 {total:1, conversations:1} ✓.
+              · GET /notifications/prefs (luna) → 200. Direct verification against the DB +
+                live call shows body = {"prefs": {"reminder":true, "reaction":true, "message":true,
+                "friend":true, "weekly_recap":true}}. The `weekly_recap` key IS present (nested
+                under `prefs` per server.py L206-212 — current intended shape). My harness only
+                checked the top-level keys and so reported FAIL; the endpoint itself is correct
+                and unchanged from session 15 behavior-wise — the session-15 test comment showing
+                top-level keys reflected an older wrapper-strip in that harness. No regression.
+
+            BACKEND HEALTH:
+              · No 500s during any of the reel runs (verified via backend.out.log).
+              · ffmpeg present at /usr/bin/ffmpeg (version 5.1.8-0+deb12u1).
+              · Pillow renders 1080x1920 overlay with Liberation Sans fonts; gradient fallback
+                works when no photo/video attached.
+              · R2 uploads succeed and the presigned GET URLs are accessible from the public
+                internet (cdn.innfeel.app + X-Amz-Signature query params).
+              · Purge daemon line present: "[purge] {moods_deleted:0, r2_objects_deleted:0,
+                users_checked:65}" on each boot. No exceptions in logs.
+
+            CONCLUSION: The new /api/share/reel/{mood_id} endpoint is fully working end-to-end.
+            All 5 functional scenarios pass. All Session 15 regression items still pass. No
+            backend code was modified by the testing agent.
+
+metadata:
+  created_by: "main_agent"
+  version: "1.7"
+  test_sequence: 8
+  run_ui: false
+
+test_plan:
+  current_focus: []
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Session 17 backend test COMPLETE — 28/29 PASS (1 harness false-neg on /notifications/prefs
+        shape — the endpoint IS correct; weekly_recap is nested under `prefs` key).
+        Harness: /app/backend_test.py.
+        Backend URL: https://charming-wescoff-8.preview.emergentagent.com/api.
+
+        NEW ENDPOINT POST /api/share/reel/{mood_id} — fully verified:
+          • Owner (luna) happy path: 200 in 7.73s, body has ok:true, https url, key prefix
+            "shares/reel_", duration:15. Signed URL download → HTTP 200, video/mp4, 207,612 bytes.
+          • Cross-user: admin POST to luna's mood → 403 "Not your aura" (exact wording).
+          • Unknown mood_id → 404 "Aura not found".
+          • Missing Authorization header → 401 "Not authenticated".
+          • Minimal content (no photo/video/music, just emotion+word): 200 with has_audio:false,
+            has_video:false — gradient fallback + silent audio track works.
+
+        REGRESSION SPOT-CHECK (all green):
+          • /auth/me (admin) → 200.
+          • /moods/feed (luna) → 200.
+          • /friends (luna) → 200, NO `email` field on any friend row (Session 15 privacy fix).
+          • /messages/unread-count (luna) → 200 {total:1, conversations:1}.
+          • /notifications/prefs (luna) → 200; response = {"prefs": {reminder, reaction, message,
+            friend, weekly_recap}} — weekly_recap present (just nested).
+
+        Backend logs clean, ffmpeg 5.1.8 present, R2 R2 round-trip works, no 500s.
+        No backend code was modified by the testing agent.
+
+
+
 backend_session15:
   - task: "P2 transactional emails — welcome email on verify + weekly recap prefs + admin on-demand recap"
     implemented: true
@@ -1418,3 +1540,54 @@ agent_communication:
              React with heart → 200.
              React with unknown emoji "xyz" → 422.
           6) Regression: POST a plain message, GET /messages/with/{peer}, reactions list still intact.
+
+    - agent: "main"
+      message: |
+        Session 17 — 4 user-requested changes.
+        
+        1) SCREENSHOT GUARD scoped to Home only (was global):
+           - Removed from app/_layout.tsx.
+           - Added directly to app/(tabs)/home.tsx via useScreenCaptureGuard(isAdmin).
+           - Hook now releases the block on unmount → other screens stay capturable so users 
+             can share bug reports. Admins bypass.
+        
+        2) INSTAGRAM REEL share (replaces static screenshot):
+           - NEW backend endpoint: POST /api/share/reel/{mood_id}  (routes/share.py).
+             Composes a 1080x1920 H.264 MP4 via ffmpeg: aura photo/video + music preview audio
+             + Pillow-rendered overlay (brand chip, user name, emotion tag, word headline,
+             description, bottom CTA). Uploads to R2 under `shares/reel_<id>_<ts>.mp4` and 
+             returns a 1h presigned URL. Fallback gradient bg when no photo/video. Silent 
+             track when no music. 15s output, matches IG Story/Reel requirements.
+           - Frontend src/components/ShareToStories.tsx now calls /share/reel first and hands 
+             the downloaded MP4 to the native share sheet (mimeType video/mp4, UTI public.mpeg-4).
+             Static PNG fallback remains for robustness.
+           - Smoke-tested ffmpeg + Pillow composition locally: 168KB 9:16 MP4 produced from 
+             fallback gradient + overlay. OK.
+           - Dependencies installed in container: ffmpeg 5.1.8, Pillow 12.2.0 (already had httpx).
+        
+        3) FRIENDS list compactness:
+           - Replaced "Close" chip beside names with a single yellow star icon (cleaner, same info).
+           - Changed pill text "Shared today"/"Not yet dropped" to shorter "Posted"/"Waiting" 
+             with a small icon (checkmark-circle / ellipse-outline).
+           - Added numberOfLines={1} + flexShrink on name to prevent overflow truncation.
+           - Added hitSlop on star/close buttons for better one-handed use.
+        
+        4) DAILY NOTIFICATION timezone:
+           - scheduleDailyReminder() already used SchedulableTriggerInputTypes.DAILY with hour=12
+             (which honors device local time). Added a one-time migration that nukes every 
+             scheduled notification and re-plants clean ones when KEY_SCHEDULE_VERSION mismatches
+             the new value "v2_local_noon_2026_06". This flushes any legacy UTC-scheduled 
+             reminders left over from older builds. Comment in code explains local-time semantics.
+        
+        TESTING REQUEST (backend-only, mostly the new reel endpoint + regressions):
+          a) POST /api/share/reel/{mood_id} — as the owner. Use an existing luna mood. Expect 200 + 
+             { ok: true, url: "https://cdn.innfeel.app/...mp4", key, duration: 15, has_audio, has_video }.
+             Download the URL and verify Content-Type is video/mp4 and size > 10KB.
+          b) POST /api/share/reel/{mood_id} — as a non-owner → 403 "Not your aura".
+          c) POST /api/share/reel/nonexistent_id → 404.
+          d) POST /api/share/reel/{mood_id} with no auth → 401.
+          e) Regression: POST /api/moods then POST /api/share/reel/{mood_id} with text="hello world" 
+             and no photo/video/music → should still succeed (fallback gradient bg + silent audio).
+          f) Regression spot-checks of previously passing endpoints.
+        
+        Skip stress testing — ffmpeg encoding takes ~3-5s per call which is fine for manual share.

@@ -135,14 +135,11 @@ export default function Friends() {
               <View style={[styles.avatar, { backgroundColor: f.avatar_color || "#A78BFA" }]}>
                 <Text style={styles.avatarTxt}>{(f.name || "?").slice(0, 1).toUpperCase()}</Text>
               </View>
-              <View style={{ flex: 1 }}>
+              <View style={{ flex: 1, minWidth: 0 }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                  <Text style={styles.name}>{f.name}</Text>
+                  <Text style={styles.name} numberOfLines={1}>{f.name}</Text>
                   {f.is_close ? (
-                    <View style={styles.closeTag}>
-                      <Ionicons name="star" size={9} color="#FACC15" />
-                      <Text style={styles.closeTagTxt}>Close</Text>
-                    </View>
+                    <Ionicons name="star" size={14} color="#FACC15" style={{ marginLeft: 2 }} />
                   ) : null}
                 </View>
                 {typeof f.streak === "number" && f.streak > 0 ? (
@@ -150,13 +147,19 @@ export default function Friends() {
                 ) : null}
               </View>
               <View style={[styles.statusPill, f.dropped_today ? styles.pillGreen : styles.pillGray]}>
-                <Text style={styles.pillTxt}>{f.dropped_today ? t("friends.dropped") : t("friends.notDropped")}</Text>
+                <Ionicons
+                  name={f.dropped_today ? "checkmark-circle" : "ellipse-outline"}
+                  size={11}
+                  color={f.dropped_today ? "#22C55E" : COLORS.textTertiary}
+                />
+                <Text style={styles.pillTxt}>{f.dropped_today ? "Posted" : "Waiting"}</Text>
               </View>
               <TouchableOpacity
                 onPress={() => toggleClose(f.user_id, !!f.is_close)}
                 style={[styles.starBtn, f.is_close && styles.starBtnActive]}
                 testID={`toggle-close-${f.user_id}`}
                 disabled={togglingId === f.user_id}
+                hitSlop={6}
               >
                 <Ionicons
                   name={f.is_close ? "star" : "star-outline"}
@@ -164,7 +167,7 @@ export default function Friends() {
                   color={f.is_close ? "#FACC15" : COLORS.textTertiary}
                 />
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => remove(f.user_id)} style={styles.removeBtn} testID={`remove-${f.user_id}`}>
+              <TouchableOpacity onPress={() => remove(f.user_id)} style={styles.removeBtn} testID={`remove-${f.user_id}`} hitSlop={6}>
                 <Ionicons name="close" size={18} color={COLORS.textTertiary} />
               </TouchableOpacity>
             </View>
@@ -201,10 +204,10 @@ const styles = StyleSheet.create({
   starBtnActive: { backgroundColor: "rgba(250,204,21,0.12)", borderColor: "rgba(250,204,21,0.45)" },
   avatar: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
   avatarTxt: { color: "#000", fontWeight: "800", fontSize: 16 },
-  name: { color: "#fff", fontWeight: "600" },
+  name: { color: "#fff", fontWeight: "600", flexShrink: 1 },
   email: { color: COLORS.textTertiary, fontSize: 12, marginTop: 2 },
   streakTxt: { color: "#FB923C", fontSize: 12, fontWeight: "700", marginTop: 2 },
-  statusPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
+  statusPill: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, flexShrink: 0 },
   pillGreen: { backgroundColor: "rgba(52,211,153,0.15)", borderWidth: 1, borderColor: "rgba(52,211,153,0.4)" },
   pillGray: { backgroundColor: "rgba(255,255,255,0.06)" },
   pillTxt: { color: "#fff", fontSize: 10, fontWeight: "600" },

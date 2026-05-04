@@ -30,6 +30,10 @@ const SEEN_KEYS = {
 };
 
 const KEY_LAST_SCHEDULED = "innfeel_last_notif_scheduled_day";
+// Bump this when we change notification scheduling semantics — forces every client to
+// nuke any stale schedules (e.g. legacy ones that fired on UTC hour instead of local hour).
+const KEY_SCHEDULE_VERSION = "innfeel_notif_schedule_version";
+const CURRENT_SCHEDULE_VERSION = "v2_local_noon_2026_06";
 
 // Fixed reminder times (cannot be changed by user, only toggled)
 export const REMINDER_NOON_HOUR = 12;
@@ -177,6 +181,15 @@ export async function scheduleDailyReminder(): Promise<{ scheduled: boolean }> {
     const ok = await ensurePermission();
     if (!ok) return { scheduled: false };
 
+    // ---- One-time migration: if a user has a legacy schedule from a previous version
+    // that may have been committed in UTC, wipe EVERYTHING scheduled and re-plant clean ones.
+    const version = await getItem(KEY_SCHEDULE_VERSION);
+    if (version !== CURRENT_SCHEDULE_VERSION) {
+      try { await Notifications.cancelAllScheduledNotificationsAsync(); } catch {}
+      await setItem(KEY_LAST_SCHEDULED, "");
+      await setItem(KEY_SCHEDULE_VERSION, CURRENT_SCHEDULE_VERSION);
+    }
+
     const todayKey = new Date().toISOString().slice(0, 10);
     const last = await getItem(KEY_LAST_SCHEDULED);
     if (last === todayKey) {
@@ -185,7 +198,9 @@ export async function scheduleDailyReminder(): Promise<{ scheduled: boolean }> {
 
     await cancelReminderOnly();
 
-    // Primary reminder at noon
+    // IMPORTANT: `SchedulableTriggerInputTypes.DAILY` fires at `hour`:`minute` in the
+    // DEVICE'S LOCAL TIMEZONE (Android via AlarmManager, iOS via UNCalendarNotificationTrigger).
+    // So hour=12 means 12:00 Europe/Paris for French users, 12:00 America/New_York for US users, etc.
     await Notifications.scheduleNotificationAsync({
       content: {
         title: "Your daily aura ✨",
