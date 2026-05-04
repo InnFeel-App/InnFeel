@@ -461,7 +461,9 @@ async def get_insights(user: dict = Depends(get_current_user)):
     client can render a uniform card layout without per-insight branching.
     """
     user_id = user["user_id"]
-    now = now_utc()
+    # Mongo stores `created_at` tz-naive — strip tzinfo from our reference times so
+    # comparisons don't raise "can't compare offset-naive and offset-aware datetimes".
+    now = now_utc().replace(tzinfo=None)
     since_30 = now - timedelta(days=30)
     since_60 = now - timedelta(days=60)
     since_90 = now - timedelta(days=90)
