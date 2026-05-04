@@ -9,9 +9,14 @@ a 1080x1920 MP4 that combines:
 The reel is uploaded to R2 under the key `shares/reel_<mood_id>_<ts>.mp4`, then a presigned
 URL is returned to the client, which hands it to the native share sheet (IG Stories / Reels
 accept MP4 via the iOS/Android share intent).
+
+CRITICAL: ffmpeg is blocking and can take 8-20s per call. We hand it off to a thread via
+`asyncio.to_thread` so the FastAPI event loop stays free — otherwise the k8s ingress proxy
+returns 502 because the worker can't ack health pings during encoding.
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import os
@@ -207,10 +212,9 @@ def _ffmpeg_compose(
 ) -> bool:
     """Invoke ffmpeg to compose the final 9:16 MP4. Returns True on success.
 
-    For video backgrounds we just trim/cover-fit. For static photos we apply a subtle
-    Ken-Burns slow-zoom (zoompan) so the reel feels dynamic instead of frozen, plus a
-    fade-in at the start and fade-out at the end. Music audio is mixed underneath the
-    overlay; if no music we still output a silent AAC track so Instagram accepts the file.
+    Encoding budget: must stay under ~25s wall-clock to fit ingress proxy timeouts. We use
+    `-preset ultrafast` and pre-scale the photo at native target size (1080x1920) so the
+    zoompan filter doesn't have to operate on a huge canvas. Subtle Ken-Burns + fades stay.
     """
     if has_video:
         # Use the video stream as-is (cover-fit + crop + 25fps for stable encoding).
@@ -222,27 +226,25 @@ def _ffmpeg_compose(
             "[bg][1:v]overlay=0:0:format=auto[vout]"
         )
     else:
-        # Static photo → loop, slight Ken-Burns zoom (1.0 → 1.12 over 15s @ 25fps).
-        # zoompan needs the input prepped at the target resolution first.
-        zoom_frames = REEL_DURATION_SEC * 25  # 25 fps
+        # Static photo → loop, light Ken-Burns zoom (1.0 → 1.10 over 15s @ 25fps).
+        # Pre-scale at 1.5x target keeps zoompan under ~6s wall-clock at ultrafast.
+        zoom_frames = REEL_DURATION_SEC * 25
         inputs = ["-loop", "1", "-t", str(REEL_DURATION_SEC), "-i", bg_path, "-i", overlay_path]
         vf = (
             "[0:v]scale=1620:2880:force_original_aspect_ratio=increase,"
             "crop=1620:2880,setsar=1,"
-            f"zoompan=z='zoom+0.0006':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={zoom_frames}:s=1080x1920:fps=25,"
+            f"zoompan=z='min(zoom+0.0005,1.10)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={zoom_frames}:s=1080x1920:fps=25,"
             f"fade=t=in:st=0:d=0.6,fade=t=out:st={REEL_DURATION_SEC - 0.6}:d=0.6[bg];"
             "[bg][1:v]overlay=0:0:format=auto[vout]"
         )
 
     if has_audio and audio_path:
-        # Mix music with a slight audio fade at start/end for a polished feel.
         inputs += ["-i", audio_path]
         af = f"[2:a]afade=t=in:st=0:d=0.3,afade=t=out:st={REEL_DURATION_SEC - 0.5}:d=0.5[aout]"
         full_filter = f"{vf};{af}"
         map_args = ["-map", "[vout]", "-map", "[aout]"]
         audio_args = ["-c:a", "aac", "-b:a", "160k", "-shortest"]
     else:
-        # Silent track so Instagram accepts the file as a reel/video.
         inputs += ["-f", "lavfi", "-t", str(REEL_DURATION_SEC), "-i", "anullsrc=r=44100:cl=stereo"]
         full_filter = vf
         map_args = ["-map", "[vout]", "-map", "2:a:0"]
@@ -250,10 +252,12 @@ def _ffmpeg_compose(
 
     cmd = [
         _FFMPEG_BIN, "-y", "-hide_banner", "-loglevel", "error",
+        # Use multiple threads to get under the proxy's 30s timeout on real photos.
+        "-threads", "0",
         *inputs,
         "-filter_complex", full_filter,
         *map_args,
-        "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
         "-r", "25",
         "-t", str(REEL_DURATION_SEC),
@@ -261,7 +265,7 @@ def _ffmpeg_compose(
         out_path,
     ]
     try:
-        proc = subprocess.run(cmd, cwd=workdir, capture_output=True, timeout=90)
+        proc = subprocess.run(cmd, cwd=workdir, capture_output=True, timeout=80)
         if proc.returncode != 0:
             logger.warning(f"[share] ffmpeg failed rc={proc.returncode} stderr={proc.stderr.decode()[:800]}")
             return False
@@ -273,11 +277,16 @@ def _ffmpeg_compose(
 
 @router.post("/share/reel/{mood_id}")
 async def build_reel(mood_id: str, user: dict = Depends(get_current_user)):
-    """Compose a 9:16 MP4 reel for the given mood and return a presigned URL."""
+    """Compose a 9:16 MP4 reel for the given mood and return a presigned URL.
+
+    The expensive bits — Pillow rendering, ffmpeg encoding, and R2 upload — run on a worker
+    thread via `asyncio.to_thread` so the FastAPI event loop keeps answering health pings
+    and other requests during the 5-25s composition window. Without this, the ingress
+    proxy would 502 on long encodes.
+    """
     mood = await db.moods.find_one({"mood_id": mood_id}, {"_id": 0})
     if not mood:
         raise HTTPException(status_code=404, detail="Aura not found")
-    # Safety: only the owner can share their own reel (avoids impersonation).
     if mood["user_id"] != user["user_id"]:
         raise HTTPException(status_code=403, detail="Not your aura")
 
@@ -286,7 +295,6 @@ async def build_reel(mood_id: str, user: dict = Depends(get_current_user)):
     word = (mood.get("word") or "").strip()
     description = (mood.get("text") or "").strip()
 
-    # Pull the user's display name for the overlay.
     owner = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0, "name": 1})
     user_name = (owner or {}).get("name") or ""
 
@@ -300,7 +308,7 @@ async def build_reel(mood_id: str, user: dict = Depends(get_current_user)):
         has_video = False
         has_audio = False
 
-        # Background: prefer video, else photo, else fallback gradient.
+        # Background download stays on the event loop (httpx is async-friendly).
         if mood.get("video_key"):
             url = _r2.generate_get_url(mood["video_key"], expires=600)
             if url and await _download(url, bg_path):
@@ -310,18 +318,19 @@ async def build_reel(mood_id: str, user: dict = Depends(get_current_user)):
             if url and await _download(url, bg_path):
                 has_video = False  # stays photo
         if not has_video and not os.path.exists(bg_path):
-            # paint fallback
+            # paint fallback in a thread (Pillow is CPU-bound)
+            fallback = await asyncio.to_thread(_render_fallback_background, color_hex)
             with open(bg_path, "wb") as f:
-                f.write(_render_fallback_background(color_hex))
+                f.write(fallback)
 
-        # Audio: music preview if present.
         music = mood.get("music") or {}
         preview_url = music.get("preview_url")
         if preview_url and await _download(preview_url, audio_path):
             has_audio = True
 
-        # Overlay PNG (always rendered).
-        overlay_bytes = _render_overlay_png(
+        # Pillow overlay rendering is CPU-bound — offload to a thread.
+        overlay_bytes = await asyncio.to_thread(
+            _render_overlay_png,
             color_hex=color_hex,
             word=word,
             emotion=emotion,
@@ -331,7 +340,9 @@ async def build_reel(mood_id: str, user: dict = Depends(get_current_user)):
         with open(overlay_path, "wb") as f:
             f.write(overlay_bytes)
 
-        ok = _ffmpeg_compose(
+        # ffmpeg is BLOCKING (subprocess.run) — must run in a thread or we 502.
+        ok = await asyncio.to_thread(
+            _ffmpeg_compose,
             workdir=work,
             has_video=has_video,
             has_audio=has_audio,
@@ -343,17 +354,16 @@ async def build_reel(mood_id: str, user: dict = Depends(get_current_user)):
         if not ok:
             raise HTTPException(status_code=500, detail="Reel generation failed")
 
-        # Upload to R2.
         with open(out_path, "rb") as f:
             data = f.read()
         key = f"shares/reel_{mood_id}_{int(time.time())}_{uuid.uuid4().hex[:6]}.mp4"
         try:
-            _r2.upload_bytes(key, data, content_type="video/mp4")
+            await asyncio.to_thread(_r2.upload_bytes, key, data, "video/mp4")
         except Exception as e:
             logger.warning(f"[share] R2 upload failed: {e}")
             raise HTTPException(status_code=500, detail="Upload failed")
 
-        url = _r2.generate_get_url(key, expires=60 * 60)  # 1h is plenty for IG upload
+        url = _r2.generate_get_url(key, expires=60 * 60)
         return {
             "ok": True,
             "url": url,

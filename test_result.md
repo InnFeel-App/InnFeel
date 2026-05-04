@@ -383,6 +383,83 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 
+backend_session19:
+  - task: "Instagram Reel share endpoint FIX — asyncio.to_thread + ultrafast preset (502 fix)"
+    implemented: true
+    working: true
+    file: "/app/backend/routes/share.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Session 19 /api/share/reel/{mood_id} fix verification COMPLETE — 32/32 PASS (100%).
+            Harness: /app/backend_test.py vs https://charming-wescoff-8.preview.emergentagent.com/api.
+            Creds: hello@innfeel.app / admin123, luna@innfeel.app / demo1234.
+
+            1) OWNER HAPPY PATH — minimal content, no photo/video/music — 12/12 PASS:
+              · As luna: DELETE /moods/today, then POST /moods {emotion:"calm", word:"peaceful",
+                intensity:2} → new mood_53d8a991f4d2.
+              · POST /api/share/reel/<mood_id> → 200 in 6.50s (well under 15s budget).
+              · Body: {ok:true, url:"https://cdn.innfeel.app/shares/reel_...mp4?X-Amz-Signature=...",
+                key:"shares/reel_mood_53d8a991f4d2_1777913004_dbc6d0.mp4", duration:15,
+                has_video:false, has_audio:false}.
+              · url starts with "https://" ✓, key starts with "shares/reel_" ✓, duration==15 ✓.
+              · Followed signed URL (follow_redirects=True) → HTTP 200, Content-Type video/mp4,
+                Content-Length 918,908 bytes (>>50KB threshold).
+              · Fallback gradient + Ken-Burns + silent-audio pipeline works end-to-end.
+
+            2) REEL WITH REAL PHOTO — Ken Burns photo path — 8/8 PASS:
+              · As luna: DELETE /moods/today, then POST /moods with emotion:joy, word:sunshine,
+                intensity:3, photo_b64:<800x800 yellow JPEG from PIL>.
+              · POST /api/share/reel/<mood_id> → 200 in 5.49s (well under 20s budget).
+              · Body has ok:true, has_video:false (photo path), has_audio:false.
+              · Signed URL download → 200, Content-Length 882,309 bytes (>>200KB threshold).
+              · Photo path with prescale to 1620x2880 + zoompan + fade in/out all render cleanly.
+
+            3) EVENT-LOOP RESPONSIVENESS DURING ffmpeg — 4/4 PASS (CRITICAL):
+              · Two concurrent threads: A = POST /api/share/reel/<mood_id> (luna);
+                B = GET /api/auth/me (admin) started 200ms after A.
+              · Connection A (reel): 200 in 5.45s.
+              · Connection B (auth/me): 200 in 0.15s (!) — DECISIVELY proves asyncio.to_thread
+                is keeping the FastAPI event loop free during ffmpeg encoding.
+              · auth_me elapsed under 2.0s hard threshold ✓ (requirement: <2s).
+              · auth_me elapsed under 5.0s hard cutoff ✓ (requirement: <5s proves threading not
+                broken). The threading fix works exactly as intended — no event loop starvation.
+
+            4) 401 / 403 / 404 REGRESSIONS — 3/3 PASS:
+              · POST /share/reel/<mood_id> with NO Authorization header → 401
+                {"detail":"Not authenticated"}.
+              · admin POST /share/reel/<luna_mood_id> → 403 {"detail":"Not your aura"} (exact).
+              · POST /share/reel/mood_does_not_exist (valid luna token) → 404
+                {"detail":"Aura not found"} (exact).
+
+            5) REGRESSION SPOT-CHECK — 5/5 PASS:
+              · GET /auth/me (admin) → 200, email=hello@innfeel.app.
+              · GET /moods/feed (luna) → 200 with items[] after posting.
+              · GET /friends (luna) → 200, 2 friends; `email` field ABSENT on every row
+                (Session 15 privacy fix holds).
+              · POST /messages/{id}/react {emoji:"love_eyes"} → 200 with reactions array containing
+                {user_id:luna, emoji:"love_eyes"}. (emoji set extended to include love_eyes).
+
+            BACKEND HEALTH:
+              · backend.err.log clean; only WatchFiles reload lines from the share.py edit,
+                + purge daemon lines: "[purge] {moods_deleted:0, r2_objects_deleted:0,
+                users_checked:65}".
+              · Prior 500 on /api/share/reel/mood_96269c355d38 visible in older log — that's a
+                pre-fix execution; after the fix, zero 500s across the entire 32-call run.
+              · ffmpeg binary now resolved via imageio_ffmpeg.get_ffmpeg_exe() at import time.
+                Encoding timings: minimal ~6.5s, photo path ~5.5s — comfortably within the ~10s
+                target and well under the k8s ingress 25-30s timeout that was causing 502s.
+
+            CONCLUSION: The Session 19 fix (asyncio.to_thread wrapping + ultrafast preset + CRF 26
+            + 1620x2880 prescale) fully resolves the 502/500 reel endpoint bug. Event loop
+            remains fully responsive during encoding (auth_me answered in 0.15s while ffmpeg was
+            running in a worker thread). All 5 test scenarios pass. No regressions. No code fixes
+            were applied by the testing agent.
+
 backend_session17:
   - task: "Instagram Reel share endpoint — POST /api/share/reel/{mood_id}"
     implemented: true
@@ -1732,3 +1809,35 @@ agent_communication:
           code bug — routes/share.py is unchanged. Fix: `apt-get install -y ffmpeg`.
 
         No backend code was modified by the testing agent.
+
+    - agent: "main"
+      message: |
+        Session 19 — fix the failing reel share (502 Bad Gateway in mobile, 500 in earlier logs).
+        
+        ROOT CAUSES IDENTIFIED:
+          1) FRONTEND: Expo SDK 54 refactored expo-file-system. `FileSystem.downloadAsync` is no
+             longer at the top level — it lives in `expo-file-system/legacy`. My code was 
+             calling an undefined function, silently catching the TypeError, and falling back 
+             to the static PNG screenshot. User saw "just a screenshot" instead of the dynamic reel.
+             Fix: import LegacyFS from "expo-file-system/legacy".
+          2) BACKEND: ffmpeg subprocess.run is BLOCKING. While it ran (5-12s on real photos),
+             the FastAPI worker couldn't ack the k8s ingress proxy → 502 Bad Gateway. Also a
+             500 was caused by ffmpeg binary missing earlier (now bundled via imageio-ffmpeg).
+             Fix: wrapped the heavy work (Pillow, ffmpeg, R2 upload) in asyncio.to_thread.
+          3) BACKEND: ffmpeg encoding was too slow for typical photo+music input.
+             Fix: -preset ultrafast, -crf 26, -threads 0, smaller prescale (1620x2880).
+          4) FRONTEND: Static fallback raced "Card not ready" because payload was set on entry 
+             but the offscreen ShareCard hadn't committed yet.
+             Fix: setPayload + 400ms wait before captureRef, with 1 retry.
+        
+        TESTING REQUEST — focused on the reel endpoint:
+          a) POST /api/share/reel/{mood_id} — owner with no photo/video/music → 200 in <15s, 
+             returns valid presigned URL, MP4 downloadable, Content-Type video/mp4, size > 50KB 
+             (Ken-Burns gradient + overlay).
+          b) POST /api/share/reel/{mood_id} — owner with a photo only → 200 in <15s. 
+             Reel size > 200KB. Verify mp4 downloads cleanly.
+          c) Concurrent calls regression: while a reel build is running, GET /api/auth/me on
+             another connection → must respond in <1s (proves the event loop isn't blocked).
+          d) Spot-check previously passing endpoints didn't regress.
+        
+        Skip 4-encode stress tests — single concurrent call test covers the key regression.

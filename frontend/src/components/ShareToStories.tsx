@@ -61,6 +61,15 @@ export function useShareToStories() {
 
   const shareStaticPng = async (p: Payload): Promise<boolean> => {
     try {
+      // Make sure the offscreen card is mounted with the latest payload before capture.
+      setPayload(p);
+      // 2 ticks → React commits + native layout settles. 400ms is the sweet spot we
+      // verified empirically across iOS / Android — going lower causes "Card not ready".
+      await new Promise((r) => setTimeout(r, 400));
+      if (!cardRef.current) {
+        // Give it one more retry — sometimes the very first capture race-loses to RN bridge.
+        await new Promise((r) => setTimeout(r, 400));
+      }
       if (!cardRef.current) throw new Error("Card not ready");
       const uri = await captureRef(cardRef, { format: "png", quality: 1, result: "tmpfile" });
       if (!(await Sharing.isAvailableAsync())) {
