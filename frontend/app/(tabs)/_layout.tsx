@@ -80,7 +80,7 @@ export default function TabsLayout() {
     >
       <Tabs.Screen name="home" options={{ title: "Home" }} />
       <Tabs.Screen name="friends" options={{ title: "Friends" }} />
-      <Tabs.Screen name="create" options={{ title: "Aura +" }} />
+      <Tabs.Screen name="create" options={{ title: "Aura" }} />
       <Tabs.Screen name="messages" options={{ title: "Inbox" }} />
       <Tabs.Screen name="profile" options={{ title: "Me" }} />
       <Tabs.Screen name="stats" options={{ href: null }} />

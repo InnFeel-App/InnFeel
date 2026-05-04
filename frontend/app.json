@@ -13,11 +13,16 @@
       "bundleIdentifier": "com.innfeel.app",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Record a voice note for your daily aura.",
-        "NSPhotoLibraryUsageDescription": "Attach a photo to your daily aura.",
+        "NSPhotoLibraryUsageDescription": "Save your aura visuals to share on social.",
+        "NSPhotoLibraryAddUsageDescription": "Save your aura visuals so you can share them.",
         "NSCameraUsageDescription": "Capture a photo for your daily aura.",
         "LSApplicationQueriesSchemes": [
           "instagram",
-          "instagram-stories"
+          "instagram-stories",
+          "whatsapp",
+          "tg",
+          "telegram",
+          "sms"
         ]
       }
     },
