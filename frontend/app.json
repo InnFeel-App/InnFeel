@@ -15,7 +15,10 @@
         "NSMicrophoneUsageDescription": "Record a voice note for your daily aura.",
         "NSPhotoLibraryUsageDescription": "Attach a photo to your daily aura.",
         "NSCameraUsageDescription": "Capture a photo for your daily aura.",
-        "LSApplicationQueriesSchemes": ["instagram", "instagram-stories"]
+        "LSApplicationQueriesSchemes": [
+          "instagram",
+          "instagram-stories"
+        ]
       }
     },
     "android": {
@@ -63,7 +66,8 @@
         {
           "microphonePermission": "Record a voice note for your daily aura."
         }
-      ]
+      ],
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true
