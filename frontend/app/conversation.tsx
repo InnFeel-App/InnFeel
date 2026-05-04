@@ -361,13 +361,13 @@ export default function Conversation() {
 
   const auraColor = peer?.avatar_color || "#A78BFA";
 
-  const renderReactions = (m: any) => {
+  const renderReactions = (m: any, mine: boolean) => {
     const reactions = (m.reactions || []) as any[];
     if (reactions.length === 0) return null;
     const map: Record<string, number> = {};
     for (const r of reactions) { map[r.emoji] = (map[r.emoji] || 0) + 1; }
     return (
-      <View style={styles.reactRow}>
+      <View style={[styles.reactRow, mine ? { justifyContent: "flex-end" } : { justifyContent: "flex-start" }]}>
         {Object.entries(map).map(([k, count]) => (
           <View key={k} style={styles.reactChip}>
             <Text style={styles.reactChipTxt}>{emojiForKey(k)} {count > 1 ? count : ""}</Text>
@@ -377,16 +377,22 @@ export default function Conversation() {
     );
   };
 
-  const renderReplyChip = (m: any) => {
+  const renderReplyChip = (m: any, mine: boolean) => {
     if (!m.reply_to && !m.reply_preview) return null;
     return (
-      <View style={styles.replyChip}>
-        <View style={styles.replyBar} />
-        <View style={{ flex: 1 }}>
-          <Text style={styles.replyChipName} numberOfLines={1}>
+      <View style={[styles.replyChip, mine ? styles.replyChipMine : styles.replyChipTheirs]}>
+        <View style={[styles.replyBar, { backgroundColor: mine ? "#6B21A8" : "#A78BFA" }]} />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text
+            style={[styles.replyChipName, mine ? { color: "rgba(0,0,0,0.75)" } : { color: "rgba(255,255,255,0.85)" }]}
+            numberOfLines={1}
+          >
             {m.reply_sender_name || "Replied"}
           </Text>
-          <Text style={styles.replyChipTxt} numberOfLines={1}>
+          <Text
+            style={[styles.replyChipTxt, mine ? { color: "rgba(0,0,0,0.6)" } : { color: "rgba(255,255,255,0.6)" }]}
+            numberOfLines={1}
+          >
             {m.reply_preview || "Message"}
           </Text>
         </View>
@@ -428,6 +434,83 @@ export default function Conversation() {
                 const totalSec = Math.max(1, item.audio_seconds || 0);
                 const curSec = Math.floor(totalSec * audioProgress);
                 const displaySec = isPlayingThis ? curSec : totalSec;
+                const hasAudio = !!item.audio_url || !!item.audio_b64;
+                const hasPhoto = !!item.photo_url || !!item.photo_b64;
+                const bubbleNode = (
+                  <Pressable
+                    onPress={() => handleBubbleTap(item.message_id)}
+                    onLongPress={() => setPickerFor(item.message_id)}
+                    delayLongPress={300}
+                    testID={`msg-${item.message_id}`}
+                    style={[
+                      styles.bubble,
+                      mine ? styles.bubbleMine : styles.bubbleTheirs,
+                      hasAudio && styles.bubbleAudio,
+                      hasPhoto && styles.bubblePhoto,
+                    ]}
+                  >
+                    {renderReplyChip(item, mine)}
+                    {hasPhoto && (
+                      <Image
+                        source={{ uri: item.photo_url || `data:image/jpeg;base64,${item.photo_b64}` }}
+                        style={styles.attachImg}
+                        resizeMode="cover"
+                      />
+                    )}
+                    {hasAudio && (
+                      <View style={styles.audioRow}>
+                        <TouchableOpacity onPress={() => playAudio(item)} style={{ flexShrink: 0 }}>
+                          <Ionicons
+                            name={isPlayingThis ? "pause-circle" : "play-circle"}
+                            size={32}
+                            color={mine ? "#000" : "#fff"}
+                          />
+                        </TouchableOpacity>
+                        <View style={styles.audioWaveWrap}>
+                          <View style={[styles.audioWaveTrack, { backgroundColor: mine ? "rgba(0,0,0,0.15)" : "rgba(255,255,255,0.15)" }]} />
+                          {isPlayingThis ? (
+                            <View
+                              style={[
+                                styles.audioWaveFill,
+                                {
+                                  backgroundColor: mine ? "#000" : "#fff",
+                                  width: `${Math.max(4, audioProgress * 100)}%`,
+                                },
+                              ]}
+                            />
+                          ) : null}
+                        </View>
+                        <Text style={[styles.audioTime, { color: mine ? "#000" : "#fff" }]}>
+                          {String(Math.floor(displaySec / 60)).padStart(2, "0")}:{String(displaySec % 60).padStart(2, "0")}
+                        </Text>
+                        <TouchableOpacity
+                          onPress={toggleRate}
+                          hitSlop={6}
+                          style={[
+                            styles.rateBtn,
+                            {
+                              backgroundColor: mine ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.12)",
+                              borderColor: mine ? "rgba(0,0,0,0.25)" : "rgba(255,255,255,0.25)",
+                            },
+                          ]}
+                        >
+                          <Text style={[styles.rateTxt, { color: mine ? "#000" : "#fff" }]}>{playbackRate}x</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                    {!!item.text && <Text style={[styles.msg, mine && { color: "#000" }]}>{item.text}</Text>}
+                  </Pressable>
+                );
+                const reactBtnNode = (
+                  <TouchableOpacity
+                    testID={`react-btn-${item.message_id}`}
+                    onPress={() => setPickerFor(pickerFor === item.message_id ? null : item.message_id)}
+                    style={styles.reactBtn}
+                    hitSlop={8}
+                  >
+                    <Ionicons name="happy-outline" size={14} color="#fff" />
+                  </TouchableOpacity>
+                );
                 return (
                   <Swipeable
                     ref={(ref) => { swipeableRefs.current[item.message_id] = ref; }}
@@ -436,79 +519,27 @@ export default function Conversation() {
                     leftThreshold={64}
                     overshootRight={false}
                     overshootLeft={false}
-                    // Swipe from right-edge toward left to reply (mine-side messages)
                     renderLeftActions={mine ? undefined : renderSwipeAction}
                     renderRightActions={mine ? renderSwipeAction : undefined}
                     onSwipeableOpen={() => onSwipeOpen(item)}
                   >
-                    <View style={[styles.bubbleWrap, mine ? { alignItems: "flex-end" } : { alignItems: "flex-start" }]}>
-                      <Pressable
-                        onPress={() => handleBubbleTap(item.message_id)}
-                        onLongPress={() => setPickerFor(item.message_id)}
-                        delayLongPress={300}
-                        testID={`msg-${item.message_id}`}
-                        style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}
-                      >
-                        {renderReplyChip(item)}
-                        {(!!item.photo_url || !!item.photo_b64) && (
-                          <Image
-                            source={{ uri: item.photo_url || `data:image/jpeg;base64,${item.photo_b64}` }}
-                            style={styles.attachImg}
-                            resizeMode="cover"
-                          />
-                        )}
-                        {(!!item.audio_url || !!item.audio_b64) && (
-                          <View style={styles.audioRow}>
-                            <TouchableOpacity onPress={() => playAudio(item)}>
-                              <Ionicons
-                                name={isPlayingThis ? "pause-circle" : "play-circle"}
-                                size={36}
-                                color={mine ? "#000" : "#fff"}
-                              />
-                            </TouchableOpacity>
-                            <View style={styles.audioWaveWrap}>
-                              <View style={[styles.audioWaveTrack, { backgroundColor: mine ? "rgba(0,0,0,0.15)" : "rgba(255,255,255,0.15)" }]} />
-                              {isPlayingThis ? (
-                                <View
-                                  style={[
-                                    styles.audioWaveFill,
-                                    {
-                                      backgroundColor: mine ? "#000" : "#fff",
-                                      width: `${Math.max(4, audioProgress * 100)}%`,
-                                    },
-                                  ]}
-                                />
-                              ) : null}
-                            </View>
-                            <Text style={[styles.audioTime, { color: mine ? "#000" : "#fff" }]}>
-                              {String(Math.floor(displaySec / 60)).padStart(2, "0")}:{String(displaySec % 60).padStart(2, "0")}
-                            </Text>
-                            <TouchableOpacity
-                              onPress={toggleRate}
-                              style={[
-                                styles.rateBtn,
-                                {
-                                  backgroundColor: mine ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.12)",
-                                  borderColor: mine ? "rgba(0,0,0,0.25)" : "rgba(255,255,255,0.25)",
-                                },
-                              ]}
-                            >
-                              <Text style={[styles.rateTxt, { color: mine ? "#000" : "#fff" }]}>{playbackRate}x</Text>
-                            </TouchableOpacity>
-                          </View>
-                        )}
-                        {!!item.text && <Text style={[styles.msg, mine && { color: "#000" }]}>{item.text}</Text>}
-                      </Pressable>
-
-                      <TouchableOpacity
-                        testID={`react-btn-${item.message_id}`}
-                        onPress={() => setPickerFor(pickerFor === item.message_id ? null : item.message_id)}
-                        style={[styles.reactBtn, mine ? { right: undefined, left: -6 } : { right: -6 }]}
-                      >
-                        <Ionicons name="happy-outline" size={14} color="#fff" />
-                      </TouchableOpacity>
-
-                      {renderReactions(item)}
+                    <View style={[styles.rowContainer, mine ? styles.rowContainerMine : styles.rowContainerTheirs]}>
+                      <View style={styles.msgCol}>
+                        <View style={[styles.bubbleLine, mine ? { justifyContent: "flex-end" } : { justifyContent: "flex-start" }]}>
+                          {mine ? (
+                            <>
+                              {reactBtnNode}
+                              {bubbleNode}
+                            </>
+                          ) : (
+                            <>
+                              {bubbleNode}
+                              {reactBtnNode}
+                            </>
+                          )}
+                        </View>
+                        {renderReactions(item, mine)}
+                      </View>
                     </View>
                   </Swipeable>
                 );
@@ -607,39 +638,69 @@ const styles = StyleSheet.create({
   empty: { color: COLORS.textSecondary, textAlign: "center", marginTop: 60 },
 
   bubbleWrap: { marginBottom: 12, position: "relative" },
-  bubble: { padding: 10, borderRadius: 18, maxWidth: "78%", overflow: "hidden" },
+  // Row-level container — full width of the FlatList item, controls left/right alignment
+  rowContainer: {
+    flexDirection: "row",
+    marginBottom: 10,
+    width: "100%",
+  },
+  rowContainerMine: { justifyContent: "flex-end" },
+  rowContainerTheirs: { justifyContent: "flex-start" },
+  // Column containing the bubble + any under-bubble reactions.
+  // Hard-caps width at 82% so voice notes + reply chips can never escape the screen.
+  msgCol: { maxWidth: "82%", flexShrink: 1 },
+  // Line holding bubble + reactBtn side-by-side.
+  bubbleLine: { flexDirection: "row", alignItems: "flex-end", gap: 4, flexShrink: 1 },
+  bubble: { padding: 10, borderRadius: 18, overflow: "hidden", flexShrink: 1 },
   bubbleMine: { backgroundColor: "#fff", borderBottomRightRadius: 4 },
   bubbleTheirs: { backgroundColor: "rgba(255,255,255,0.08)", borderBottomLeftRadius: 4 },
+  // Audio bubbles need a minimum sane width so the progress bar doesn't collapse.
+  bubbleAudio: { minWidth: 210, paddingVertical: 8, paddingRight: 10 },
+  bubblePhoto: { padding: 4 },
   msg: { color: "#fff", fontSize: 15, lineHeight: 20, paddingHorizontal: 2, paddingVertical: 2 },
-  attachImg: { width: 220, height: 220, borderRadius: 14, marginBottom: 4 },
+  attachImg: { width: 220, height: 220, borderRadius: 14 },
 
-  audioRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4, paddingRight: 4 },
-  audioWaveWrap: { flex: 1, height: 14, borderRadius: 7, minWidth: 80, justifyContent: "center", overflow: "hidden" },
+  audioRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  audioWaveWrap: { flexShrink: 1, flexGrow: 1, height: 14, borderRadius: 7, minWidth: 50, justifyContent: "center", overflow: "hidden" },
   audioWaveTrack: { ...StyleSheet.absoluteFillObject, borderRadius: 7 },
   audioWaveFill: { height: 14, borderRadius: 7 },
-  audioTime: { fontSize: 12, fontWeight: "600", minWidth: 38, textAlign: "right" },
-  rateBtn: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 10, borderWidth: 1, marginLeft: 2 },
+  audioTime: { fontSize: 12, fontWeight: "700", minWidth: 36, textAlign: "right", flexShrink: 0 },
+  rateBtn: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 10, borderWidth: 1, flexShrink: 0 },
   rateTxt: { fontSize: 11, fontWeight: "800", letterSpacing: 0.3 },
 
-  reactBtn: { position: "absolute", bottom: -8, width: 22, height: 22, borderRadius: 11, backgroundColor: "rgba(0,0,0,0.7)", borderWidth: 1, borderColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center" },
-  reactRow: { flexDirection: "row", gap: 4, marginTop: 4, paddingHorizontal: 6 },
+  // Inline react button (no absolute positioning — it sits next to the bubble).
+  reactBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "flex-end",
+    marginBottom: 4,
+  },
+  reactRow: { flexDirection: "row", gap: 4, marginTop: 4, paddingHorizontal: 6, flexWrap: "wrap" },
   reactChip: { backgroundColor: "rgba(0,0,0,0.6)", borderWidth: 1, borderColor: "rgba(255,255,255,0.2)", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 14 },
   reactChipTxt: { color: "#fff", fontSize: 12 },
 
-  // Reply visuals
+  // Reply visuals — kept compact but given a minWidth so preview text actually reads.
   replyChip: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    backgroundColor: "rgba(0,0,0,0.12)",
     borderRadius: 10,
     paddingVertical: 5,
     paddingHorizontal: 8,
     marginBottom: 6,
+    minWidth: 180,
   },
-  replyBar: { width: 3, alignSelf: "stretch", borderRadius: 2, backgroundColor: "#A78BFA" },
-  replyChipName: { color: "rgba(0,0,0,0.75)", fontSize: 11, fontWeight: "700" },
-  replyChipTxt: { color: "rgba(0,0,0,0.55)", fontSize: 12 },
+  replyChipMine: { backgroundColor: "rgba(0,0,0,0.08)" },
+  replyChipTheirs: { backgroundColor: "rgba(255,255,255,0.08)" },
+  replyBar: { width: 3, alignSelf: "stretch", borderRadius: 2 },
+  replyChipName: { fontSize: 11, fontWeight: "700" },
+  replyChipTxt: { fontSize: 12 },
   replyPreviewBar: {
     flexDirection: "row",
     alignItems: "center",
