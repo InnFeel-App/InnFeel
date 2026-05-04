@@ -12,6 +12,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useShareToStories } from "../../src/components/ShareToStories";
 import ShareAuraButton from "../../src/components/ShareAuraButton";
 import StreakFreezeCard from "../../src/components/StreakFreezeCard";
+import HeatmapCalendar from "../../src/components/HeatmapCalendar";
 
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const RANGES: { key: 30 | 90 | 365; label: string }[] = [
@@ -158,6 +159,10 @@ export default function Stats() {
 
           {/* Streak Freeze — protect the streak with monthly quotas + bundle upsell. */}
           <StreakFreezeCard onChange={load} />
+
+          {/* 90-day Heatmap — GitHub-style emotional calendar with intensity gradient. */}
+          <Text style={styles.section}>Calendar</Text>
+          <HeatmapCalendar days={90} />
 
           <View style={[styles.heroCard, { borderColor: domColor + "80" }]} testID="stat-dominant">
             <Text style={styles.heroLbl}>{t("stats.dominant")}</Text>

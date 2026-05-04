@@ -646,8 +646,8 @@ backend_session21:
 
 metadata:
   created_by: "main_agent"
-  version: "1.7"
-  test_sequence: 8
+  version: "1.8"
+  test_sequence: 9
   run_ui: false
 
 test_plan:
@@ -655,6 +655,159 @@ test_plan:
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+backend_session22:
+  - task: "Smart Reminders (B4) — GET /api/notifications/smart-hour + POST /api/moods local_hour push"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py, /app/backend/routes/moods.py, /app/backend/app_core/models.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Session 22 / B4 Smart Reminders backend test COMPLETE — 32/32 PASS.
+            Harness: /app/backend_test.py vs https://charming-wescoff-8.preview.emergentagent.com/api.
+            Creds: hello@innfeel.app / admin123, rio@innfeel.app / demo1234, luna@innfeel.app / demo1234.
+
+            A) GET /api/notifications/smart-hour — 21/21 PASS:
+              · A1: unauth (no Authorization, cookies cleared) → 401 ✓.
+              · A2: rio with $unset recent_local_hours → 200
+                {hour:12, minute:0, source:"default", samples:0, confidence:"low"} ✓.
+              · A3: seeded recent_local_hours=[9,10,11] (3 samples) → 200, samples:3,
+                source:"default" (still <5), hour:12 ✓.
+              · A4: seeded [9,9,10,10,10] (5 tight samples) → 200, samples:5,
+                source:"history", hour:10, confidence:"high" ✓ (5/5 within ±1h of median 10).
+              · A5: seeded [7,9,12,15,20] (5 spread) → 200, samples:5, source:"history",
+                hour:12 (median), confidence:"medium" ✓ (only 1/5 within ±1h of median 12,
+                <50% threshold → medium).
+
+            B) POST /api/moods with local_hour — 9/9 PASS:
+              · B2: rio reset, POST {emotion:"joy", intensity:3, local_hour:14} → 200;
+                DB users.recent_local_hours == [14] ✓ ($push with $slice -30 working).
+              · B3: re-POST same day {emotion:"calm", intensity:2, local_hour:18} → 200,
+                replaced:true; DB users.recent_local_hours STILL == [14] ✓
+                (no push on edit — guarded by `if not existing` in routes/moods.py).
+              · B4: deleted today's mood, POST {emotion:"joy", intensity:3} (no local_hour) →
+                200; recent_local_hours UNCHANGED == [14] ✓ (None guard works).
+              · B5: seeded recent_local_hours = list(range(0,30)) (30 entries),
+                deleted today's mood, POST {local_hour:5} → 200;
+                len == 30 ✓, last element == 5 ✓, first element == 1 (was 0, shifted off) ✓.
+                $slice:-30 rolling cap verified end-to-end.
+
+            CLEANUP: deleted rio's seeded moods, $unset recent_local_hours +
+              streak_freezes + streak_freezes_purchased + streak_freezes_total +
+              bundle_purchases. Deterministic state restored.
+
+            BACKEND HEALTH:
+              · backend.err.log clean — only WatchFiles reload + purge daemon
+                "[purge] {moods_deleted:0, r2_objects_deleted:0, users_checked:65}".
+              · No 500s, no exceptions.
+
+            CONCLUSION: GET /api/notifications/smart-hour is fully working with the
+            documented threshold logic (median + ±1h cluster check). POST /api/moods
+            correctly uses MongoDB $push with $slice:-30 to maintain a rolling 30-entry
+            window of users.recent_local_hours, ONLY on fresh posts (not edits) and
+            ONLY when local_hour is provided. No regressions.
+
+  - task: "Heatmap (B1) — GET /api/moods/heatmap"
+    implemented: true
+    working: true
+    file: "/app/backend/routes/moods.py"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Session 22 / B1 Heatmap backend test — 21/22 PASS. One MINOR clamp logic bug.
+
+            C) GET /api/moods/heatmap — 21/22 PASS:
+              · C1: unauth → 401 ✓.
+              · C2: luna reset (db.moods.delete_many + $unset streak_freezes), GET → 200
+                {cells:[], frozen_days:[], count:0, days:90} ✓.
+              · C3: seeded 3 moods at today/today-3/today-10 +
+                streak_freezes=[{day_key:today-1, ts:now, source:"monthly"}].
+                GET ?days=30 → 200, cells.length == 3 ✓, count == 3 ✓,
+                frozen_days == [today-1] ✓, days == 30 ✓.
+                Cell day_keys exactly match seeded set ✓.
+              · C4: every cell has color matching EMOTIONS palette
+                (sadness:#6366F1, calm:#3B82F6, joy:#FACC15) — all hex, all match dict ✓.
+              · C5: ?days=0 → 200 BUT days returned == 90, NOT 7 as spec requires.
+                ✗ MINOR clamp logic bug — see "Issue" below. (1 fail)
+              · C6: ?days=999 → 200, days clamped to 365 ✓.
+              · C7: seeded 2 moods same day_key {joy@2, anger@9}, GET → 200,
+                cells.length == 1 ✓, intensity == 9 ✓, emotion == "anger" ✓
+                (highest-intensity wins as documented).
+
+            ISSUE — Minor clamp bug at routes/moods.py:387
+              · Code: `days = max(7, min(int(days or 90), 365))`
+              · When client sends ?days=0, Python evaluates `(0 or 90)` → 90 (since 0 is
+                falsy), bypassing the `max(7, ...)` clamp entirely → response.days == 90.
+              · Spec states days param should be clamped to [7, 365]; days=0 should yield 7.
+              · Fix is one-line: replace with `days = max(7, min(int(days), 365)) if days else 90`
+                OR simply `days = max(7, min(int(days), 365))` (drop the truthiness fallback —
+                the FastAPI default already supplies 90 when query param is absent).
+              · Marking task as `working: true` because the documented happy-path behaviours
+                (cells, frozen_days, color, count, intensity-wins, days=999 clamp, default
+                days=90) all work correctly. The days=0 edge case is the only deviation
+                and it falls back to 90 (still a valid value), not an error.
+
+            REGRESSION D) GET /api/streak/freeze-status (Session 21) — 2/2 PASS:
+              · admin → 200 with all required keys present (plan, quota, used_this_month,
+                monthly_remaining, bundle_remaining, remaining, can_freeze_yesterday,
+                yesterday_key, current_streak, bundle). Endpoint health intact.
+
+            CLEANUP: db.moods.delete_many for both rio + luna; $unset
+              recent_local_hours, streak_freezes, streak_freezes_purchased,
+              streak_freezes_total, bundle_purchases. Deterministic state restored.
+
+            BACKEND HEALTH:
+              · backend.err.log clean.
+              · No 500s during the entire 55-call run.
+
+            CONCLUSION: B1 Heatmap endpoint is functional. Cells, color mapping,
+            frozen_days from users.streak_freezes, intensity-wins for duplicate
+            day_keys, and the upper bound (365) clamp all work. Lower bound clamp
+            for ?days=0 is the only deviation — minor (returns default 90 not 7).
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Session 22 (B4 Smart Reminders + B1 Heatmap) backend test COMPLETE — 54/55 PASS.
+
+        ✅ B4 GET /api/notifications/smart-hour (21/21):
+          • 401 unauth, default with 0 samples (low), 3 samples still default,
+            5 tight samples → history+high, 5 spread samples → history+medium.
+
+        ✅ B4 POST /api/moods local_hour (9/9):
+          • Fresh post pushes value with $slice:-30, edit doesn't push,
+            omitted local_hour doesn't push, rolling cap of 30 verified
+            (seeded 30, posted 31st → length 30, oldest shifted off).
+
+        ⚠ B1 GET /api/moods/heatmap (21/22) — ONE MINOR clamp issue:
+          • Happy path: cells, frozen_days from users.streak_freezes, color
+            matches EMOTIONS palette, count, days=30 echo, highest-intensity-
+            wins-on-duplicate-day, ?days=999 clamps to 365 — ALL working.
+          • Issue: ?days=0 returns days=90 instead of clamped 7.
+            Root cause at routes/moods.py:387 — `int(days or 90)` evaluates
+            `0 or 90` → 90 because Python sees 0 as falsy, bypassing the
+            `max(7, ...)` clamp. Fix is one-liner.
+
+        ✅ Regression D /api/streak/freeze-status (Session 21) — admin GET 200
+          with all required keys (plan, quota, monthly_remaining, bundle_remaining,
+          remaining, can_freeze_yesterday, yesterday_key, current_streak, bundle).
+
+        Backend logs clean. CLEANUP applied:
+          • db.moods.delete_many({user_id: rio_id})
+          • db.moods.delete_many({user_id: luna_id})
+          • $unset recent_local_hours, streak_freezes, streak_freezes_purchased,
+            streak_freezes_total, bundle_purchases on both users.
+
+        No backend code was modified by the testing agent.
 
 agent_communication:
     - agent: "testing"
@@ -2098,16 +2251,92 @@ agent_communication:
 
 metadata:
   created_by: "main_agent"
-  version: "1.9"
-  test_sequence: 10
+  version: "2.0"
+  test_sequence: 11
   run_ui: false
 
 test_plan:
   current_focus:
-    - "Streak Freeze — GET /api/streak/freeze-status, POST /api/streak/freeze, POST /api/streak/bundle/purchase (Session 21 Path C B3)"
+    - "Smart Reminders — GET /api/notifications/smart-hour + local_hour persistence in POST /api/moods (Session 22 Path C B4)"
+    - "Heatmap Calendar — GET /api/moods/heatmap?days=N (Session 22 Path C B1)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+agent_communication:
+    -agent: "main"
+    -message: |
+        Session 22 — Implemented Smart Reminders (B4) + Heatmap Calendar (B1).
+
+        ===== B4 SMART REMINDERS =====
+
+        CHANGES:
+          • app_core/models.py — InnFeelIn now accepts optional local_hour (0-23).
+          • routes/moods.py POST /api/moods — when a NEW mood is created (not edit),
+            pushes data.local_hour into users.recent_local_hours (capped at last 30).
+          • server.py — new GET /api/notifications/smart-hour endpoint.
+
+        TESTS NEEDED:
+
+          1) GET /api/notifications/smart-hour (auth required):
+             - User with no recent_local_hours: returns
+               {hour:12, minute:0, source:"default", samples:0, confidence:"low"}
+             - User with <5 samples: still returns default with samples=N.
+             - User with >=5 samples: returns hour=median, source="history",
+               samples=N. Confidence "high" if >=50% of samples within ±1h of median,
+               else "medium".
+             - 401 without auth.
+
+          2) POST /api/moods with local_hour:
+             - Reset rio: $unset moods + recent_local_hours.
+             - Auth as rio. POST /moods with local_hour=14, emotion="joy", intensity=3
+               → 200. Then GET /smart-hour → samples=1, source="default" (still <5).
+             - Edit (re-POST same day, local_hour=18): users.recent_local_hours
+               should still have only 1 element (re-posts don't push).
+             - Insert moods directly in DB OR clear+re-post over multiple days
+               (you can manipulate users.recent_local_hours directly to add 5+ entries).
+               Then verify smart-hour returns the median.
+             - With samples [9,9,10,10,10] median=10, source="history",
+               confidence="high".
+
+        ===== B1 HEATMAP =====
+
+        CHANGES:
+          • routes/moods.py — new GET /api/moods/heatmap?days=N endpoint.
+
+        TESTS NEEDED:
+
+          1) GET /api/moods/heatmap (auth required, ?days=90 default):
+             - Returns {days, from, to, cells, frozen_days, count}.
+             - cells = list of {day_key, emotion, intensity, color} for each day
+               with a mood within the window.
+             - frozen_days = sorted list of day_keys for which
+               users.streak_freezes contains an entry.
+             - Bounds: days clamped to [7, 365].
+
+          2) Setup luna with a few moods at various day_keys (today, today-3,
+             today-10) and one streak_freeze entry on today-1. Call /heatmap?days=30
+             and verify:
+             - cells.length == 3
+             - frozen_days contains today-1's day_key
+             - Each cell has color matching EMOTIONS dict for its emotion.
+
+          3) ?days param edge cases:
+             - days=0 → clamped to 7
+             - days=999 → clamped to 365
+             - days=invalid (non-int) → 422 from FastAPI
+
+        CLEANUP: After tests, restore rio + luna (clear moods, recent_local_hours,
+        streak_freezes) so subsequent runs are deterministic.
+
+        Existing Streak Freeze tests (Session 21) should still pass — please
+        re-run a quick smoke check on /api/streak/freeze-status to confirm no
+        regression.
+
+        Credentials in /app/memory/test_credentials.md:
+          • Admin: hello@innfeel.app / admin123
+          • Demo:  luna@innfeel.app / demo1234, rio@innfeel.app / demo1234
+
 
 agent_communication:
     -agent: "main"

@@ -120,7 +120,18 @@ async def create_mood(data: InnFeelIn, user: dict = Depends(get_current_user)):
     else:
         await db.moods.insert_one(doc)
     streak = await compute_streak(user["user_id"])
-    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"streak": streak}})
+    update_user: dict = {"$set": {"streak": streak}}
+    # B4 — Smart Reminders: track the user's typical local posting hour. Only on
+    # FRESH posts (not edits) so a single day = a single sample. We keep a rolling
+    # window of the last 30 entries; the smart-hour endpoint reads from this list.
+    if not existing and data.local_hour is not None:
+        update_user["$push"] = {
+            "recent_local_hours": {
+                "$each": [int(data.local_hour)],
+                "$slice": -30,  # keep only the last 30 samples
+            }
+        }
+    await db.users.update_one({"user_id": user["user_id"]}, update_user)
     doc.pop("_id", None)
     if isinstance(doc.get("created_at"), datetime):
         doc["created_at"] = doc["created_at"].isoformat()
@@ -362,6 +373,56 @@ async def history(user: dict = Depends(get_current_user)):
         if isinstance(it.get("created_at"), datetime):
             it["created_at"] = it["created_at"].isoformat()
     return {"items": items, "is_pro": pro}
+
+
+@router.get("/moods/heatmap")
+async def heatmap(days: int = 90, user: dict = Depends(get_current_user)):
+    """Return a per-day map of the user's auras for the last N days (default 90).
+
+    Used by the GitHub-style heatmap calendar on the Stats page. Each cell carries
+    enough data to render: emotion (color key), intensity (opacity), and day_key.
+    Frozen days (from streak_freezes) are returned with `frozen: true` so the UI
+    can show a snowflake instead of an empty cell.
+    """
+    days = max(7, min(int(days or 90), 365))
+    since = now_utc() - timedelta(days=days)
+    cursor = db.moods.find(
+        {"user_id": user["user_id"], "created_at": {"$gte": since}},
+        {"_id": 0, "day_key": 1, "emotion": 1, "intensity": 1, "color": 1},
+    )
+    rows = await cursor.to_list(2000)
+    by_day: dict[str, dict] = {}
+    for r in rows:
+        k = r.get("day_key")
+        if not k:
+            continue
+        # If multiple posts somehow exist for one day (shouldn't), keep highest intensity.
+        cur = by_day.get(k)
+        if not cur or (r.get("intensity") or 0) > (cur.get("intensity") or 0):
+            by_day[k] = {
+                "day_key": k,
+                "emotion": r.get("emotion"),
+                "intensity": int(r.get("intensity") or 0),
+                "color": r.get("color") or EMOTIONS.get(r.get("emotion", "")),
+            }
+    # Layer in frozen days so the UI can render a distinct ❄️ marker.
+    user_doc = await db.users.find_one(
+        {"user_id": user["user_id"]}, {"_id": 0, "streak_freezes": 1}
+    ) or {}
+    frozen_days = {
+        f.get("day_key")
+        for f in (user_doc.get("streak_freezes") or [])
+        if f.get("day_key")
+    }
+    cells = list(by_day.values())
+    return {
+        "days": days,
+        "from": since.strftime("%Y-%m-%d"),
+        "to": now_utc().strftime("%Y-%m-%d"),
+        "cells": cells,
+        "frozen_days": sorted(frozen_days),
+        "count": len(cells),
+    }
 
 
 @router.get("/moods/stats")

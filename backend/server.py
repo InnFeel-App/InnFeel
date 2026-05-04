@@ -238,6 +238,52 @@ async def test_push(user: dict = Depends(get_current_user)):
     return {"ok": ok}
 
 
+@api.get("/notifications/smart-hour")
+async def get_smart_hour(user: dict = Depends(get_current_user)):
+    """Smart Reminders (B4) — return the user's typical posting hour for a personalized
+    daily reminder. Computed from `users.recent_local_hours` (rolling last 30 entries
+    pushed by the client at post time).
+
+    Strategy: median hour over a small histogram (more robust than mean against
+    occasional late/early posts). When fewer than 5 samples, fall back to noon (12).
+    """
+    cur = await db.users.find_one(
+        {"user_id": user["user_id"]},
+        {"_id": 0, "recent_local_hours": 1},
+    ) or {}
+    samples = [
+        int(h) for h in (cur.get("recent_local_hours") or [])
+        if isinstance(h, (int, float)) and 0 <= int(h) <= 23
+    ]
+
+    DEFAULT_HOUR = 12
+    if len(samples) < 5:
+        return {
+            "hour": DEFAULT_HOUR,
+            "minute": 0,
+            "source": "default",
+            "samples": len(samples),
+            "confidence": "low",
+        }
+
+    # Histogram + median (handles ties + noise gracefully)
+    samples_sorted = sorted(samples)
+    median = samples_sorted[len(samples_sorted) // 2]
+
+    # If the user has a strong cluster (>= 50% of samples within ±1h of median),
+    # we report high confidence — otherwise medium.
+    near = sum(1 for h in samples if abs(h - median) <= 1)
+    confidence = "high" if near / len(samples) >= 0.5 else "medium"
+
+    return {
+        "hour": int(median),
+        "minute": 0,
+        "source": "history",
+        "samples": len(samples),
+        "confidence": confidence,
+    }
+
+
 
 # =========================================================================
 # Badges & Leaderboard — gamification between friends

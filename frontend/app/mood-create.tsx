@@ -347,11 +347,16 @@ export default function MoodCreate() {
             source: selectedMusic.source || "apple",
           } : null,
           privacy,
+          // B4 — Smart Reminders: send the user's current local hour so the backend
+          // can learn their typical posting pattern and personalize the daily reminder.
+          local_hour: new Date().getHours(),
         },
       });
       await refresh();
       // User posted — no need for the evening safety-net reminder today.
       try { const n = await import("../src/notifications"); await n.cancelEveningReminder(); } catch {}
+      // Re-schedule tomorrow's reminder against the freshly-updated smart hour.
+      try { const n = await import("../src/notifications"); await n.refreshSmartReminder(); } catch {}
       // Fetch wellness quote+advice for the chosen emotion and show the sheet
       try {
         const w = await api<any>(`/wellness/${emotion}`);

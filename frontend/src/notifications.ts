@@ -33,9 +33,9 @@ const KEY_LAST_SCHEDULED = "innfeel_last_notif_scheduled_day";
 // Bump this when we change notification scheduling semantics — forces every client to
 // nuke any stale schedules (e.g. legacy ones that fired on UTC hour instead of local hour).
 const KEY_SCHEDULE_VERSION = "innfeel_notif_schedule_version";
-const CURRENT_SCHEDULE_VERSION = "v2_local_noon_2026_06";
+const CURRENT_SCHEDULE_VERSION = "v3_smart_hour_2026_06";
 
-// Fixed reminder times (cannot be changed by user, only toggled)
+// Fixed reminder times — fallback when smart hour is unavailable
 export const REMINDER_NOON_HOUR = 12;
 export const REMINDER_NOON_MINUTE = 0;
 export const REMINDER_EVENING_HOUR = 19;
@@ -168,12 +168,30 @@ async function ensurePermission(): Promise<boolean> {
 }
 
 /**
+ * Smart Reminders (B4) — Fetch the user's typical posting hour from the backend.
+ * Returns the noon fallback (12:00) if the call fails or there's not enough history.
+ */
+async function fetchSmartHour(): Promise<{ hour: number; minute: number; source: string; samples: number }> {
+  try {
+    const r = await api<{ hour: number; minute: number; source: string; samples: number }>("/notifications/smart-hour");
+    return {
+      hour: typeof r?.hour === "number" ? r.hour : REMINDER_NOON_HOUR,
+      minute: typeof r?.minute === "number" ? r.minute : REMINDER_NOON_MINUTE,
+      source: r?.source || "default",
+      samples: r?.samples || 0,
+    };
+  } catch {
+    return { hour: REMINDER_NOON_HOUR, minute: REMINDER_NOON_MINUTE, source: "default", samples: 0 };
+  }
+}
+
+/**
  * Schedules BOTH daily reminders:
- *  - 12:00  primary
- *  - 19:30  safety-net (will fire only if user hasn't posted yet today — controlled client-side)
+ *  - SMART HOUR  primary — user's typical posting time (noon fallback)
+ *  - 19:30       safety-net (will fire only if user hasn't posted yet today)
  * Called on app boot & when user toggles the reminder on.
  */
-export async function scheduleDailyReminder(): Promise<{ scheduled: boolean }> {
+export async function scheduleDailyReminder(): Promise<{ scheduled: boolean; hour?: number; source?: string }> {
   try {
     const enabled = await getCategoryEnabled("reminder");
     if (!enabled) return { scheduled: false };
@@ -198,38 +216,61 @@ export async function scheduleDailyReminder(): Promise<{ scheduled: boolean }> {
 
     await cancelReminderOnly();
 
+    // Smart hour: use server-computed hour from user's posting history.
+    const smart = await fetchSmartHour();
+
     // IMPORTANT: `SchedulableTriggerInputTypes.DAILY` fires at `hour`:`minute` in the
     // DEVICE'S LOCAL TIMEZONE (Android via AlarmManager, iOS via UNCalendarNotificationTrigger).
-    // So hour=12 means 12:00 Europe/Paris for French users, 12:00 America/New_York for US users, etc.
     await Notifications.scheduleNotificationAsync({
       content: {
         title: "Your daily aura ✨",
-        body: "Take 20 seconds to share how you feel today.",
-        data: { kind: "reminder_noon" },
+        body: smart.source === "history"
+          ? "Time for your usual aura check-in."
+          : "Take 20 seconds to share how you feel today.",
+        data: { kind: "reminder_noon", hour: smart.hour, source: smart.source },
       },
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.DAILY,
-        hour: REMINDER_NOON_HOUR,
-        minute: REMINDER_NOON_MINUTE,
+        hour: smart.hour,
+        minute: smart.minute,
       } as any,
     });
 
-    // Evening safety-net reminder at 19:30
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: "Haven't shared yet?",
-        body: "One aura, 20 seconds — then see your friends' day.",
-        data: { kind: "reminder_evening" },
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.DAILY,
-        hour: REMINDER_EVENING_HOUR,
-        minute: REMINDER_EVENING_MINUTE,
-      } as any,
-    });
+    // Evening safety-net at 19:30 — only schedule if smart hour isn't already in the evening
+    // (avoid two reminders within an hour of each other).
+    const tooCloseToEvening = Math.abs(smart.hour - REMINDER_EVENING_HOUR) <= 1;
+    if (!tooCloseToEvening) {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "Haven't shared yet?",
+          body: "One aura, 20 seconds — then see your friends' day.",
+          data: { kind: "reminder_evening" },
+        },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DAILY,
+          hour: REMINDER_EVENING_HOUR,
+          minute: REMINDER_EVENING_MINUTE,
+        } as any,
+      });
+    }
 
     await setItem(KEY_LAST_SCHEDULED, todayKey);
-    return { scheduled: true };
+    return { scheduled: true, hour: smart.hour, source: smart.source };
+  } catch {
+    return { scheduled: false };
+  }
+}
+
+/**
+ * Force-refresh the smart reminder (e.g. after the user posts, to pick up the new
+ * histogram median). Cancels existing schedules and re-plants them with the latest
+ * smart hour from the backend.
+ */
+export async function refreshSmartReminder(): Promise<{ scheduled: boolean }> {
+  try {
+    await cancelReminderOnly();
+    await setItem(KEY_LAST_SCHEDULED, ""); // reset day-key guard so re-scheduling actually happens
+    return await scheduleDailyReminder();
   } catch {
     return { scheduled: false };
   }

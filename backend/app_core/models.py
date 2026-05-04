@@ -59,6 +59,10 @@ class InnFeelIn(BaseModel):
     audio_seconds: Optional[int] = Field(default=None, ge=1, le=30)
     music: Optional[MusicTrackIn] = None  # Pro: track from Apple/Spotify search
     privacy: Literal["friends", "close", "private"] = "friends"
+    # Smart Reminders (B4): client sends the user's local hour (0-23) at posting
+    # time so the backend can compute their typical posting hour and personalize
+    # the daily push reminder. Optional — falls back to noon when missing.
+    local_hour: Optional[int] = Field(default=None, ge=0, le=23)
 
 
 class AvatarIn(BaseModel):
