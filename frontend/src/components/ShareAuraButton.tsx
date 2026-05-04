@@ -115,10 +115,12 @@ export default function ShareAuraButton({ onPress, label = "Share your aura", te
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, position: "relative" },
+  // alignSelf keeps the button sized to its content instead of stretching to fill
+  // the whole row, so the outer glow never bleeds into neighbouring buttons.
+  wrap: { alignSelf: "flex-start", position: "relative" },
   glow: {
     position: "absolute",
-    top: -3, bottom: -3, left: -6, right: -6,
+    top: -3, bottom: -3, left: -4, right: -4,
     borderRadius: 999,
     overflow: "hidden",
   },
