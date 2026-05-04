@@ -23,6 +23,7 @@ import uuid
 from typing import Optional
 
 import httpx
+import imageio_ffmpeg
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -33,6 +34,10 @@ from app_core.deps import get_current_user
 
 router = APIRouter()
 logger = logging.getLogger("innfeel.share")
+
+# Bundled ffmpeg binary from the imageio-ffmpeg pip package — survives container rebuilds
+# (no apt dependency), lives under site-packages. Cached at import time.
+_FFMPEG_BIN = imageio_ffmpeg.get_ffmpeg_exe()
 
 REEL_W, REEL_H = 1080, 1920
 REEL_DURATION_SEC = 15
@@ -230,7 +235,7 @@ def _ffmpeg_compose(
         audio_args = ["-c:a", "aac", "-b:a", "96k"]
 
     cmd = [
-        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        _FFMPEG_BIN, "-y", "-hide_banner", "-loglevel", "error",
         *inputs,
         "-filter_complex", vf,
         *map_args,
