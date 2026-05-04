@@ -186,7 +186,7 @@ export function useShareToStories() {
   ): Promise<{ ok: true; uri: string; hasVideo: boolean } | { ok: false; reason: string }> => {
     if (!p.mood_id) return { ok: false, reason: "Save your aura first" };
 
-    setBusyLabel("Building your reel… (~10s)");
+    setBusyLabel("Building your aura… (~10s)");
     let reel: { url: string; has_audio?: boolean; has_video?: boolean };
     try {
       reel = await api(`/share/reel/${p.mood_id}`, { method: "POST", body: {} });
@@ -195,7 +195,7 @@ export function useShareToStories() {
       return { ok: false, reason: `Server reel build failed: ${e?.message || "unknown"}` };
     }
 
-    setBusyLabel("Downloading your reel…");
+    setBusyLabel("Downloading your aura…");
     const cache = LegacyFS.cacheDirectory || LegacyFS.documentDirectory;
     if (!cache) return { ok: false, reason: "No writable cache directory available" };
     const dest = `${cache}innfeel_reel_${Date.now()}.mp4`;
@@ -213,92 +213,67 @@ export function useShareToStories() {
   };
 
   /**
-   * Hand off the prepared file. Strategy (June 2026 — pragmatic):
+   * Hand off the prepared file. Strategy (June 2026 v3):
    *
-   *   1. For app-specific destinations (Story/Reel/DM/WA/TG/Messages):
-   *      OPEN THE APP via its URL scheme via Linking.openURL — this is the
-   *      ONLY reliable way to make the destination app actually open in
-   *      Expo Go. We tried Sharing.shareAsync alone and it silently no-ops
-   *      on real iOS devices in some Expo Go builds.
+   *   PRIMARY: Sharing.shareAsync — the OS share sheet. This is the ONLY
+   *   path that actually transfers the media (PNG/MP4) to the destination
+   *   app. The user picks the destination from the OS sheet (we hint which
+   *   one to pick via dialogTitle).
    *
-   *   2. THEN, after a short pause, also fire Sharing.shareAsync so the
-   *      OS share sheet appears with the prepared media (PNG/MP4) — the
-   *      user can pick the SAME app inside it to actually transfer the
-   *      file. Net effect: the app opens (so the user has feedback that
-   *      something is happening), and they can complete the share.
+   *   FALLBACK: Linking.openURL — only fires if the share sheet is
+   *   unavailable. Opens the destination app but WITHOUT media (deep links
+   *   carry text only). User would have to manually attach media in the
+   *   destination app.
    *
-   *   3. For "More": straight to the OS share sheet (universal handoff).
+   *   IMPORTANT: a 600ms delay so iOS fully dismisses our picker before
+   *   presenting UIActivityViewController. Below that, iOS can silently
+   *   drop the activity controller because two modals would conflict.
    */
   const dispatchShare = async (p: Payload, dest: ShareDestination, file: Pending) => {
-    // Wait for our picker's slide-down to clear before any UI handoff —
-    // iOS otherwise drops the activity-view because two modals can't
-    // present simultaneously.
-    await new Promise((r) => setTimeout(r, 380));
+    // Long-enough dismiss window for the picker's slide animation + iOS
+    // modal-controller turnover. 380ms wasn't always enough.
+    await new Promise((r) => setTimeout(r, 600));
 
-    // ─────────────────────────────────────────────────────────────────
-    // "More apps…" → just the OS share sheet (no specific app to open).
-    // ─────────────────────────────────────────────────────────────────
-    if (dest === "more") {
-      try {
-        if (await Sharing.isAvailableAsync()) {
-          await Sharing.shareAsync(file.uri, {
-            mimeType: file.mimeType,
-            dialogTitle: buildMessage(p, dest),
-            UTI: Platform.OS === "ios" ? file.uti : undefined,
-          });
-        } else {
-          Alert.alert("Sharing unavailable", "Your device doesn't expose a share sheet.");
-        }
-      } catch (e: any) {
-        if (!/cancel/i.test(e?.message || "")) {
-          Alert.alert("Share failed", e?.message || "Try again.");
-        }
+    // PRIMARY — system share sheet (transfers the file).
+    let shareSheetTried = false;
+    try {
+      if (await Sharing.isAvailableAsync()) {
+        shareSheetTried = true;
+        await Sharing.shareAsync(file.uri, {
+          mimeType: file.mimeType,
+          dialogTitle: buildMessage(p, dest),
+          UTI: Platform.OS === "ios" ? file.uti : undefined,
+        });
+        return;
       }
-      return;
+    } catch (e: any) {
+      // User cancelled the share sheet — that's OK, no-op.
+      if (/cancel/i.test(e?.message || "")) return;
+      // Otherwise fall through to deep-link fallback below.
     }
 
-    // ─────────────────────────────────────────────────────────────────
-    // App-specific destinations: open via deep link FIRST.
-    //
-    // CRITICAL: We do NOT use Linking.canOpenURL() to gate openURL — in
-    // Expo Go, canOpenURL returns false for app schemes that aren't
-    // whitelisted in Expo Go's own Info.plist (LSApplicationQueriesSchemes
-    // from your app.json doesn't apply when running inside Expo Go). We
-    // just attempt openURL directly; iOS will show "App not installed" if
-    // the destination isn't there, and we'll catch the error.
-    // ─────────────────────────────────────────────────────────────────
-    const builder = DEEP_LINKS[dest];
-    let appOpened = false;
-    if (builder) {
-      const url = builder(buildMessage(p, dest));
-      try {
-        await Linking.openURL(url);
-        appOpened = true;
-      } catch {
-        // App not installed or scheme rejected — fall through to share sheet.
-      }
-    }
-
-    // ─────────────────────────────────────────────────────────────────
-    // App not installed → show the OS share sheet as a fallback.
-    // ─────────────────────────────────────────────────────────────────
-    if (!appOpened) {
-      try {
-        if (await Sharing.isAvailableAsync()) {
-          await Sharing.shareAsync(file.uri, {
-            mimeType: file.mimeType,
-            dialogTitle: buildMessage(p, dest),
-            UTI: Platform.OS === "ios" ? file.uti : undefined,
-          });
+    // FALLBACK — open the destination app via URL scheme (no media).
+    // Only useful when the share sheet is genuinely unavailable.
+    if (dest !== "more") {
+      const builder = DEEP_LINKS[dest];
+      if (builder) {
+        const url = builder(buildMessage(p, dest));
+        try {
+          await Linking.openURL(url);
+          // Tell the user the app opened but media wasn't attached.
+          Alert.alert(
+            `${appLabel(dest)} opened`,
+            "We couldn't transfer the visual automatically — your aura is saved in InnFeel, you can re-share via 'More apps…' for full handoff.",
+          );
           return;
-        }
-      } catch (e: any) {
-        if (/cancel/i.test(e?.message || "")) return;
+        } catch {}
       }
+    }
 
+    if (!shareSheetTried) {
       Alert.alert(
-        `${appLabel(dest)} not detected`,
-        `Install ${appLabel(dest)} or pick "More apps…" to share via your system share sheet.`,
+        "Sharing unavailable",
+        "Your device doesn't expose a share sheet. Try on a real device.",
       );
     }
   };
@@ -321,7 +296,7 @@ export function useShareToStories() {
     if (busy) return;
     setBusy(true);
     setBusyLabel(
-      p.kind === "mood"      ? "Building your aura visual…"
+      p.kind === "mood"      ? "Building your aura…"
       : p.kind === "stats"   ? "Preparing your stats…"
       : p.kind === "leaderboard" ? "Preparing your leaderboard…"
       : "Preparing your share…",
