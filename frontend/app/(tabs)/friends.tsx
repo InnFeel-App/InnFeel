@@ -106,7 +106,6 @@ export default function Friends() {
             </TouchableOpacity>
           </View>
           {err ? <Text style={styles.err}>{err}</Text> : null}
-          <Text style={styles.hint}>Try: luna@innfeel.app · rio@innfeel.app · sage@innfeel.app</Text>
 
           <View style={styles.inviteRow}>
             <TouchableOpacity testID="invite-whatsapp" onPress={inviteWhatsApp} style={[styles.inviteBtn, { backgroundColor: "#25D366" }]}>
@@ -146,7 +145,9 @@ export default function Friends() {
                     </View>
                   ) : null}
                 </View>
-                <Text style={styles.email}>{f.email}</Text>
+                {typeof f.streak === "number" && f.streak > 0 ? (
+                  <Text style={styles.streakTxt}>{f.streak}🔥</Text>
+                ) : null}
               </View>
               <View style={[styles.statusPill, f.dropped_today ? styles.pillGreen : styles.pillGray]}>
                 <Text style={styles.pillTxt}>{f.dropped_today ? t("friends.dropped") : t("friends.notDropped")}</Text>
@@ -202,6 +203,7 @@ const styles = StyleSheet.create({
   avatarTxt: { color: "#000", fontWeight: "800", fontSize: 16 },
   name: { color: "#fff", fontWeight: "600" },
   email: { color: COLORS.textTertiary, fontSize: 12, marginTop: 2 },
+  streakTxt: { color: "#FB923C", fontSize: 12, fontWeight: "700", marginTop: 2 },
   statusPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
   pillGreen: { backgroundColor: "rgba(52,211,153,0.15)", borderWidth: 1, borderColor: "rgba(52,211,153,0.4)" },
   pillGray: { backgroundColor: "rgba(255,255,255,0.06)" },

@@ -17,9 +17,11 @@ async def list_friends(user: dict = Depends(get_current_user)):
     fships = await db.friendships.find({"user_id": user["user_id"]}).to_list(500)
     ids = [f["friend_id"] for f in fships]
     close_map = {f["friend_id"]: bool(f.get("close", False)) for f in fships}
+    # PRIVACY: do NOT expose friends' email addresses in this response — only the
+    # identifiers strictly needed by the UI (name, avatar, streak, close flag).
     users = await db.users.find(
         {"user_id": {"$in": ids}},
-        {"_id": 0, "user_id": 1, "name": 1, "email": 1, "avatar_color": 1, "streak": 1},
+        {"_id": 0, "user_id": 1, "name": 1, "avatar_color": 1, "avatar_b64": 1, "avatar_key": 1, "streak": 1},
     ).to_list(500)
     key = today_key()
     moods = await db.moods.find(
