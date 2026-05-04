@@ -110,6 +110,9 @@ async def send_message(peer_id: str, data: MessageIn, user: dict = Depends(get_c
         "audio_key": data.audio_key,
         "audio_b64": data.audio_b64 if not data.audio_key else None,
         "audio_seconds": data.audio_seconds if has_audio else None,
+        "reply_to": data.reply_to,
+        "reply_preview": (data.reply_preview or "")[:140] if data.reply_preview else None,
+        "reply_sender_name": data.reply_sender_name,
         "reactions": [],
         "at": now.isoformat(),
     }

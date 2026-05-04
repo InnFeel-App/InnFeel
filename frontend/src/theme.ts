@@ -55,9 +55,13 @@ export const COLORS = {
 };
 
 export const REACTIONS = [
-  { key: "heart", icon: "heart", label: "Love" },
-  { key: "fire", icon: "flame", label: "Fire" },
-  { key: "hug", icon: "hand-left", label: "Hug" },
-  { key: "smile", icon: "happy", label: "Smile" },
-  { key: "sparkle", icon: "sparkles", label: "Wow" },
+  { key: "heart",   icon: "heart",        label: "Love" },
+  { key: "fire",    icon: "flame",        label: "Fire" },
+  { key: "hug",     icon: "hand-left",    label: "Hug" },
+  { key: "smile",   icon: "happy",        label: "Smile" },
+  { key: "sparkle", icon: "sparkles",     label: "Wow" },
+  // Second-row fillers — emotionally supportive reactions that feel native to a mood app
+  { key: "cry",     icon: "sad",          label: "Feel you" },
+  { key: "strong",  icon: "barbell",      label: "Strong" },
+  { key: "clap",    icon: "hand-right",   label: "Clap" },
 ] as const;

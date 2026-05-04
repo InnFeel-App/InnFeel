@@ -319,21 +319,45 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
             <TouchableOpacity
               testID={`comment-${mood.mood_id}`}
               onPress={() => setCommentsOpen(true)}
-              style={styles.actionBtn}
+              style={[
+                styles.actionBtn,
+                {
+                  backgroundColor: em.hex + "18",
+                  borderColor: em.hex + "66",
+                  shadowColor: em.hex,
+                  shadowOpacity: 0.35,
+                  shadowRadius: 6,
+                  shadowOffset: { width: 0, height: 2 },
+                  elevation: 3,
+                },
+              ]}
               activeOpacity={0.8}
             >
-              <Ionicons name="chatbubble-outline" size={15} color="#fff" />
-              <Text style={styles.actionLabel}>Comment{commentCount > 0 ? ` · ${commentCount}` : ""}</Text>
+              <Ionicons name="chatbubble-ellipses" size={15} color={em.hex} />
+              <Text style={[styles.actionLabel, { color: em.hex }]}>
+                Comment{commentCount > 0 ? ` · ${commentCount}` : ""}
+              </Text>
             </TouchableOpacity>
             {onMessage ? (
               <TouchableOpacity
                 testID={`message-${mood.mood_id}`}
                 onPress={onMessage}
-                style={styles.actionBtn}
+                style={[
+                  styles.actionBtn,
+                  {
+                    backgroundColor: em.hex + "18",
+                    borderColor: em.hex + "66",
+                    shadowColor: em.hex,
+                    shadowOpacity: 0.35,
+                    shadowRadius: 6,
+                    shadowOffset: { width: 0, height: 2 },
+                    elevation: 3,
+                  },
+                ]}
                 activeOpacity={0.8}
               >
-                <Ionicons name="paper-plane-outline" size={15} color="#fff" />
-                <Text style={styles.actionLabel}>Message</Text>
+                <Ionicons name="paper-plane" size={15} color={em.hex} />
+                <Text style={[styles.actionLabel, { color: em.hex }]}>Message</Text>
               </TouchableOpacity>
             ) : null}
           </View>

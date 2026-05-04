@@ -460,8 +460,8 @@ backend_session15:
 
 metadata:
   created_by: "main_agent"
-  version: "1.5"
-  test_sequence: 6
+  version: "1.6"
+  test_sequence: 7
   run_ui: false
 
 test_plan:
@@ -470,7 +470,101 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 
+backend_session16:
+  - task: "DM upgrades — reply-to persistence + expanded reaction emoji set"
+    implemented: true
+    working: true
+    file: "/app/backend/app_core/models.py, /app/backend/routes/messages.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Session 16 DM upgrades backend test COMPLETE — 30/30 PASS (100%).
+            Harness: /app/backend_test.py vs https://charming-wescoff-8.preview.emergentagent.com/api.
+            Creds: hello@innfeel.app / admin123, luna@innfeel.app / demo1234.
+
+            1) REPLY-TO PERSISTENCE — 10/10 PASS:
+              · POST /messages/with/<admin_id> as luna with body
+                {text:"replying!", reply_to:"msg_xxxxxxxxxxxx",
+                 reply_preview:"Original msg preview", reply_sender_name:"Admin"} → 200.
+              · Response.message.reply_to / reply_preview / reply_sender_name all echoed
+                back verbatim.
+              · GET /messages/with/<admin_id> returned the message with all three reply_*
+                fields persisted and retrievable.
+
+            2) PLAIN MESSAGE BACKWARD COMPAT — 4/4 PASS:
+              · POST {text:"plain"} with NO reply fields → 200.
+              · Response.message.reply_to / reply_preview / reply_sender_name all returned as
+                null (None in JSON). Never breaks legacy clients.
+
+            3) VALIDATION — reply_preview > 140 chars → 1/1 PASS:
+              · POST {text:"hi", reply_preview:"x"*200} → 422 with Pydantic error
+                "String should have at most 140 characters" on field reply_preview.
+
+            4) VALIDATION — reply_to > 32 chars → 1/1 PASS:
+              · POST {text:"hi", reply_to:"a"*50} → 422 with Pydantic error
+                "String should have at most 32 characters" on field reply_to.
+
+            5) REACTION EMOJI SET — 8/8 PASS:
+              Target: latest message in luna<->admin conversation (reacting as luna).
+              · emoji:"clap" → 200, reactions contains {user_id:luna, emoji:"clap"}.
+              · emoji:"hundred" → 200, luna's clap replaced — only one reaction per user
+                persists (Insta-style single-reaction semantics confirmed).
+              · emoji:"touched" → 200, luna's single reaction is now "touched".
+              · emoji:"heart" → 200 (double-tap gesture emoji still accepted).
+              · emoji:"xyz" → 422 Pydantic literal_error listing the exact accepted set:
+                'heart','thumb','fire','laugh','wow','sad','clap','hundred','touched'.
+              · Prep: posted "touched" again to make it current.
+              · emoji:"touched" (same as current) → 200, luna's reaction array now empty —
+                toggle-off behaviour confirmed.
+
+            6) REGRESSION SPOT-CHECK — 6/6 PASS:
+              · GET /auth/me (admin) → 200, email=hello@innfeel.app.
+              · GET /moods/today (luna) → 200.
+              · GET /moods/feed (luna) → 200.
+              · GET /friends (luna) → 200, count=2 (admin + sage).
+              · GET /messages/unread-count (luna) → 200 {total:1, conversations:1}.
+              · GET /messages/conversations (luna) → 200 with conversations:[...] list.
+
+            BACKEND LOGS: clean. Only purge daemon + WatchFiles reload lines from the
+            models.py + routes/messages.py edits. No 500s, no exceptions, no ImportError.
+            The in-tree MessageIn model now accepts reply_to (max 32) / reply_preview
+            (max 140) / reply_sender_name (max 80), and MessageReactIn.emoji Literal
+            includes {heart, thumb, fire, laugh, wow, sad, clap, hundred, touched}. Both
+            the POST handler and the resolve_media path preserve reply_* fields on write
+            and read.
+
+            No backend code was modified by the testing agent.
+
 agent_communication:
+    - agent: "testing"
+      message: |
+        Session 16 DM upgrades backend test COMPLETE — 30/30 PASS (100%).
+        Harness: /app/backend_test.py.
+        Backend URL: https://charming-wescoff-8.preview.emergentagent.com/api.
+
+        1) Reply-to persistence: POST /messages/with/{peer_id} with reply_to/reply_preview/
+           reply_sender_name → 200, all 3 fields echoed in response, AND retained on GET.
+        2) Plain message (no reply fields) → 200, all 3 reply_* fields null/absent.
+        3) reply_preview > 140 chars → 422 (Pydantic string_too_long).
+        4) reply_to > 32 chars → 422 (Pydantic string_too_long).
+        5) Reactions emoji set (as luna on her own sent message):
+             clap → 200 (luna has clap)
+             hundred → 200 (replaces clap — Insta single-reaction confirmed)
+             touched → 200 (replaces hundred)
+             heart → 200 (double-tap emoji still works)
+             xyz → 422 (literal_error, lists accepted set)
+             touched twice in a row → second call toggles off (reactions empty).
+        6) Regression: /auth/me (admin), /moods/today (luna), /moods/feed (luna),
+           /friends (luna), /messages/unread-count (luna)={total:1,conversations:1},
+           /messages/conversations (luna) — all 200.
+
+        Backend logs clean. No code was modified by the testing agent.
+
+legacy_agent_communication_session15:
     - agent: "testing"
       message: |
         Session 15 P2 transactional emails backend test COMPLETE — 31/31 PASS (100%).
@@ -1283,3 +1377,44 @@ agent_communication:
           6) Regression sweep for untouched endpoints.
         
         Keep it focused; don't test the daemon timer itself (6h) — just validate the on-demand helper path.
+
+    - agent: "main"
+      message: |
+        Session 16 — DM feature upgrades (Insta-like).
+        
+        BACKEND CHANGES:
+          1) app_core/models.py MessageIn → new optional fields:
+             - reply_to: str (max 32) — message_id being replied to
+             - reply_preview: str (max 140) — client-sent preview so chip survives deletion of source
+             - reply_sender_name: str (max 80)
+          2) MessageReactIn.emoji Literal expanded from {heart,thumb,fire,laugh,wow,sad} 
+             to include {clap, hundred, touched}. "heart" stays valid (reserved for double-tap 
+             gesture client-side, not shown in picker).
+          3) routes/messages.py POST /messages/with/{peer_id} now persists reply_to / reply_preview /
+             reply_sender_name on the message doc.
+        
+        FRONTEND CHANGES (conversation.tsx + MoodCard.tsx + theme.ts):
+          - DM picker: removed ❤️, added 👏 💯 🥹 (8 total: thumb/fire/laugh/wow/sad/clap/hundred/touched).
+          - Double-tap anywhere on a message bubble → heart reaction (optimistic UI, server sync).
+          - Swipe-to-reply (react-native-gesture-handler Swipeable) — swipe a bubble opens reply bar
+            above the input; "Replying to X" + preview, with dismiss X. Next send carries reply_to.
+          - Voice note: duration is always shown; during playback shows the elapsed MM:SS + progress 
+            bar fill animates with audioProgress (0..1 from onPlaybackStatusUpdate).
+          - Playback rate toggle button (1x / 2x) on each audio bubble — uses Sound.setRateAsync 
+            with shouldCorrectPitch.
+          - Reply chip rendered inside the bubble when message has reply_preview (small purple accent 
+            bar + replied-sender-name + preview text).
+          - MoodCard: Comment/Message buttons now colored by the aura emotion hex (bg 18 + border 66 +
+            drop-shadow) instead of flat gray — same size, much more visible.
+          - theme.ts REACTIONS: added 3 emotionally-supportive reactions to fill the 2nd row of aura 
+            reactions cleanly: cry (Feel you), strong (Strong), clap (Clap). Total 8 reactions.
+        
+        TESTING REQUEST (backend-focused):
+          1) Send a DM with only a reply_to + text → 200, message stored with reply_to/reply_preview/reply_sender_name.
+          2) Send a DM without reply_to → 200, fields absent/null.
+          3) Send a DM with oversized reply_preview (200 chars) → 422.
+          4) Send a DM with reply_to too long (50 chars) → 422.
+          5) React with new emojis one by one: clap, hundred, touched → 200 for each. 
+             React with heart → 200.
+             React with unknown emoji "xyz" → 422.
+          6) Regression: POST a plain message, GET /messages/with/{peer}, reactions list still intact.

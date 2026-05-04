@@ -81,10 +81,18 @@ class MessageIn(BaseModel):
     audio_b64: Optional[str] = None  # legacy
     audio_key: Optional[str] = Field(default=None, max_length=256)
     audio_seconds: Optional[int] = Field(default=None, ge=1, le=60)
+    # "Slide-to-reply" reference — message_id of the message being replied to.
+    # Client also includes a short preview so the reply chip renders even if the
+    # original message has been deleted.
+    reply_to: Optional[str] = Field(default=None, max_length=32)
+    reply_preview: Optional[str] = Field(default=None, max_length=140)
+    reply_sender_name: Optional[str] = Field(default=None, max_length=80)
 
 
 class MessageReactIn(BaseModel):
-    emoji: Literal["heart", "thumb", "fire", "laugh", "wow", "sad"]
+    # Expanded to Insta-like set. `heart` stays for double-tap gesture;
+    # remaining emojis are the ones shown in the picker.
+    emoji: Literal["heart", "thumb", "fire", "laugh", "wow", "sad", "clap", "hundred", "touched"]
 
 
 class AddFriendIn(BaseModel):
