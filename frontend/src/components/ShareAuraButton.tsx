@@ -115,12 +115,12 @@ export default function ShareAuraButton({ onPress, label = "Share your aura", te
 }
 
 const styles = StyleSheet.create({
-  // alignSelf keeps the button sized to its content instead of stretching to fill
-  // the whole row, so the outer glow never bleeds into neighbouring buttons.
-  wrap: { alignSelf: "flex-start", position: "relative" },
+  // flex:1 → button stretches to fill the row. Glow margins are kept small (-3/-2)
+  // so they stay inside the row `gap: 10` and never bleed into the Redo button.
+  wrap: { flex: 1, position: "relative" },
   glow: {
     position: "absolute",
-    top: -3, bottom: -3, left: -4, right: -4,
+    top: -3, bottom: -3, left: -2, right: -2,
     borderRadius: 999,
     overflow: "hidden",
   },
