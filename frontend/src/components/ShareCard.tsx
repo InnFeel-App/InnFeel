@@ -83,7 +83,8 @@ const ShareCard = forwardRef((props: Props, ref: React.Ref<View>) => {
             <Text style={styles.kicker}>
               {(props.userName || "Someone").toUpperCase()} FEELS
             </Text>
-            <Text style={styles.hugeWord}>{props.word || "—"}</Text>            <View style={styles.emotionRow}>
+            <Text style={styles.hugeWord}>{props.word || "—"}</Text>
+            <View style={styles.emotionRow}>
               <View style={[styles.dot, { backgroundColor: em.hex }]} />
               <Text style={styles.emotionLabel}>{em.label}</Text>
             </View>

@@ -68,6 +68,7 @@ export function useShareToStories() {
   const cardRef = useRef<View>(null);
   const [payload, setPayload] = React.useState<Payload | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [busyLabel, setBusyLabel] = React.useState<string>("Preparing your share…");
   const [pending, setPending] = React.useState<Pending | null>(null);
 
   const buildMessage = (p: Payload, dest?: ShareDestination): string => {
@@ -186,6 +187,7 @@ export function useShareToStories() {
   ): Promise<{ ok: true; uri: string; hasVideo: boolean } | { ok: false; reason: string }> => {
     if (!p.mood_id) return { ok: false, reason: "Save your aura first" };
 
+    setBusyLabel("Building your reel… (~10s)");
     let reel: { url: string; has_audio?: boolean; has_video?: boolean };
     try {
       reel = await api(`/share/reel/${p.mood_id}`, { method: "POST", body: {} });
@@ -194,6 +196,7 @@ export function useShareToStories() {
       return { ok: false, reason: `Server reel build failed: ${e?.message || "unknown"}` };
     }
 
+    setBusyLabel("Downloading your reel…");
     const cache = LegacyFS.cacheDirectory || LegacyFS.documentDirectory;
     if (!cache) return { ok: false, reason: "No writable cache directory available" };
     const dest = `${cache}innfeel_reel_${Date.now()}.mp4`;
@@ -323,13 +326,16 @@ export function useShareToStories() {
   const share = async (p: Payload) => {
     if (busy) return;
     setBusy(true);
+    setBusyLabel(p.kind === "mood" ? "Building your reel…" : "Preparing your share…");
     setPayload(p);
     await new Promise((r) => setTimeout(r, 200)); // mount offscreen card
 
     try {
       if (p.kind === "stats") {
         // 1) Enrich, 2) Render PNG, 3) Open destination picker
+        setBusyLabel("Loading your insights…");
         const rich = await enrichStatsPayload(p);
+        setBusyLabel("Rendering your card…");
         const uri = await captureCardAsPng(rich);
         setPending({
           uri,
@@ -341,7 +347,7 @@ export function useShareToStories() {
         return;
       }
       if (p.kind === "leaderboard") {
-        // Pure offscreen render — payload is already complete from the caller.
+        setBusyLabel("Rendering your leaderboard…");
         const uri = await captureCardAsPng(p);
         setPending({
           uri,
@@ -446,6 +452,7 @@ export function useShareToStories() {
           <View style={styles.busyOverlay} pointerEvents="auto">
             <View style={styles.busyCard}>
               <ActivityIndicator size="large" color="#A78BFA" />
+              <Text style={styles.busyTxt}>{busyLabel}</Text>
             </View>
           </View>
         ) : null}
@@ -458,7 +465,7 @@ export function useShareToStories() {
         />
       </>
     );
-  }, [payload, busy, pending]);
+  }, [payload, busy, busyLabel, pending]);
 
   return { share, Renderer, busy };
 }
@@ -487,5 +494,14 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(20,20,28,0.95)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.08)",
+    alignItems: "center",
+    minWidth: 220,
+  },
+  busyTxt: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
+    marginTop: 14,
+    textAlign: "center",
   },
 });
