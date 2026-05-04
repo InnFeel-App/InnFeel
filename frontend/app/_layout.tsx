@@ -9,9 +9,13 @@ import { ensureDailyRandomNotification, registerForPushNotificationsAsync } from
 import { loadLocaleOverride } from "../src/i18n";
 import { initIAP, identifyIAP } from "../src/iap";
 import ErrorBoundary from "../src/components/ErrorBoundary";
+import { useScreenCaptureGuard } from "../src/hooks/useScreenCaptureGuard";
 
 function NotificationScheduler() {
   const { user } = useAuth();
+  // Block screenshots/screen-recording for everyone except admins.
+  // When signed out, user is null → treated as non-admin → guard remains ON.
+  useScreenCaptureGuard(!!user?.is_admin);
   useEffect(() => {
     if (user) {
       // Fire-and-forget: schedule the daily aura reminders (noon + 19:30 safety-net).
