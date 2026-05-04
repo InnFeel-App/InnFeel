@@ -384,7 +384,7 @@ async def heatmap(days: int = 90, user: dict = Depends(get_current_user)):
     Frozen days (from streak_freezes) are returned with `frozen: true` so the UI
     can show a snowflake instead of an empty cell.
     """
-    days = max(7, min(int(days or 90), 365))
+    days = max(7, min(int(days), 365))
     since = now_utc() - timedelta(days=days)
     cursor = db.moods.find(
         {"user_id": user["user_id"], "created_at": {"$gte": since}},
