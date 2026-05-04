@@ -34,7 +34,8 @@ def resolve_media(doc: dict) -> dict:
 async def compute_streak(user_id: str) -> int:
     """Count consecutive posting days ending today, accounting for active streak freezes.
 
-    A streak freeze is a per-month "skip" voucher (1/month for Pro, 3/month for Zen).
+    A streak freeze is a per-month "skip" voucher (2/month for Pro, 4/month for Zen,
+    plus optional bundle of +3 freezes for €1.99 available to all tiers).
     Each frozen day is counted as if the user had posted, so missing a day doesn't reset
     the streak — but no streak day is incremented for a frozen day either (it just bridges).
 
