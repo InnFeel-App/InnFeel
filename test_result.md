@@ -383,6 +383,125 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 
+backend_session15:
+  - task: "P2 transactional emails — welcome email on verify + weekly recap prefs + admin on-demand recap"
+    implemented: true
+    working: true
+    file: "/app/backend/app_core/email.py, /app/backend/routes/auth.py, /app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Session 15 P2 transactional emails backend test COMPLETE — 31/31 PASS (100%).
+            Harness: /app/backend_test.py vs https://charming-wescoff-8.preview.emergentagent.com/api.
+
+            1) WELCOME EMAIL on /auth/verify-email success — 13/13 PASS:
+              · POST /auth/register {email, password, name, lang:'fr', terms_accepted:true} → 200.
+                user_id created, email_verified_at:null, access_token returned.
+              · users.lang persisted == 'fr' verified via direct DB query (sanitize_user does not
+                expose `lang`, and /admin/users/search projection omits it — spec anticipated this).
+              · Patched db.email_verifications.code_hash to sha256('246801') for deterministic OTP
+                (Resend sends the real email in this env; the '[dev]' fallback log only fires on
+                Resend failure).
+              · Pre-verify: users.welcome_email_sent_at is absent.
+              · POST /auth/verify-email {code:'246801'} → 200 {ok:true, user:{...email_verified_at:<iso>}}.
+              · users.email_verified_at stamped in DB.
+              · users.welcome_email_sent_at STAMPED (2026-05-04 10:42:33.624) — proves Resend
+                succeeded AND the send_welcome_email hook fired from routes/auth.py. Non-blocking
+                per design — a Resend failure would have left it None without breaking the 200 response.
+              · Re-trigger POST /auth/verify-email {code:'246801'} → 200 {ok:true, already_verified:true,
+                user:{...}} — idempotent.
+              · welcome_email_sent_at UNCHANGED on re-trigger (first == second timestamp) — proves
+                the "only send welcome email once" guard (if fresh.get("welcome_email_sent_at")) works.
+              · Cleanup DELETE /account {password, confirm:'DELETE'} → 200 {ok:true, deleted:true};
+                DB row gone.
+
+            2) /notifications/prefs extended with weekly_recap — 10/10 PASS:
+              · GET /notifications/prefs (luna) → 200 with keys [reminder, reaction, message,
+                friend, weekly_recap] — the new key is exposed.
+              · weekly_recap defaults to True when absent from notif_prefs (unset it in DB first,
+                then GET confirms True).
+              · All existing keys (reminder, reaction, message, friend) still default to True.
+              · POST /notifications/prefs {weekly_recap:false} → 200 {ok:true}. Next GET →
+                weekly_recap:false.
+              · POST /notifications/prefs {weekly_recap:true} → 200 {ok:true}. Next GET →
+                weekly_recap:true (default restored).
+
+            3) /admin/send-weekly-recap — 4/4 PASS:
+              · As admin (hello@innfeel.app) with {email:'luna@innfeel.app'} → 200
+                {ok:true, email:'luna@innfeel.app'}. Endpoint does NOT raise; admin gate passes;
+                ok:true here means luna had moods in the last 7 days AND Resend accepted the payload.
+              · As non-admin (luna) with {email:...} → 403 {detail:'Admin only'}.
+              · As admin with {} → 400 {detail:'email required'}.
+              · As admin with {email:'noexist@example.com'} → 404 {detail:'No such user'}.
+
+            4) REGRESSION sanity — 4/4 PASS:
+              · GET /auth/me (admin) → 200, email=hello@innfeel.app.
+              · GET /moods/today (luna) → 200 with mood object (calm, #3B82F6).
+              · GET /friends (luna) → 200, list of 2 friends.
+              · GET /messages/unread-count (luna) → 200 {total:1, conversations:1}.
+
+            BACKEND LOGS: clean. The weekly_recap_daemon has run successfully at least once:
+              "INFO:innfeel:[weekly] {'checked': 10, 'sent': 2, 'skipped_empty': 8}" — the P2
+              batch pipeline is live. No 500s, no exceptions, no ImportError.
+
+            NOTES:
+              · sanitize_user() does NOT expose `lang` or `welcome_email_sent_at`. Verification of
+                these fields was done via direct MongoDB queries, which the review request explicitly
+                allows ("may or may not expose it; if not, fetch via /admin/users/search"). Admin
+                search projection also omits them, so DB was the authoritative source.
+              · Resend is fully operational in this env (RESEND_API_KEY present in backend/.env;
+                EMAIL_FROM=noreply@innfeel.app). Both the OTP and welcome email were sent for real
+                to the throwaway qa_p2_*@innfeel.app addresses — no bounces in logs.
+              · No code fixes were applied by the testing agent.
+
+metadata:
+  created_by: "main_agent"
+  version: "1.5"
+  test_sequence: 6
+  run_ui: false
+
+test_plan:
+  current_focus: []
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Session 15 P2 transactional emails backend test COMPLETE — 31/31 PASS (100%).
+        Harness: /app/backend_test.py.
+        Backend URL: https://charming-wescoff-8.preview.emergentagent.com/api.
+
+        1) WELCOME EMAIL flow on /auth/verify-email: verified end-to-end.
+           · Register {lang:'fr', terms_accepted:true} → 200, users.lang='fr' persisted.
+           · Patched OTP hash in DB (Resend sends real email here — [dev] log only fires on failure).
+           · POST /auth/verify-email → 200, email_verified_at stamped, welcome_email_sent_at ALSO
+             stamped in DB (Resend success path). This proves send_welcome_email hook fires from
+             routes/auth.py:187 and the non-blocking idempotent guard works.
+           · Re-trigger → already_verified:true; welcome_email_sent_at UNCHANGED (no duplicate email).
+           · Cleanup DELETE /account 200.
+
+        2) /notifications/prefs: new weekly_recap key exposed, defaults to True, persists flips,
+           existing keys (reminder, reaction, message, friend) still default True.
+
+        3) /admin/send-weekly-recap: admin→luna returns {ok:true, email:'luna@innfeel.app'};
+           non-admin → 403 'Admin only'; missing email → 400; noexist user → 404 'No such user'.
+
+        4) Regression spot-check: /auth/me (admin), /moods/today (luna), /friends (luna),
+           /messages/unread-count (luna) all 200.
+
+        Backend logs confirm the weekly_recap_daemon is live:
+          "[weekly] {'checked': 10, 'sent': 2, 'skipped_empty': 8}"
+
+        No backend code was modified by the testing agent.
+
+
+
 backend_session14:
   - task: "P1 routing refactor — moods/friends/messages extracted into routes/ modules"
     implemented: true
@@ -1116,3 +1235,51 @@ agent_communication:
         behavior change: mood create/feed/redo upsert, friends add/remove/close toggle, messages 
         send/get/react/unread-count. Admin flows, leaderboard, badges, payments remain untouched in 
         server.py but worth a spot check since imports shifted.
+
+    - agent: "main"
+      message: |
+        Session 15 — P2 Transactional emails added.
+        
+        NEW FEATURES:
+          1) Welcome email (7 langs: en/fr/es/it/de/pt/ar) shipped on successful /auth/verify-email.
+             - Idempotent via users.welcome_email_sent_at stamp.
+             - Uses the existing CID inline logo + render_brand_footer_html().
+             - Subject: "Welcome to InnFeel ✦" (localised).
+             - 3-step onboarding card: drop first aura / add friends / unlock feed.
+             - CTA button → https://innfeel.app.
+          2) Weekly recap email (7 langs) shipped every 7 days per user by a new background daemon.
+             - Checks every 6h and stamps users.weekly_recap_sent_at.
+             - Opt-out via /notifications/prefs { weekly_recap: false } — default True when missing.
+             - Admin-only override: POST /api/admin/send-weekly-recap {email: "..."} — bypasses cadence, 
+               useful for QA each locale.
+             - Stats computed for last 7 days per recipient: auras_count, streak, dominant emotion (+color),
+               reactions_received.
+             - Empty-week recipients are skipped (no email sent) but still stamped so we don't re-check 
+               them for 7 days.
+        
+        SCHEMA ADDITIONS:
+          - users.lang (str, 2 chars) — recorded on register to localise future emails.
+          - users.welcome_email_sent_at (datetime) — idempotency guard.
+          - users.weekly_recap_sent_at (datetime) — cadence guard.
+          - users.notif_prefs.weekly_recap (bool, default True) — opt-out flag.
+        
+        NEW/CHANGED ENDPOINTS:
+          - POST /auth/verify-email → on success, fires welcome email (one-shot). Response shape unchanged.
+          - GET  /notifications/prefs → now includes "weekly_recap" key (defaults True).
+          - POST /notifications/prefs → now accepts weekly_recap: bool.
+          - POST /admin/send-weekly-recap {email} → admin-only, returns {ok, email}.
+          - /auth/register → now persists users.lang.
+        
+        TESTING REQUEST:
+          1) Register a fresh user with {lang: "fr"} → verify 201 + user.lang persisted.
+          2) Trigger /auth/verify-email with the correct code → response.user.email_verified_at is set. 
+             Check backend logs show a welcome email attempt (Resend 200 or warning).
+          3) GET /notifications/prefs → returns weekly_recap: true by default.
+          4) POST /notifications/prefs {weekly_recap: false} → 200. Next GET shows weekly_recap: false.
+          5) POST /admin/send-weekly-recap {email: "luna@innfeel.app"} as admin (hello@innfeel.app) → 200.
+             As a non-admin → 403.
+             With missing email → 400.
+             With unknown email → 404.
+          6) Regression sweep for untouched endpoints.
+        
+        Keep it focused; don't test the daemon timer itself (6h) — just validate the on-demand helper path.

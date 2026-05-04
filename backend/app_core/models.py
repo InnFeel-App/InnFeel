@@ -115,6 +115,7 @@ class NotifPrefsIn(BaseModel):
     reaction: Optional[bool] = None
     message: Optional[bool] = None
     friend: Optional[bool] = None
+    weekly_recap: Optional[bool] = None
 
 
 class IAPValidateIn(BaseModel):

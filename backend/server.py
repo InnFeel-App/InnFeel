@@ -39,6 +39,7 @@ from app_core.models import (
     MessageReactIn,
 )
 from app_core.push import send_push
+from app_core.email import send_weekly_recap_email
 
 app = FastAPI(title="InnFeel API")
 api = APIRouter(prefix="/api")
@@ -205,13 +206,14 @@ async def get_notif_prefs(user: dict = Depends(get_current_user)):
         "reaction": prefs.get("reaction", True),
         "message": prefs.get("message", True),
         "friend": prefs.get("friend", True),
+        "weekly_recap": prefs.get("weekly_recap", True),
     }}
 
 
 @api.post("/notifications/prefs")
 async def set_notif_prefs(data: NotifPrefsIn, user: dict = Depends(get_current_user)):
     update = {}
-    for cat in ("reminder", "reaction", "message", "friend"):
+    for cat in ("reminder", "reaction", "message", "friend", "weekly_recap"):
         v = getattr(data, cat)
         if v is not None:
             update[f"notif_prefs.{cat}"] = bool(v)
@@ -760,6 +762,24 @@ async def admin_search_users(q: str = "", user: dict = Depends(get_current_user)
     return {"users": users}
 
 
+@api.post("/admin/send-weekly-recap")
+async def admin_send_weekly_recap(data: dict = Body(...), user: dict = Depends(get_current_user)):
+    """Admin tool — send the weekly recap email immediately to a specific user (by email).
+
+    Body: {email: "luna@innfeel.app"} — ignores the weekly_recap_sent_at cadence guard.
+    Useful for QA of the email template in each locale.
+    """
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin only")
+    target_email = (data.get("email") or "").strip().lower()
+    if not target_email:
+        raise HTTPException(status_code=400, detail="email required")
+    target = await db.users.find_one({"email": target_email}, {"_id": 0, "password_hash": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="No such user")
+    ok = await _send_weekly_recap_for_user(target)
+    return {"ok": ok, "email": target_email}
+
 
 @api.get("/")
 async def root():
@@ -1207,4 +1227,95 @@ async def _purge_daemon():
 @app.on_event("startup")
 async def _boot_purge_daemon():
     asyncio.create_task(_purge_daemon())
+
+
+
+# =========================================================================
+# Weekly recap daemon — sends each user one summary email per 7 days.
+# Runs every 6h; per-user cadence is enforced via `weekly_recap_sent_at` stamp.
+# Users can opt out via notif_prefs.weekly_recap = false (default True).
+# =========================================================================
+WEEKLY_INTERVAL_DAYS = 7
+WEEKLY_RECAP_CHECK_INTERVAL_SEC = 6 * 60 * 60  # 6 hours
+
+
+async def _send_weekly_recap_for_user(u: dict) -> bool:
+    """Compute the last-7-days snapshot for `u` and mail it. Returns True on success."""
+    uid = u["user_id"]
+    email = u.get("email")
+    if not email:
+        return False
+    since = now_utc() - timedelta(days=7)
+    moods7 = await db.moods.find(
+        {"user_id": uid, "created_at": {"$gte": since}},
+        {"_id": 0, "mood_id": 1, "emotion": 1, "reactions": 1},
+    ).to_list(200)
+    if not moods7:
+        # Nothing to recap — skip + bump stamp so we don't re-check every 6h.
+        await db.users.update_one({"user_id": uid}, {"$set": {"weekly_recap_sent_at": now_utc()}})
+        return False
+    dist: dict[str, int] = {}
+    for m in moods7:
+        e = m.get("emotion")
+        if e:
+            dist[e] = dist.get(e, 0) + 1
+    dominant = max(dist, key=dist.get) if dist else None
+    dominant_color = EMOTIONS.get(dominant) if dominant else None
+    reactions_received = sum(len(m.get("reactions") or []) for m in moods7)
+    from app_core.helpers import compute_streak
+    streak = await compute_streak(uid)
+    lang = (u.get("lang") or "en").lower()[:2]
+    try:
+        ok = await send_weekly_recap_email(
+            email,
+            name=u.get("name", ""),
+            lang=lang,
+            auras_count=len(moods7),
+            streak=streak,
+            dominant=dominant,
+            dominant_color=dominant_color,
+            reactions_received=reactions_received,
+        )
+    except Exception as e:
+        logger.warning(f"[weekly] send failed for {email}: {e}")
+        ok = False
+    await db.users.update_one({"user_id": uid}, {"$set": {"weekly_recap_sent_at": now_utc()}})
+    return ok
+
+
+async def _run_weekly_recap_batch() -> dict:
+    """One pass: send weekly recap to every due user."""
+    cutoff = now_utc() - timedelta(days=WEEKLY_INTERVAL_DAYS)
+    stats = {"checked": 0, "sent": 0, "skipped_empty": 0}
+    query = {
+        "email_verified_at": {"$ne": None},
+        "notif_prefs.weekly_recap": {"$ne": False},  # default True when key is missing
+        "$nor": [{"weekly_recap_sent_at": {"$gte": cutoff}}],
+    }
+    async for u in db.users.find(query, {"_id": 0, "password_hash": 0}):
+        stats["checked"] += 1
+        sent = await _send_weekly_recap_for_user(u)
+        if sent:
+            stats["sent"] += 1
+        else:
+            stats["skipped_empty"] += 1
+    if stats["checked"]:
+        logger.info(f"[weekly] {stats}")
+    return stats
+
+
+async def _weekly_recap_daemon():
+    # Small delay on boot so startup isn't blocked by a big fan-out send.
+    await asyncio.sleep(60)
+    while True:
+        try:
+            await _run_weekly_recap_batch()
+        except Exception as e:
+            logger.warning(f"[weekly] batch failed: {e}")
+        await asyncio.sleep(WEEKLY_RECAP_CHECK_INTERVAL_SEC)
+
+
+@app.on_event("startup")
+async def _boot_weekly_recap_daemon():
+    asyncio.create_task(_weekly_recap_daemon())
 

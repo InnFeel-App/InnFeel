@@ -14,7 +14,7 @@ from app_core.deps import (
     create_access_token, create_refresh_token, set_auth_cookies,
     get_current_user, sanitize_user,
 )
-from app_core.email import send_verification_email
+from app_core.email import send_verification_email, send_welcome_email
 from app_core.models import (
     RegisterIn, LoginIn, SendVerificationIn, VerifyEmailIn,
 )
@@ -96,6 +96,8 @@ async def register(data: RegisterIn, response: Response):
         "friend_count": 0,
         "streak": 0,
         "created_at": now_utc(),
+        # Remember the user's locale so we can localise future emails
+        "lang": (data.lang or "en").lower()[:2],
         # Legal acceptance trace (GDPR proof of consent)
         "terms_accepted_at": now_utc() if bool(data.terms_accepted) else None,
         "terms_version": "2025-06-01" if bool(data.terms_accepted) else None,
@@ -179,4 +181,17 @@ async def verify_email(data: VerifyEmailIn, user: dict = Depends(get_current_use
     )
     await db.email_verifications.delete_one({"user_id": user["user_id"]})
     fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0, "password_hash": 0})
+    # Ship the one-shot welcome email (idempotent via welcome_email_sent_at flag).
+    # Non-blocking: a failure here must not break the verification response.
+    if fresh and not fresh.get("welcome_email_sent_at"):
+        try:
+            lang = (fresh.get("lang") or "en").lower()[:2]
+            sent = await send_welcome_email(fresh["email"], name=fresh.get("name", ""), lang=lang)
+            if sent:
+                await db.users.update_one(
+                    {"user_id": user["user_id"]},
+                    {"$set": {"welcome_email_sent_at": now_utc()}},
+                )
+        except Exception as e:
+            logger.warning(f"Welcome email send failed for {fresh.get('email')}: {e}")
     return {"ok": True, "user": sanitize_user(fresh)}

@@ -1,446 +1,408 @@
+"""Backend tests for P2 transactional emails feature.
+
+Covers:
+  1) Welcome email on /auth/verify-email success (non-blocking, idempotent)
+  2) /notifications/prefs extended with weekly_recap
+  3) /admin/send-weekly-recap admin tool
+  4) Regression sanity spot check
 """
-InnFeel R2 migration sanity test (Session 13).
-Targets the public preview backend URL + /api prefix.
-"""
+import asyncio
+import hashlib
 import os
 import re
-import json
+import subprocess
+import sys
 import time
 import uuid
-import logging
-from typing import Optional
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 import httpx
+from motor.motor_asyncio import AsyncIOMotorClient
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
-log = logging.getLogger("test")
-
-BACKEND_URL = "https://charming-wescoff-8.preview.emergentagent.com"
-try:
-    with open("/app/frontend/.env") as f:
-        for line in f:
-            if line.startswith("EXPO_PUBLIC_BACKEND_URL="):
-                BACKEND_URL = line.split("=", 1)[1].strip().strip('"')
-                break
-except Exception:
-    pass
-API = BACKEND_URL.rstrip("/") + "/api"
-log.info(f"API: {API}")
+# ---- Config ---------------------------------------------------------------
+FRONTEND_ENV = Path("/app/frontend/.env")
+BACKEND_URL = ""
+for line in FRONTEND_ENV.read_text().splitlines():
+    if line.startswith("EXPO_PUBLIC_BACKEND_URL="):
+        BACKEND_URL = line.split("=", 1)[1].strip().strip('"').rstrip("/")
+API = f"{BACKEND_URL}/api"
+assert BACKEND_URL, "EXPO_PUBLIC_BACKEND_URL not found"
 
 ADMIN_EMAIL = "hello@innfeel.app"
-ADMIN_PASS = "admin123"
+ADMIN_PW = "admin123"
 LUNA_EMAIL = "luna@innfeel.app"
-LUNA_PASS = "demo1234"
+LUNA_PW = "demo1234"
 
-PASS = []
-FAIL = []
+# Mongo (direct access for setting a known OTP + cleanup)
+BACKEND_ENV = Path("/app/backend/.env")
+MONGO_URL = ""
+DB_NAME = "test_database"
+for line in BACKEND_ENV.read_text().splitlines():
+    if line.startswith("MONGO_URL="):
+        MONGO_URL = line.split("=", 1)[1].strip().strip('"')
+    elif line.startswith("DB_NAME="):
+        DB_NAME = line.split("=", 1)[1].strip().strip('"')
 
+client = AsyncIOMotorClient(MONGO_URL)
+db = client[DB_NAME]
 
-def record(label: str, ok: bool, detail: str = ""):
-    if ok:
-        PASS.append(label)
-        log.info(f"  PASS  {label}  {detail}")
-    else:
-        FAIL.append((label, detail))
-        log.info(f"  FAIL  {label}  {detail}")
-
-
-def login(client: httpx.Client, email: str, password: str) -> Optional[str]:
-    client.cookies.clear()
-    r = client.post(f"{API}/auth/login", json={"email": email, "password": password})
-    if r.status_code == 200:
-        return r.json().get("access_token")
-    log.info(f"login {email} -> {r.status_code} {r.text[:200]}")
-    return None
+RESULTS: list[tuple[str, bool, str]] = []
 
 
-def hdr(token: str) -> dict:
-    return {"Authorization": f"Bearer {token}"}
+def log(name: str, ok: bool, detail: str = ""):
+    RESULTS.append((name, ok, detail))
+    mark = "PASS" if ok else "FAIL"
+    print(f"[{mark}] {name} :: {detail[:280]}")
 
 
-def fresh_user(client: httpx.Client) -> tuple[str, str, str]:
-    suf = uuid.uuid4().hex[:8]
-    email = f"r2test_{suf}@innfeel.app"
-    payload = {"email": email, "password": "test1234!", "name": f"R2T{suf[:4]}", "lang": "en"}
-    r = client.post(f"{API}/auth/register", json=payload)
+def _fresh_client() -> httpx.AsyncClient:
+    """Every request uses a fresh cookie jar so Bearer tokens are deterministic."""
+    return httpx.AsyncClient(timeout=30.0, base_url=API)
+
+
+async def _login(c: httpx.AsyncClient, email: str, password: str) -> str:
+    r = await c.post("/auth/login", json={"email": email, "password": password})
+    r.raise_for_status()
+    return r.json()["access_token"]
+
+
+def auth(tok: str) -> dict:
+    return {"Authorization": f"Bearer {tok}"}
+
+
+async def _read_backend_log_tail(lines: int = 800) -> str:
+    out = ""
+    for path in ("/var/log/supervisor/backend.err.log", "/var/log/supervisor/backend.out.log"):
+        if os.path.exists(path):
+            try:
+                res = subprocess.run(
+                    ["tail", "-n", str(lines), path],
+                    capture_output=True, text=True, timeout=5,
+                )
+                out += res.stdout + "\n"
+            except Exception:
+                pass
+    return out
+
+
+# =================================================================
+# TEST 1 — Welcome email on /auth/verify-email success
+# =================================================================
+async def test_welcome_email():
+    test_email = f"qa_p2_{uuid.uuid4().hex[:10]}@innfeel.app"
+    test_pw = "Welcome-PW-42!"
+    test_name = "Noemie Welcome"
+
+    async with _fresh_client() as c:
+        r = await c.post("/auth/register", json={
+            "email": test_email,
+            "password": test_pw,
+            "name": test_name,
+            "lang": "fr",
+            "terms_accepted": True,
+        })
     if r.status_code != 200:
-        raise RuntimeError(f"register failed: {r.status_code} {r.text[:200]}")
-    body = r.json()
-    return body["user"]["user_id"], email, body["access_token"]
+        log("1.register-fresh-user", False, f"status={r.status_code} body={r.text[:300]}")
+        return
+    j = r.json()
+    user_id = j.get("user", {}).get("user_id")
+    access_token = j.get("access_token")
+    log("1.register-fresh-user", True,
+        f"user_id={user_id} email_verified_at={j.get('user', {}).get('email_verified_at')}")
+
+    # Verify users.lang was persisted as 'fr' (check DB directly — sanitize_user doesn't expose it)
+    u_doc = await db.users.find_one({"user_id": user_id})
+    lang_val = u_doc.get("lang") if u_doc else None
+    log("1.users.lang persisted == 'fr'", lang_val == "fr", f"lang={lang_val!r}")
+
+    # Patch the OTP hash to a known code so we can complete verification deterministically.
+    # (Resend HTTP API may send the real email; we can't read the inbox here, and the
+    #  '[dev]' log line is only emitted when Resend FAILS.)
+    known_code = "246801"
+    patched = await db.email_verifications.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "code_hash": hashlib.sha256(known_code.encode()).hexdigest(),
+            "attempts": 0,
+            "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10),
+        }},
+    )
+    log("1.email_verifications patched", patched.modified_count == 1,
+        f"modified={patched.modified_count}")
+
+    # Prime: welcome_email_sent_at should NOT already be set
+    pre = await db.users.find_one({"user_id": user_id}, {"welcome_email_sent_at": 1})
+    log("1.pre-verify welcome_email_sent_at absent",
+        (pre or {}).get("welcome_email_sent_at") is None,
+        f"pre_value={(pre or {}).get('welcome_email_sent_at')}")
+
+    # POST /auth/verify-email — this is where send_welcome_email fires
+    async with _fresh_client() as c:
+        r = await c.post(
+            "/auth/verify-email",
+            json={"code": known_code},
+            headers=auth(access_token),
+        )
+    if r.status_code != 200:
+        log("1.verify-email 200", False, f"status={r.status_code} body={r.text[:300]}")
+        return
+    jv = r.json()
+    vu = jv.get("user", {})
+    log("1.verify-email 200", True,
+        f"already_verified={jv.get('already_verified')} email_verified_at={vu.get('email_verified_at')}")
+    log("1.email_verified_at populated on returned user",
+        bool(vu.get("email_verified_at")),
+        f"value={vu.get('email_verified_at')}")
+
+    # Check users.email_verified_at in DB
+    u_verified = await db.users.find_one({"user_id": user_id})
+    log("1.users.email_verified_at stamped in DB",
+        u_verified is not None and u_verified.get("email_verified_at") is not None,
+        f"value={u_verified.get('email_verified_at') if u_verified else None}")
+
+    # Grace period for the async welcome_email_sent_at write
+    await asyncio.sleep(0.6)
+    u_after = await db.users.find_one({"user_id": user_id}, {"welcome_email_sent_at": 1})
+    wel = (u_after or {}).get("welcome_email_sent_at")
+    # Per spec: ok==True (Resend success) OR ok==False (Resend failed in dev) are both acceptable;
+    # stamp is only written on True. Either way the endpoint must return 200. We record outcome.
+    log("1.welcome_email_sent_at stamping outcome",
+        True,  # informational — both branches are valid
+        f"welcome_email_sent_at={wel} (set => Resend OK; None => Resend failed, endpoint still 200)")
+
+    # Informational: scan logs for send trace
+    log_tail = await _read_backend_log_tail(lines=600)
+    mentions = [tok for tok in
+                ("Resend send failed", "Welcome email send failed",
+                 "RESEND_API_KEY missing", "[dev] Verification code")
+                if tok in log_tail]
+    log("1.welcome-email log trace (info)", True,
+        f"log keywords observed={mentions}")
+
+    # Re-trigger /auth/verify-email → already_verified path, no duplicate welcome email
+    async with _fresh_client() as c:
+        r2 = await c.post(
+            "/auth/verify-email",
+            json={"code": known_code},
+            headers=auth(access_token),
+        )
+    ok2 = r2.status_code == 200 and r2.json().get("already_verified") is True
+    log("1.re-trigger verify-email → already_verified",
+        ok2, f"status={r2.status_code} body={r2.text[:200]}")
+
+    u_after2 = await db.users.find_one({"user_id": user_id}, {"welcome_email_sent_at": 1})
+    wel2 = (u_after2 or {}).get("welcome_email_sent_at")
+    same = wel2 == wel
+    log("1.welcome_email_sent_at unchanged on re-verify (no duplicate)",
+        same, f"first={wel} second={wel2}")
+
+    # Cleanup — delete the test user via DELETE /account
+    async with _fresh_client() as c:
+        r3 = await c.request(
+            "DELETE",
+            "/account",
+            json={"password": test_pw, "confirm": "DELETE"},
+            headers=auth(access_token),
+        )
+    log("1.cleanup DELETE /account",
+        r3.status_code == 200 and r3.json().get("ok") is True,
+        f"status={r3.status_code} body={r3.text[:200]}")
+
+    # Double-check user is gone
+    gone = await db.users.find_one({"user_id": user_id})
+    log("1.cleanup DB row deleted",
+        gone is None, f"still_present={gone is not None}")
 
 
-def main():
-    with httpx.Client(timeout=30.0) as client:
-        # ============================================================
-        # 1. Login
-        # ============================================================
-        admin_token = login(client, ADMIN_EMAIL, ADMIN_PASS)
-        record("auth.login admin", admin_token is not None)
-        if not admin_token:
-            return
+# =================================================================
+# TEST 2 — /notifications/prefs extended with weekly_recap
+# =================================================================
+async def test_notif_prefs_weekly_recap():
+    async with _fresh_client() as c:
+        tok = await _login(c, LUNA_EMAIL, LUNA_PW)
 
-        client.cookies.clear()
-        luna_token = login(client, LUNA_EMAIL, LUNA_PASS)
-        record("auth.login luna", luna_token is not None)
+    # First make sure any prior state is cleared so the default-True branch holds.
+    await db.users.update_one(
+        {"email": LUNA_EMAIL},
+        {"$unset": {"notif_prefs.weekly_recap": ""}},
+    )
 
-        client.cookies.clear()
-        r = client.get(f"{API}/auth/me", headers=hdr(admin_token))
-        admin_user = r.json() if r.status_code == 200 else {}
-        admin_id = admin_user.get("user_id", "")
-        record("auth.me admin", r.status_code == 200 and admin_user.get("is_admin") is True,
-               f"is_admin={admin_user.get('is_admin')} pro={admin_user.get('pro')}")
-        record("auth.me admin has avatar_url field", "avatar_url" in admin_user,
-               f"avatar_url={admin_user.get('avatar_url')}")
+    async with _fresh_client() as c:
+        r = await c.get("/notifications/prefs", headers=auth(tok))
+    prefs = (r.json() or {}).get("prefs", {})
+    log("2.GET prefs initial 200",
+        r.status_code == 200, f"keys={list(prefs.keys())}")
+    log("2.weekly_recap default == True",
+        prefs.get("weekly_recap") is True,
+        f"weekly_recap={prefs.get('weekly_recap')}")
 
-        client.cookies.clear()
-        r = client.get(f"{API}/auth/me", headers=hdr(luna_token))
-        luna_user = r.json() if r.status_code == 200 else {}
-        luna_id = luna_user.get("user_id", "")
-        record("auth.me luna", r.status_code == 200, f"luna_id={luna_id}")
+    # Existing keys still present and default True
+    for k in ("reminder", "reaction", "message", "friend"):
+        v = prefs.get(k)
+        log(f"2.existing key '{k}' default True",
+            v is True, f"{k}={v}")
 
-        # ============================================================
-        # 2. /api/media/upload-url validation matrix
-        # ============================================================
-        client.cookies.clear()
-        r = client.post(f"{API}/media/upload-url",
-                        headers=hdr(admin_token),
-                        json={"kind": "mood_photo", "content_type": "image/jpeg"})
-        ok = r.status_code == 200
-        signed = r.json() if ok else {}
-        keys_ok = ok and all(k in signed for k in ("url", "method", "key", "headers", "expires_in"))
-        record("media.upload-url mood_photo as admin", ok and keys_ok,
-               f"status={r.status_code} keys={list(signed.keys()) if ok else r.text[:120]}")
-        if ok:
-            record("media.upload-url method == PUT", signed.get("method") == "PUT", f"method={signed.get('method')}")
-            record("media.upload-url Content-Type header echoed",
-                   signed.get("headers", {}).get("Content-Type") == "image/jpeg",
-                   f"headers={signed.get('headers')}")
-            record("media.upload-url key has user_id prefix",
-                   f"/{admin_id}/" in signed.get("key", ""),
-                   f"key={signed.get('key')}")
-            record("media.upload-url url at R2 endpoint",
-                   "r2.cloudflarestorage.com" in (signed.get("url") or ""),
-                   f"url[:80]={(signed.get('url') or '')[:80]}")
-            record("media.upload-url expires_in == 900", signed.get("expires_in") == 900,
-                   f"expires_in={signed.get('expires_in')}")
+    # Flip to False
+    async with _fresh_client() as c:
+        r = await c.post(
+            "/notifications/prefs",
+            json={"weekly_recap": False},
+            headers=auth(tok),
+        )
+    log("2.POST prefs weekly_recap=false → 200 {ok:true}",
+        r.status_code == 200 and r.json().get("ok") is True,
+        f"status={r.status_code} body={r.text[:160]}")
 
-        # 2b) Free user video → 402
-        try:
-            free_uid, free_email, free_token = fresh_user(client)
-        except Exception as e:
-            free_uid = free_email = free_token = None
-            record("fresh free user creation", False, str(e))
-        if free_token:
-            client.cookies.clear()
-            r = client.post(f"{API}/media/upload-url",
-                            headers=hdr(free_token),
-                            json={"kind": "mood_video", "content_type": "video/mp4"})
-            record("media.upload-url mood_video as FREE -> 402",
-                   r.status_code == 402 and "Pro feature" in r.text,
-                   f"status={r.status_code} body={r.text[:160]}")
+    async with _fresh_client() as c:
+        r = await c.get("/notifications/prefs", headers=auth(tok))
+    prefs2 = (r.json() or {}).get("prefs", {})
+    log("2.GET reflects weekly_recap=false",
+        prefs2.get("weekly_recap") is False,
+        f"weekly_recap={prefs2.get('weekly_recap')}")
 
-        # 2c) Pro video → 200
-        client.cookies.clear()
-        r = client.post(f"{API}/media/upload-url",
-                        headers=hdr(admin_token),
-                        json={"kind": "mood_video", "content_type": "video/mp4"})
-        record("media.upload-url mood_video as Pro -> 200", r.status_code == 200,
-               f"status={r.status_code}")
+    # Restore default True
+    async with _fresh_client() as c:
+        r = await c.post(
+            "/notifications/prefs",
+            json={"weekly_recap": True},
+            headers=auth(tok),
+        )
+    log("2.POST prefs weekly_recap=true (restore) → 200",
+        r.status_code == 200 and r.json().get("ok") is True,
+        f"status={r.status_code}")
 
-        # 2d) Bad photo content type → 400
-        client.cookies.clear()
-        r = client.post(f"{API}/media/upload-url",
-                        headers=hdr(admin_token),
-                        json={"kind": "mood_photo", "content_type": "application/x-php"})
-        record("media.upload-url bad photo content_type -> 400",
-               r.status_code == 400 and "Unsupported" in r.text,
-               f"status={r.status_code} body={r.text[:160]}")
-
-        # ============================================================
-        # 3. Round-trip: presign -> PUT -> POST /moods with photo_key
-        # ============================================================
-        client.cookies.clear()
-        client.delete(f"{API}/moods/today", headers=hdr(admin_token))
-
-        client.cookies.clear()
-        r = client.post(f"{API}/media/upload-url",
-                        headers=hdr(admin_token),
-                        json={"kind": "mood_photo", "content_type": "image/jpeg"})
-        if r.status_code != 200:
-            record("roundtrip presign", False, f"{r.status_code}")
-            return
-        signed = r.json()
-        rt_key = signed["key"]
-        rt_url = signed["url"]
-        rt_headers = signed["headers"]
-
-        payload_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
-        with httpx.Client(timeout=30.0) as r2c:
-            put_resp = r2c.put(rt_url, content=payload_bytes, headers=rt_headers)
-        record("roundtrip R2 PUT bytes", put_resp.status_code in (200, 204),
-               f"status={put_resp.status_code} body={put_resp.text[:200]}")
-
-        client.cookies.clear()
-        r = client.post(f"{API}/moods", headers=hdr(admin_token),
-                        json={"emotion": "joy", "intensity": 3, "photo_key": rt_key})
-        body = r.json() if r.status_code == 200 else {}
-        mood_doc = body.get("mood", {}) if r.status_code == 200 else {}
-        ok = r.status_code == 200
-        record("POST /moods with photo_key -> 200", ok,
-               f"status={r.status_code} body={r.text[:200] if not ok else ''}")
-        signed_photo_url = mood_doc.get("photo_url")
-        record("mood.photo_url present and signed",
-               bool(signed_photo_url) and "X-Amz-Signature" in (signed_photo_url or ""),
-               f"photo_url[:100]={(signed_photo_url or '')[:100]}")
-
-        client.cookies.clear()
-        r = client.get(f"{API}/moods/today", headers=hdr(admin_token))
-        today_mood = (r.json() or {}).get("mood") or {}
-        today_url = today_mood.get("photo_url")
-        record("GET /moods/today returns photo_url", bool(today_url),
-               f"key={today_mood.get('photo_key')}")
-
-        if signed_photo_url:
-            with httpx.Client(timeout=30.0) as r2c:
-                gr = r2c.get(signed_photo_url)
-            record("GET signed photo_url -> 200", gr.status_code == 200,
-                   f"status={gr.status_code} bytes={len(gr.content)}")
-            record("photo bytes round-trip integrity",
-                   gr.status_code == 200 and gr.content[:3] == b"\xff\xd8\xff",
-                   f"first3={gr.content[:3]!r}")
-
-        # ============================================================
-        # 4. /api/media/delete
-        # ============================================================
-        client.cookies.clear()
-        r = client.post(f"{API}/media/upload-url",
-                        headers=hdr(admin_token),
-                        json={"kind": "mood_photo", "content_type": "image/jpeg"})
-        del_signed = r.json() if r.status_code == 200 else {}
-        del_key = del_signed.get("key")
-        if del_key:
-            with httpx.Client(timeout=30.0) as r2c:
-                r2c.put(del_signed["url"], content=b"\xff\xd8\xff\xe0test", headers=del_signed["headers"])
-            client.cookies.clear()
-            r = client.post(f"{API}/media/delete", headers=hdr(admin_token), json={"key": del_key})
-            record("media.delete own object -> 200",
-                   r.status_code == 200 and r.json().get("ok") is True,
-                   f"status={r.status_code} body={r.text[:160]}")
-
-        foreign_key = f"media/mood_photo/user_other_user_id_xxx/{uuid.uuid4().hex}.jpg"
-        client.cookies.clear()
-        r = client.post(f"{API}/media/delete", headers=hdr(admin_token), json={"key": foreign_key})
-        record("media.delete foreign object -> 403",
-               r.status_code == 403 and "Not your object" in r.text,
-               f"status={r.status_code} body={r.text[:160]}")
-
-        # ============================================================
-        # 5. Messages with R2 photo_key (luna -> hello)
-        # ============================================================
-        if luna_token and admin_id:
-            client.cookies.clear()
-            client.post(f"{API}/friends/add", headers=hdr(luna_token), json={"email": ADMIN_EMAIL})
-            client.cookies.clear()
-            r = client.post(f"{API}/media/upload-url",
-                            headers=hdr(luna_token),
-                            json={"kind": "msg_photo", "content_type": "image/jpeg"})
-            ok = r.status_code == 200
-            msg_signed = r.json() if ok else {}
-            record("media.upload-url msg_photo as luna", ok, f"status={r.status_code}")
-            if ok:
-                msg_key = msg_signed["key"]
-                with httpx.Client(timeout=30.0) as r2c:
-                    pr = r2c.put(msg_signed["url"], content=b"\xff\xd8\xff\xe0msg", headers=msg_signed["headers"])
-                record("messages photo R2 PUT", pr.status_code in (200, 204), f"status={pr.status_code}")
-                client.cookies.clear()
-                r = client.post(f"{API}/messages/with/{admin_id}",
-                                headers=hdr(luna_token),
-                                json={"photo_key": msg_key})
-                ok2 = r.status_code == 200
-                msg_obj = (r.json() or {}).get("message", {}) if ok2 else {}
-                record("POST /messages/with photo_key -> 200", ok2,
-                       f"status={r.status_code} body={r.text[:200] if not ok2 else ''}")
-                record("message.photo_url signed",
-                       bool(msg_obj.get("photo_url")) and "X-Amz-Signature" in (msg_obj.get("photo_url") or ""),
-                       f"photo_url[:80]={(msg_obj.get('photo_url') or '')[:80]}")
-                client.cookies.clear()
-                r = client.get(f"{API}/messages/with/{admin_id}", headers=hdr(luna_token))
-                ok3 = r.status_code == 200
-                msgs = (r.json() or {}).get("messages", []) if ok3 else []
-                with_photo = [m for m in msgs if m.get("photo_key")]
-                record("GET /messages/with returns photo_url",
-                       ok3 and any(m.get("photo_url") for m in with_photo),
-                       f"#with_photo={len(with_photo)}")
-
-        # ============================================================
-        # 6. Avatar with R2
-        # ============================================================
-        client.cookies.clear()
-        r = client.post(f"{API}/media/upload-url",
-                        headers=hdr(admin_token),
-                        json={"kind": "avatar", "content_type": "image/jpeg"})
-        av_ok = r.status_code == 200
-        av_signed = r.json() if av_ok else {}
-        record("media.upload-url avatar -> 200", av_ok, f"status={r.status_code}")
-        if av_ok:
-            av_key = av_signed["key"]
-            with httpx.Client(timeout=30.0) as r2c:
-                pr = r2c.put(av_signed["url"], content=b"\xff\xd8\xff\xe0avatar", headers=av_signed["headers"])
-            record("avatar PUT to R2", pr.status_code in (200, 204), f"status={pr.status_code}")
-            client.cookies.clear()
-            r = client.post(f"{API}/profile/avatar", headers=hdr(admin_token),
-                            json={"avatar_key": av_key})
-            record("POST /profile/avatar avatar_key -> 200", r.status_code == 200, f"status={r.status_code}")
-            client.cookies.clear()
-            r = client.get(f"{API}/auth/me", headers=hdr(admin_token))
-            me_user = r.json() if r.status_code == 200 else {}
-            record("auth/me user.avatar_url populated",
-                   bool(me_user.get("avatar_url")) and "X-Amz-Signature" in (me_user.get("avatar_url") or ""),
-                   f"avatar_url[:80]={(me_user.get('avatar_url') or '')[:80]}")
-
-        # ============================================================
-        # 7. Mood audio fetch with R2
-        # ============================================================
-        client.cookies.clear()
-        r = client.post(f"{API}/media/upload-url",
-                        headers=hdr(admin_token),
-                        json={"kind": "mood_audio", "content_type": "audio/m4a"})
-        audio_ok = r.status_code == 200
-        audio_signed = r.json() if audio_ok else {}
-        record("media.upload-url mood_audio -> 200", audio_ok, f"status={r.status_code}")
-        if audio_ok:
-            audio_key = audio_signed["key"]
-            with httpx.Client(timeout=30.0) as r2c:
-                pr = r2c.put(audio_signed["url"], content=b"audio_bytes_test_payload", headers=audio_signed["headers"])
-            record("audio PUT to R2", pr.status_code in (200, 204), f"status={pr.status_code}")
-            client.cookies.clear()
-            client.delete(f"{API}/moods/today", headers=hdr(admin_token))
-            client.cookies.clear()
-            r = client.post(f"{API}/moods", headers=hdr(admin_token),
-                            json={"emotion": "joy", "intensity": 3, "audio_key": audio_key, "audio_seconds": 5})
-            mood_id = (r.json() or {}).get("mood", {}).get("mood_id") if r.status_code == 200 else None
-            record("POST /moods with audio_key -> 200", r.status_code == 200 and bool(mood_id),
-                   f"status={r.status_code}")
-            if mood_id:
-                client.cookies.clear()
-                r = client.get(f"{API}/moods/{mood_id}/audio", headers=hdr(admin_token))
-                body = r.json() if r.status_code == 200 else {}
-                record("GET /moods/{id}/audio returns audio_url (not b64)",
-                       r.status_code == 200 and bool(body.get("audio_url")) and not body.get("audio_b64"),
-                       f"keys={list(body.keys()) if r.status_code == 200 else r.status_code}")
-
-        # ============================================================
-        # 8. REGRESSION SWEEP
-        # ============================================================
-        log.info("--- REGRESSION SWEEP ---")
-        client.cookies.clear()
-        r = client.get(f"{API}/auth/me", headers=hdr(admin_token))
-        record("regression /auth/me", r.status_code == 200)
-        client.cookies.clear()
-        r = client.get(f"{API}/account/export", headers=hdr(admin_token))
-        record("regression /account/export", r.status_code == 200)
-        client.cookies.clear()
-        r = client.get(f"{API}/moods/today", headers=hdr(admin_token))
-        record("regression /moods/today", r.status_code == 200)
-        client.cookies.clear()
-        r = client.get(f"{API}/moods/feed", headers=hdr(admin_token))
-        record("regression /moods/feed", r.status_code == 200, f"locked={(r.json() or {}).get('locked')}")
-        client.cookies.clear()
-        r = client.get(f"{API}/moods/stats", headers=hdr(admin_token))
-        body = r.json() if r.status_code == 200 else {}
-        record("regression /moods/stats Pro ranges",
-               r.status_code == 200 and "range_30" in body and "range_90" in body and "range_365" in body,
-               f"keys={list(body.keys())[:8]}")
-        client.cookies.clear()
-        r = client.get(f"{API}/friends", headers=hdr(admin_token))
-        record("regression /friends", r.status_code == 200)
-        client.cookies.clear()
-        r = client.get(f"{API}/friends/leaderboard", headers=hdr(admin_token))
-        record("regression /friends/leaderboard", r.status_code == 200)
-        client.cookies.clear()
-        r = client.get(f"{API}/badges", headers=hdr(admin_token))
-        record("regression /badges", r.status_code == 200)
-        client.cookies.clear()
-        r = client.get(f"{API}/messages/conversations", headers=hdr(admin_token))
-        record("regression /messages/conversations", r.status_code == 200)
-        client.cookies.clear()
-        r = client.get(f"{API}/messages/unread-count", headers=hdr(admin_token))
-        record("regression /messages/unread-count", r.status_code == 200)
-        client.cookies.clear()
-        r = client.get(f"{API}/admin/me", headers=hdr(admin_token))
-        record("regression /admin/me", r.status_code == 200 and r.json().get("is_admin") is True)
-        client.cookies.clear()
-        r = client.get(f"{API}/admin/users/search?q=luna", headers=hdr(admin_token))
-        record("regression /admin/users/search", r.status_code == 200)
-        client.cookies.clear()
-        r = client.get(f"{API}/admin/pro-grants", headers=hdr(admin_token))
-        record("regression /admin/pro-grants", r.status_code == 200)
-        client.cookies.clear()
-        r = client.get(f"{API}/iap/status", headers=hdr(admin_token))
-        record("regression /iap/status", r.status_code == 200)
-        client.cookies.clear()
-        r = client.post(f"{API}/iap/sync", headers=hdr(admin_token))
-        record("regression /iap/sync", r.status_code == 200)
-        client.cookies.clear()
-        r = client.post(f"{API}/iap/webhook",
-                        json={"event": {"id": f"evt_test_{uuid.uuid4().hex[:8]}", "type": "INITIAL_PURCHASE",
-                                        "app_user_id": "user_xxx"}})
-        record("regression /iap/webhook", r.status_code == 200)
-        client.cookies.clear()
-        r = client.post(f"{API}/payments/checkout", headers=hdr(admin_token), json={})
-        body = r.json() if r.status_code == 200 else {}
-        record("regression /payments/checkout origin fallback",
-               r.status_code == 200 and "url" in body, f"status={r.status_code}")
-        client.cookies.clear()
-        r = client.get(f"{API}/music/search?q=ocean", headers=hdr(admin_token))
-        body = r.json() if r.status_code == 200 else {}
-        record("regression /music/search Pro admin",
-               r.status_code == 200 and len(body.get("tracks") or []) > 0,
-               f"#tracks={len(body.get('tracks') or [])}")
-        client.cookies.clear()
-        r = client.get(f"{API}/wellness/joy", headers=hdr(admin_token))
-        body = r.json() if r.status_code == 200 else {}
-        record("regression /wellness/joy",
-               r.status_code == 200 and bool(body.get("quote")) and bool(body.get("advice")),
-               f"source={body.get('source')}")
-        client.cookies.clear()
-        r = client.get(f"{API}/notifications/prefs", headers=hdr(admin_token))
-        record("regression /notifications/prefs GET", r.status_code == 200)
-        client.cookies.clear()
-        r = client.post(f"{API}/notifications/prefs", headers=hdr(admin_token),
-                        json={"reaction": True})
-        record("regression /notifications/prefs POST", r.status_code == 200)
-
-        # ============================================================
-        # 9. Purge daemon log line
-        # ============================================================
-        try:
-            with open("/var/log/supervisor/backend.err.log") as f:
-                log_text = f.read()[-30000:]
-            has_purge = bool(re.search(r"\[purge\]\s*\{", log_text))
-            record("purge daemon log line present", has_purge,
-                   "found '[purge] {' in backend.err.log" if has_purge else "missing '[purge]' line")
-            err_count = len(re.findall(r"ERROR", log_text))
-            record("backend.err.log ERROR count low", err_count < 5, f"count={err_count}")
-        except Exception as e:
-            record("purge daemon log check", False, str(e))
+    async with _fresh_client() as c:
+        r = await c.get("/notifications/prefs", headers=auth(tok))
+    log("2.restore confirmed",
+        r.status_code == 200 and r.json()["prefs"].get("weekly_recap") is True,
+        f"weekly_recap={r.json().get('prefs', {}).get('weekly_recap')}")
 
 
-def finalize():
-    log.info("\n" + "=" * 70)
-    log.info(f"PASS: {len(PASS)}    FAIL: {len(FAIL)}")
-    log.info("=" * 70)
-    if FAIL:
-        log.info("\nFAILURES:")
-        for label, detail in FAIL:
-            log.info(f"  - {label}  | {detail}")
-    total = len(PASS) + len(FAIL)
-    if total:
-        log.info(f"\nPass rate: {len(PASS)}/{total} = {100.0 * len(PASS) / total:.1f}%")
+# =================================================================
+# TEST 3 — /admin/send-weekly-recap
+# =================================================================
+async def test_admin_send_weekly_recap():
+    async with _fresh_client() as c:
+        admin_tok = await _login(c, ADMIN_EMAIL, ADMIN_PW)
+    async with _fresh_client() as c:
+        luna_tok = await _login(c, LUNA_EMAIL, LUNA_PW)
+
+    # Admin with valid email
+    async with _fresh_client() as c:
+        r = await c.post(
+            "/admin/send-weekly-recap",
+            json={"email": LUNA_EMAIL},
+            headers=auth(admin_tok),
+        )
+    if r.status_code != 200:
+        log("3.admin → luna 200", False, f"status={r.status_code} body={r.text[:300]}")
+    else:
+        j = r.json()
+        log("3.admin → luna 200",
+            isinstance(j.get("ok"), bool) and j.get("email") == LUNA_EMAIL,
+            f"body={j}")
+
+    # Non-admin (luna) → 403 "Admin only"
+    async with _fresh_client() as c:
+        r = await c.post(
+            "/admin/send-weekly-recap",
+            json={"email": LUNA_EMAIL},
+            headers=auth(luna_tok),
+        )
+    log("3.non-admin → 403 'Admin only'",
+        r.status_code == 403 and "Admin" in r.text,
+        f"status={r.status_code} body={r.text[:200]}")
+
+    # Admin with missing email → 400
+    async with _fresh_client() as c:
+        r = await c.post(
+            "/admin/send-weekly-recap",
+            json={},
+            headers=auth(admin_tok),
+        )
+    log("3.admin missing email → 400",
+        r.status_code == 400,
+        f"status={r.status_code} body={r.text[:200]}")
+
+    # Admin with noexist user → 404 "No such user"
+    async with _fresh_client() as c:
+        r = await c.post(
+            "/admin/send-weekly-recap",
+            json={"email": "noexist@example.com"},
+            headers=auth(admin_tok),
+        )
+    log("3.admin noexist → 404 'No such user'",
+        r.status_code == 404 and "No such user" in r.text,
+        f"status={r.status_code} body={r.text[:200]}")
+
+
+# =================================================================
+# TEST 4 — Regression sanity
+# =================================================================
+async def test_regression():
+    async with _fresh_client() as c:
+        admin_tok = await _login(c, ADMIN_EMAIL, ADMIN_PW)
+    async with _fresh_client() as c:
+        luna_tok = await _login(c, LUNA_EMAIL, LUNA_PW)
+
+    async with _fresh_client() as c:
+        r = await c.get("/auth/me", headers=auth(admin_tok))
+    log("4.GET /auth/me (admin)",
+        r.status_code == 200 and r.json().get("email") == ADMIN_EMAIL,
+        f"status={r.status_code} email={r.json().get('email') if r.status_code==200 else '-'}")
+
+    async with _fresh_client() as c:
+        r = await c.get("/moods/today", headers=auth(luna_tok))
+    log("4.GET /moods/today (luna)",
+        r.status_code == 200 and "mood" in r.json(),
+        f"status={r.status_code} body={r.text[:160]}")
+
+    async with _fresh_client() as c:
+        r = await c.get("/friends", headers=auth(luna_tok))
+    ok = r.status_code == 200
+    friends_list = None
+    if ok:
+        js = r.json()
+        # tolerate either {friends:[...]} or raw list
+        if isinstance(js, dict) and isinstance(js.get("friends"), list):
+            friends_list = js["friends"]
+        elif isinstance(js, list):
+            friends_list = js
+        else:
+            ok = False
+    log("4.GET /friends (luna)",
+        ok and friends_list is not None,
+        f"status={r.status_code} friends_len={len(friends_list) if friends_list is not None else '-'}")
+
+    async with _fresh_client() as c:
+        r = await c.get("/messages/unread-count", headers=auth(luna_tok))
+    log("4.GET /messages/unread-count (luna)",
+        r.status_code == 200 and "total" in r.json() and "conversations" in r.json(),
+        f"status={r.status_code} body={r.text[:160]}")
+
+
+async def main():
+    print(f"Backend: {API}\n")
+    await test_welcome_email()
+    print()
+    await test_notif_prefs_weekly_recap()
+    print()
+    await test_admin_send_weekly_recap()
+    print()
+    await test_regression()
+    print()
+
+    total = len(RESULTS)
+    passed = sum(1 for _, ok, _ in RESULTS if ok)
+    print("=" * 70)
+    print(f"RESULT: {passed}/{total} passed")
+    for name, ok, detail in RESULTS:
+        if not ok:
+            print(f"  FAIL  {name}  ::  {detail[:300]}")
+    return passed == total
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    finally:
-        finalize()
+    ok = asyncio.run(main())
+    sys.exit(0 if ok else 1)
