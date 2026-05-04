@@ -11,6 +11,7 @@ import { t } from "../../src/i18n";
 import { Ionicons } from "@expo/vector-icons";
 import { useShareToStories } from "../../src/components/ShareToStories";
 import ShareAuraButton from "../../src/components/ShareAuraButton";
+import StreakFreezeCard from "../../src/components/StreakFreezeCard";
 
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const RANGES: { key: 30 | 90 | 365; label: string }[] = [
@@ -154,6 +155,9 @@ export default function Stats() {
               <Text style={styles.statLbl}>auras this week</Text>
             </View>
           </View>
+
+          {/* Streak Freeze — protect the streak with monthly quotas + bundle upsell. */}
+          <StreakFreezeCard onChange={load} />
 
           <View style={[styles.heroCard, { borderColor: domColor + "80" }]} testID="stat-dominant">
             <Text style={styles.heroLbl}>{t("stats.dominant")}</Text>
