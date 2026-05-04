@@ -205,50 +205,65 @@ def _ffmpeg_compose(
     overlay_path: str,
     out_path: str,
 ) -> bool:
-    """Invoke ffmpeg to compose the final 9:16 MP4. Returns True on success."""
-    # Base video filter: scale to cover 1080x1920, then overlay the PNG.
+    """Invoke ffmpeg to compose the final 9:16 MP4. Returns True on success.
+
+    For video backgrounds we just trim/cover-fit. For static photos we apply a subtle
+    Ken-Burns slow-zoom (zoompan) so the reel feels dynamic instead of frozen, plus a
+    fade-in at the start and fade-out at the end. Music audio is mixed underneath the
+    overlay; if no music we still output a silent AAC track so Instagram accepts the file.
+    """
     if has_video:
-        # Treat bg_path as a moving video — trim at 15s.
+        # Use the video stream as-is (cover-fit + crop + 25fps for stable encoding).
         inputs = ["-t", str(REEL_DURATION_SEC), "-i", bg_path, "-i", overlay_path]
         vf = (
             "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
-            "crop=1080:1920,setsar=1[bg];"
+            "crop=1080:1920,setsar=1,fps=25,"
+            f"fade=t=in:st=0:d=0.6,fade=t=out:st={REEL_DURATION_SEC - 0.6}:d=0.6[bg];"
             "[bg][1:v]overlay=0:0:format=auto[vout]"
         )
     else:
-        # Static photo → loop for 15s.
+        # Static photo → loop, slight Ken-Burns zoom (1.0 → 1.12 over 15s @ 25fps).
+        # zoompan needs the input prepped at the target resolution first.
+        zoom_frames = REEL_DURATION_SEC * 25  # 25 fps
         inputs = ["-loop", "1", "-t", str(REEL_DURATION_SEC), "-i", bg_path, "-i", overlay_path]
         vf = (
-            "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
-            "crop=1080:1920,setsar=1[bg];"
+            "[0:v]scale=1620:2880:force_original_aspect_ratio=increase,"
+            "crop=1620:2880,setsar=1,"
+            f"zoompan=z='zoom+0.0006':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={zoom_frames}:s=1080x1920:fps=25,"
+            f"fade=t=in:st=0:d=0.6,fade=t=out:st={REEL_DURATION_SEC - 0.6}:d=0.6[bg];"
             "[bg][1:v]overlay=0:0:format=auto[vout]"
         )
 
     if has_audio and audio_path:
+        # Mix music with a slight audio fade at start/end for a polished feel.
         inputs += ["-i", audio_path]
-        map_args = ["-map", "[vout]", "-map", "2:a:0"]
-        audio_args = ["-c:a", "aac", "-b:a", "128k", "-shortest"]
+        af = f"[2:a]afade=t=in:st=0:d=0.3,afade=t=out:st={REEL_DURATION_SEC - 0.5}:d=0.5[aout]"
+        full_filter = f"{vf};{af}"
+        map_args = ["-map", "[vout]", "-map", "[aout]"]
+        audio_args = ["-c:a", "aac", "-b:a", "160k", "-shortest"]
     else:
-        # Silent audio track so Instagram accepts the file as a reel/video.
+        # Silent track so Instagram accepts the file as a reel/video.
         inputs += ["-f", "lavfi", "-t", str(REEL_DURATION_SEC), "-i", "anullsrc=r=44100:cl=stereo"]
+        full_filter = vf
         map_args = ["-map", "[vout]", "-map", "2:a:0"]
         audio_args = ["-c:a", "aac", "-b:a", "96k"]
 
     cmd = [
         _FFMPEG_BIN, "-y", "-hide_banner", "-loglevel", "error",
         *inputs,
-        "-filter_complex", vf,
+        "-filter_complex", full_filter,
         *map_args,
         "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
+        "-r", "25",
         "-t", str(REEL_DURATION_SEC),
         *audio_args,
         out_path,
     ]
     try:
-        proc = subprocess.run(cmd, cwd=workdir, capture_output=True, timeout=60)
+        proc = subprocess.run(cmd, cwd=workdir, capture_output=True, timeout=90)
         if proc.returncode != 0:
-            logger.warning(f"[share] ffmpeg failed rc={proc.returncode} stderr={proc.stderr.decode()[:500]}")
+            logger.warning(f"[share] ffmpeg failed rc={proc.returncode} stderr={proc.stderr.decode()[:800]}")
             return False
         return os.path.exists(out_path) and os.path.getsize(out_path) > 0
     except Exception as e:
