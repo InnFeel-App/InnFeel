@@ -7,6 +7,8 @@ import RadialAura from "../src/components/RadialAura";
 import { api } from "../src/api";
 import { useAuth } from "../src/auth";
 import { COLORS } from "../src/theme";
+import ShareAuraButton from "../src/components/ShareAuraButton";
+import { useShareToStories } from "../src/components/ShareToStories";
 
 type Badge = { key: string; label: string; icon: any; color: string; hint: string; earned: boolean };
 type LBRow = { user_id: string; name: string; avatar_color?: string; avatar_b64?: string; value: number; rank: number };
@@ -27,6 +29,33 @@ export default function Achievements() {
   const [earnedCount, setEarnedCount] = useState(0);
   const [metrics, setMetrics] = useState<any>(null);
   const [lb, setLB] = useState<Record<string, LBCategory> | null>(null);
+  const { share, Renderer, busy } = useShareToStories();
+
+  const onShareLeaderboard = useCallback(() => {
+    if (!lb) return;
+    // Map server leaderboard payload -> ShareCard's leaderboard kind
+    const categories = CAT_META.map((cat) => {
+      const data = lb[cat.key];
+      return {
+        key: cat.key,
+        label: cat.label,
+        color: cat.color,
+        suffix: cat.suffix,
+        icon: cat.icon,
+        myRank: data?.my_rank ?? null,
+        total: data?.total ?? 0,
+        top3: (data?.top3 || []).map((r) => ({
+          name: r.name,
+          value: r.value,
+          rank: r.rank,
+          isMe: r.user_id === user?.user_id,
+          avatar_color: r.avatar_color || null,
+        })),
+      };
+    }).filter((c) => c.top3.length > 0);
+    if (categories.length === 0) return;
+    share({ kind: "leaderboard", userName: user?.name, categories });
+  }, [lb, user, share]);
 
   const load = useCallback(async () => {
     try {
@@ -132,7 +161,20 @@ export default function Achievements() {
               <Text style={styles.metricsLine}>Emotions used: {metrics.unique_emotions}/24 · Reactions received: {metrics.reactions_received}</Text>
             </View>
           ) : null}
+
+          {/* Share my leaderboard — visible only when the user has at least one
+              friend in the rankings (so the share isn't just "me alone"). */}
+          {lb && (lb[CAT_META[0].key]?.total || 0) > 1 ? (
+            <View style={{ alignItems: "center", marginTop: 24 }}>
+              <ShareAuraButton
+                testID="share-leaderboard"
+                label={busy ? "Preparing…" : "Share my leaderboard"}
+                onPress={onShareLeaderboard}
+              />
+            </View>
+          ) : null}
         </ScrollView>
+        {Renderer ? <Renderer /> : null}
       </SafeAreaView>
     </View>
   );

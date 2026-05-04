@@ -3,6 +3,8 @@ import { View, Text, StyleSheet } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { EMOTION_COLORS } from "../theme";
 
+const MEDAL_COLORS = ["#FACC15", "#D1D5DB", "#CD7F32"]; // gold / silver / bronze
+
 type Insight = {
   id?: string;
   title: string;
@@ -12,8 +14,19 @@ type Insight = {
 
 type Achievement = { key: string; label: string; hint?: string };
 
+type LeaderboardCategoryShare = {
+  key: string;
+  label: string;
+  color: string;
+  suffix: string;
+  icon?: string;
+  top3: Array<{ name: string; value: number; isMe: boolean; rank: number; avatar_color?: string | null }>;
+  myRank?: number | null;
+  total: number;
+};
+
 type Props = {
-  kind: "mood" | "stats";
+  kind: "mood" | "stats" | "leaderboard";
   // mood
   word?: string;
   emotion?: string;
@@ -30,10 +43,15 @@ type Props = {
   distribution?: Record<string, number>;
   insights?: Insight[];        // up to 3 cards from /moods/insights
   achievements?: Achievement[]; // earned badges (top 3 shown)
+  // leaderboard — top3 per category + user's rank if outside top3
+  categories?: LeaderboardCategoryShare[];
 };
 
 // This card is rendered off-screen (fixed 1080x1920 Stories size) and captured via react-native-view-shot.
-const ShareCard = forwardRef<View, Props>(function ShareCard(props, ref) {
+// NOTE: Using `forwardRef<View, Props>` (two type params) confuses Babel's TSX
+// parser ("Missing initializer" error) because the `<View,` looks like a JSX
+// fragment to it. Annotating params instead is unambiguous.
+const ShareCard = forwardRef((props: Props, ref: React.Ref<View>) => {
   const em = EMOTION_COLORS[props.emotion || props.dominant || "joy"] || EMOTION_COLORS.joy;
   const intensity = props.intensity || 0;
   const maxIntensity = intensity > 5 ? 10 : 5;
@@ -65,8 +83,7 @@ const ShareCard = forwardRef<View, Props>(function ShareCard(props, ref) {
             <Text style={styles.kicker}>
               {(props.userName || "Someone").toUpperCase()} FEELS
             </Text>
-            <Text style={styles.hugeWord}>{props.word || "—"}</Text>
-            <View style={styles.emotionRow}>
+            <Text style={styles.hugeWord}>{props.word || "—"}</Text>            <View style={styles.emotionRow}>
               <View style={[styles.dot, { backgroundColor: em.hex }]} />
               <Text style={styles.emotionLabel}>{em.label}</Text>
             </View>
@@ -97,7 +114,7 @@ const ShareCard = forwardRef<View, Props>(function ShareCard(props, ref) {
               </View>
             ) : null}
           </>
-        ) : (
+        ) : props.kind === "stats" ? (
           <>
             <Text style={styles.kicker}>{(props.userName || "MY").toUpperCase()} EMOTIONAL JOURNEY</Text>
 
@@ -181,6 +198,47 @@ const ShareCard = forwardRef<View, Props>(function ShareCard(props, ref) {
               </View>
             ) : null}
           </>
+        ) : props.kind === "leaderboard" ? (
+          <>
+            <Text style={styles.kicker}>{(props.userName || "OUR").toUpperCase()} CIRCLE LEADERBOARD</Text>
+
+            {(props.categories || []).map((cat) => (
+              <View key={cat.key} style={styles.lbCard}>
+                <View style={styles.lbHdrRow}>
+                  <View style={[styles.lbBadge, { backgroundColor: cat.color + "30", borderColor: cat.color + "70" }]}>
+                    <Text style={[styles.lbBadgeTxt, { color: cat.color }]}>★</Text>
+                  </View>
+                  <Text style={styles.lbCatTitle}>{cat.label}</Text>
+                </View>
+
+                {(cat.top3 || []).map((row) => (
+                  <View
+                    key={`${cat.key}-${row.rank}-${row.name}`}
+                    style={[styles.lbRow, row.isMe && styles.lbRowMe]}
+                  >
+                    <View style={[styles.lbMedal, { backgroundColor: MEDAL_COLORS[Math.max(0, row.rank - 1)] || "#94A3B8" }]}>
+                      <Text style={styles.lbMedalTxt}>{row.rank}</Text>
+                    </View>
+                    <View style={[styles.lbAvatar, { backgroundColor: row.avatar_color || "#A78BFA" }]}>
+                      <Text style={styles.lbAvatarTxt}>{(row.name || "?").slice(0, 1).toUpperCase()}</Text>
+                    </View>
+                    <Text style={[styles.lbName, row.isMe && { fontWeight: "800" }]} numberOfLines={1}>
+                      {row.isMe ? "You" : row.name}
+                    </Text>
+                    <Text style={[styles.lbValue, { color: cat.color }]}>
+                      {row.value} <Text style={styles.lbValueSub}>{cat.suffix}</Text>
+                    </Text>
+                  </View>
+                ))}
+
+                {cat.myRank && cat.myRank > 3 ? (
+                  <Text style={styles.lbMyRankLine}>You: #{cat.myRank} of {cat.total}</Text>
+                ) : null}
+              </View>
+            ))}
+          </>
+        ) : (
+          <></>
         )}
 
         <View style={{ flex: 1 }} />
@@ -276,4 +334,38 @@ const styles = StyleSheet.create({
   musicIcon: { fontSize: 30 },
   musicTitle: { color: "#fff", fontSize: 26, fontWeight: "700" },
   musicArtist: { color: "rgba(255,255,255,0.7)", fontSize: 22, marginTop: 2 },
+
+  // Leaderboard styles (kind === "leaderboard")
+  lbCard: {
+    marginTop: 28, padding: 28, borderRadius: 32,
+    borderWidth: 2, borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.05)",
+  },
+  lbHdrRow: { flexDirection: "row", alignItems: "center", gap: 16, marginBottom: 18 },
+  lbBadge: {
+    width: 56, height: 56, borderRadius: 28, borderWidth: 2,
+    alignItems: "center", justifyContent: "center",
+  },
+  lbBadgeTxt: { fontSize: 28, fontWeight: "900" },
+  lbCatTitle: { color: "#fff", fontSize: 36, fontWeight: "800" },
+
+  lbRow: {
+    flexDirection: "row", alignItems: "center", gap: 16,
+    paddingVertical: 12, paddingHorizontal: 12, borderRadius: 18,
+  },
+  lbRowMe: { backgroundColor: "rgba(255,255,255,0.08)" },
+  lbMedal: {
+    width: 50, height: 50, borderRadius: 25,
+    alignItems: "center", justifyContent: "center",
+  },
+  lbMedalTxt: { color: "#000", fontSize: 24, fontWeight: "900" },
+  lbAvatar: { width: 60, height: 60, borderRadius: 30, alignItems: "center", justifyContent: "center" },
+  lbAvatarTxt: { color: "#000", fontWeight: "900", fontSize: 26 },
+  lbName: { color: "#fff", fontSize: 28, flex: 1, fontWeight: "600" },
+  lbValue: { fontSize: 28, fontWeight: "800" },
+  lbValueSub: { color: "rgba(255,255,255,0.65)", fontSize: 18, fontWeight: "500" },
+  lbMyRankLine: {
+    color: "rgba(255,255,255,0.7)", fontSize: 20, fontStyle: "italic",
+    marginTop: 8, paddingHorizontal: 12,
+  },
 });

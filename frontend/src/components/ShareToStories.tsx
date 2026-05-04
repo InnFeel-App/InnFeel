@@ -26,8 +26,23 @@ type StatsShare = {
   distribution: Record<string, number>;
   userName?: string;
 };
+type LeaderboardCategoryPayload = {
+  key: string;
+  label: string;
+  color: string;
+  suffix: string;
+  icon?: string;
+  top3: Array<{ name: string; value: number; isMe: boolean; rank: number; avatar_color?: string | null }>;
+  myRank?: number | null;
+  total: number;
+};
+type LeaderboardShare = {
+  kind: "leaderboard";
+  userName?: string;
+  categories: LeaderboardCategoryPayload[];
+};
 
-type Payload = MoodShare | StatsShare;
+type Payload = MoodShare | StatsShare | LeaderboardShare;
 
 // Internal "ready to share" file descriptor passed to the destination picker.
 type Pending = {
@@ -73,6 +88,15 @@ export function useShareToStories() {
       parts.push(appLink);
       if (tabHint) parts.push(tabHint);
       return parts.join("\n");
+    }
+    if (p.kind === "leaderboard") {
+      const lines = [`Our circle's leaderboard on InnFeel ✦`];
+      const streakCat = p.categories.find((c) => c.key === "streak");
+      const top = streakCat?.top3?.[0];
+      if (top) lines.push(`👑 ${top.name} — ${top.value} day streak`);
+      lines.push(appLink);
+      if (tabHint) lines.push(tabHint);
+      return lines.join("\n");
     }
     const lines = [
       `My InnFeel journey: ${p.streak} day streak ✦ Mostly feeling ${p.dominant}.`,
@@ -258,6 +282,18 @@ export function useShareToStories() {
         });
         return;
       }
+      if (p.kind === "leaderboard") {
+        // Pure offscreen render — payload is already complete from the caller.
+        const uri = await captureCardAsPng(p);
+        setPending({
+          uri,
+          mimeType: "image/png",
+          uti: "public.png",
+          msg: buildMessage(p),
+          hasVideo: false,
+        });
+        return;
+      }
       // Mood — build the dynamic reel
       const res = await buildReelFile(p);
       if (res.ok) {
@@ -344,6 +380,7 @@ export function useShareToStories() {
               distribution={(payload as any).distribution}
               insights={(payload as any).insights}
               achievements={(payload as any).achievements}
+              categories={(payload as any).categories}
             />
           </View>
         ) : null}
