@@ -168,7 +168,7 @@ export default function Achievements() {
             <View style={{ alignItems: "center", marginTop: 24 }}>
               <ShareAuraButton
                 testID="share-leaderboard"
-                label={busy ? "Preparing…" : "Share my leaderboard"}
+                label={busy ? "Preparing…" : "Share your leaderboard"}
                 onPress={onShareLeaderboard}
               />
             </View>

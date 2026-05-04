@@ -279,7 +279,7 @@ export default function Stats() {
           <View style={styles.shareBottom}>
             <ShareAuraButton
               testID="share-stats"
-              label="Share my stats"
+              label="Share your stats"
               onPress={() =>
                 share({
                   kind: "stats",

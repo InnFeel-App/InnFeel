@@ -30,17 +30,28 @@ export type ShareDestination =
 type Props = {
   visible: boolean;
   hasVideo: boolean;
+  // Drives the picker copy so the same component reads "Share your aura"
+  // on Home, "Share your stats" on Stats and "Share your leaderboard" on
+  // Achievements — keeps the wording consistent across the app.
+  kind?: "mood" | "stats" | "leaderboard";
   onPick: (dest: ShareDestination) => void;
   onCancel: () => void;
 };
 
-export default function ShareDestinationPicker({ visible, hasVideo, onPick, onCancel }: Props) {
+export default function ShareDestinationPicker({ visible, hasVideo, kind = "mood", onPick, onCancel }: Props) {
+  const titleByKind: Record<string, string> = {
+    mood: "Share your aura",
+    stats: "Share your stats",
+    leaderboard: "Share your leaderboard",
+  };
+  const title = titleByKind[kind] || titleByKind.mood;
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
       <TouchableOpacity activeOpacity={1} style={styles.overlay} onPress={onCancel}>
         <TouchableOpacity activeOpacity={1} style={styles.sheet} onPress={() => {}}>
           <View style={styles.handle} />
-          <Text style={styles.title}>Share your aura</Text>
+          <Text style={styles.title}>{title}</Text>
           <Text style={styles.subtitle}>Pick where to send it.</Text>
 
           <ScrollView style={{ maxHeight: 520 }} showsVerticalScrollIndicator={false}>

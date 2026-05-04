@@ -394,6 +394,7 @@ export function useShareToStories() {
         <ShareDestinationPicker
           visible={!!pending}
           hasVideo={!!pending?.hasVideo}
+          kind={(payload?.kind as any) || "mood"}
           onPick={onPickDestination}
           onCancel={onCancelDestination}
         />
