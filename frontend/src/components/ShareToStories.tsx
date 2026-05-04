@@ -1,8 +1,7 @@
 import React, { useRef } from "react";
-import { View, Alert, Platform, StyleSheet, ActivityIndicator, Linking } from "react-native";
+import { View, Alert, Platform, StyleSheet, ActivityIndicator, Linking, Text } from "react-native";
 import { captureRef } from "react-native-view-shot";
 import * as Sharing from "expo-sharing";
-import * as MediaLibrary from "expo-media-library";
 // Expo SDK 54 refactored expo-file-system. The legacy import keeps the simpler
 // downloadAsync + cacheDirectory surface alive (still maintained, just deprecation-warned).
 import * as LegacyFS from "expo-file-system/legacy";
@@ -214,93 +213,19 @@ export function useShareToStories() {
   };
 
   /**
-   * Save the prepared file to the device camera roll. Most apps (Instagram,
-   * WhatsApp, Telegram) have a "select from gallery" picker — saving first lets
-   * the user attach the freshly-saved aura right inside the destination app.
-   * Returns true on success, false on permission denied or any other error
-   * (we don't block the share flow on it).
-   */
-  const saveToGallery = async (uri: string): Promise<boolean> => {
-    try {
-      const perm = await MediaLibrary.requestPermissionsAsync();
-      if (!perm.granted) return false;
-      await MediaLibrary.saveToLibraryAsync(uri);
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  /**
    * Hand off the prepared file. Strategy (June 2026):
-   *   1. SAVE the file to the device's photo library (one-time permission).
-   *      Without this step, deep-linking IG/WhatsApp lands the user with their
-   *      OLD photos — they can't attach our visual.
-   *   2. For app-specific destinations, DIRECTLY LAUNCH the app via its URL
-   *      scheme. This is what makes Instagram actually OPEN instead of "nothing
-   *      happens" when expo-sharing silently no-ops.
-   *   3. For "more", show the iOS/Android system share sheet (universal handoff).
-   *   4. If neither path works, fall back to share sheet as a last resort.
+   *   1. For "more": OS share sheet (universal handoff).
+   *   2. For app-specific destinations: try the OS share sheet first
+   *      (it transfers the media file). If shareAsync silently no-ops or the
+   *      destination app isn't reachable, fall back to a deep-link to open
+   *      the target app directly with the share text.
    *
-   * 380ms delay so iOS dismisses our own modal before any system UI presents —
-   * otherwise iOS silently drops UIActivityViewController.
+   * 380ms delay so iOS dismisses our own modal before any system UI presents.
    */
   const dispatchShare = async (p: Payload, dest: ShareDestination, file: Pending) => {
     await new Promise((r) => setTimeout(r, 380));
 
-    // "More apps…" → straight to the OS share sheet.
-    if (dest === "more") {
-      try {
-        if (await Sharing.isAvailableAsync()) {
-          await Sharing.shareAsync(file.uri, {
-            mimeType: file.mimeType,
-            dialogTitle: buildMessage(p, dest),
-            UTI: Platform.OS === "ios" ? file.uti : undefined,
-          });
-        } else {
-          Alert.alert("Sharing unavailable", "Your device doesn't expose a share sheet.");
-        }
-      } catch (e: any) {
-        if (!/cancel/i.test(e?.message || "")) {
-          Alert.alert("Share failed", e?.message || "Try again.");
-        }
-      }
-      return;
-    }
-
-    // Save to gallery first (best effort) — needed for IG/WA/TG/SMS to pick up.
-    const saved = await saveToGallery(file.uri);
-
-    // Try direct deep-link to the destination app.
-    const builder = DEEP_LINKS[dest];
-    let opened = false;
-    if (builder) {
-      const url = builder(buildMessage(p, dest));
-      try {
-        const can = await Linking.canOpenURL(url);
-        if (can) {
-          await Linking.openURL(url);
-          opened = true;
-        }
-      } catch {
-        opened = false;
-      }
-    }
-
-    if (opened) {
-      const tip =
-        dest === "story" || dest === "reel" || dest === "dm"
-          ? saved
-            ? "Tap '+' inside Instagram and pick the latest photo from your gallery."
-            : "We couldn't save the visual to Photos — please retry."
-          : saved
-            ? "Attach the latest photo from your gallery to your message."
-            : "Visual not saved — retry and allow Photos access.";
-      Alert.alert("Opening app…", tip);
-      return;
-    }
-
-    // App not installed → fall back to system share sheet.
+    // Try the OS share sheet first — it's the only path that ships the media.
     try {
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(file.uri, {
@@ -312,13 +237,25 @@ export function useShareToStories() {
       }
     } catch (e: any) {
       if (/cancel/i.test(e?.message || "")) return;
+      // Fall through to deep-link fallback below.
+    }
+
+    // Deep-link fallback (text-only — opens the destination app).
+    const builder = DEEP_LINKS[dest];
+    if (builder) {
+      const url = builder(buildMessage(p, dest));
+      try {
+        const can = await Linking.canOpenURL(url);
+        if (can) {
+          await Linking.openURL(url);
+          return;
+        }
+      } catch {}
     }
 
     Alert.alert(
-      "App not found",
-      saved
-        ? "Your aura is saved in Photos. Open the app manually and attach it from your gallery."
-        : "We couldn't open the destination app on this device.",
+      "Sharing unavailable",
+      "We couldn't open the share sheet on your device. Try again from a real device.",
     );
   };
 
