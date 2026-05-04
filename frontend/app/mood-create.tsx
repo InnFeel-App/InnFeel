@@ -514,7 +514,7 @@ export default function MoodCreate() {
                     testID="music-search"
                     value={musicQuery}
                     onChangeText={setMusicQuery}
-                    placeholder="Search Apple Music — title, artist…"
+                    placeholder="Search music — title, artist…"
                     placeholderTextColor="#555"
                     style={styles.musicSearchInput}
                     autoCapitalize="none"
@@ -527,7 +527,7 @@ export default function MoodCreate() {
                     </TouchableOpacity>
                   ) : null}
                 </View>
-                <Text style={styles.musicSource}>Powered by Apple Music · 30s preview · Spotify coming soon</Text>
+                <Text style={styles.musicSource}>30s preview</Text>
 
                 {selectedMusic ? (
                   <View style={[styles.selectedMusic, { borderColor: auraColor }]}>

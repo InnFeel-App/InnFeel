@@ -373,8 +373,8 @@ backend_session9:
 
 metadata:
   created_by: "main_agent"
-  version: "1.3"
-  test_sequence: 4
+  version: "1.4"
+  test_sequence: 5
   run_ui: false
 
 test_plan:
@@ -383,11 +383,110 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 
+backend_session14:
+  - task: "P1 routing refactor — moods/friends/messages extracted into routes/ modules"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py, /app/backend/routes/moods.py, /app/backend/routes/friends.py, /app/backend/routes/messages.py, /app/backend/app_core/helpers.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Session 14 P1 routing refactor regression sweep COMPLETE — 52/52 PASS (100%).
+            Harness: /app/backend_test_session14.py vs https://charming-wescoff-8.preview.emergentagent.com/api.
+            ZERO regressions detected vs session 13 (58/58). All endpoints behave identically after extraction.
+
+            1) MOODS (routes/moods.py) — 23/23 PASS:
+              · GET /moods/today empty → 200 mood:null.
+              · POST /moods first-create → 200, replaced:false, mood_id present.
+              · POST /moods re-drop → UPSERT preserves mood_id, replaced:true, streak preserved, emotion updated.
+              · GET /moods/today reflects upsert (same mood_id).
+              · GET /moods/feed → locked:true before luna posts; locked:false after.
+              · POST /moods/{id}/react (heart) → 200 ok:true + reactions[].
+              · POST /moods/{id}/comment → 200 ok:true + comment.comment_id.
+              · GET /moods/{id}/comments returns the inserted comment.
+              · GET /moods/{id}/audio: no-audio → 404; owner → 200; friend who dropped today → 200; non-friend → 403.
+              · DELETE /moods/today: 1st → deleted:1, 2nd → deleted:0 (idempotent).
+              · GET /moods/history → 200 with items[].
+              · GET /moods/stats Pro admin → range_30/90/365 + insights present.
+              · GET /moods/stats free user → no range_30 (only basic keys: streak, drops_this_week, dominant, dominant_color, distribution, by_weekday).
+
+            2) ACTIVITY (routes/moods.py) — 4/4 PASS:
+              · GET /activity → 200 items[].
+              · GET /activity/unread-count → 200 unread:int.
+              · POST /activity/mark-read → 200 ok:true; subsequent unread-count == 0.
+
+            3) FRIENDS (routes/friends.py) — 11/11 PASS:
+              · GET /friends → 200, every row carries dropped_today + is_close.
+              · POST /friends/close/{luna} as Pro admin → 200 is_close:true; toggles back is_close:false.
+              · GET /friends/close lists luna once toggled on.
+              · Free user POST /friends/close → 403 "Close friends is a Pro feature".
+              · POST /friends/match-contacts {emails:[luna,no-such]} → matches contains luna.
+              · POST /friends/add (new user → luna) → 200 ok:true; symmetric (luna sees new user immediately).
+              · DELETE /friends/{luna} → 200; symmetric cleanup (luna no longer sees new user).
+
+            4) MESSAGES (routes/messages.py) — 7/7 PASS:
+              · GET /messages/unread-count → 200 {total:int, conversations:int}.
+              · GET /messages/conversations → 200 conversations[].
+              · POST /messages/with/{peer} text → 200 with full shape {message_id, conversation_id, sender_id, sender_name, text, at}.
+              · POST /messages/with/{peer} photo_key (R2) → 200 with photo_url containing X-Amz-Signature.
+              · GET /messages/with/{peer} → 200, signed photo_url present on R2-backed messages.
+              · POST /messages/{id}/react add → 200 with heart in reactions; toggle off removes it.
+
+            5) REGRESSION (untouched in server.py) — 7/7 PASS:
+              · /auth/me → 200 with email + is_admin:true (sanitize_user exposes is_admin).
+              · /badges → 200; /friends/leaderboard → 200; /admin/me → 200 is_admin:true.
+              · /music/search?q=ocean Pro admin → 200 with 14 Apple iTunes tracks.
+              · /wellness/joy → 200 source=llm with quote+advice.
+              · /notifications/prefs → 200 with reminder/reaction/message/friend keys.
+
+            BACKEND HEALTH:
+              · No 500s, no exceptions during the test run.
+              · backend.err.log shows only expected warnings: Spotify owner-premium 403 (unrelated;
+                /music/search uses Apple iTunes), LiteLLM gpt-5.2 INFO logs from /wellness/joy.
+              · Purge daemon log line on every boot: "[purge] {moods_deleted:0, r2_objects_deleted:0, users_checked:53}".
+              · server.py 1972 → 1210 lines (-38%) and the include_router setup preserves every contract shape.
+
+            HARNESS NOTES (no backend code modified):
+              1) httpx.AsyncClient persists Set-Cookie across calls. The backend's get_current_user
+                 prefers cookies over Authorization header — so any test that registers/logins a 2nd
+                 user mid-suite poisons subsequent Bearer-token calls (server resolves the wrong user).
+                 The harness wraps every request in aget()/apost()/adel() that clear cookies first so
+                 the Bearer token is the single source of truth. Documented in session 11 already.
+              2) Admin's Pro state had been polluted to false from previous sessions' /admin/revoke-pro
+                 calls. The harness self-heals via /dev/toggle-pro before running Pro-only checks.
+                 NOT a refactor regression — pure prior state pollution.
+
+            CONCLUSION: The P1 routing refactor (moods/friends/messages → routes/ + helpers in
+            app_core/helpers.py) is regression-clean. Every contract shape preserved. Zero behavior
+            change. No code fixes were applied by the testing agent.
+
 agent_communication:
     - agent: "testing"
       message: |
-        Session 13 Cloudflare R2 migration sanity COMPLETE — 58/58 PASS (100%, target 90%).
-        Harness: /app/backend_test.py vs https://charming-wescoff-8.preview.emergentagent.com/api.
+        Session 14 P1 routing refactor regression COMPLETE — 52/52 PASS (100%).
+        Harness: /app/backend_test_session14.py.
+        Backend URL: https://charming-wescoff-8.preview.emergentagent.com/api.
+
+        Verified the refactor preserves every contract shape from session 13 (58/58):
+          • Moods (routes/moods.py): today/create/upsert/feed/react/comment/comments/audio-auth/
+            delete/history/stats — ALL behave identically.
+          • Activity (routes/moods.py): /activity, /activity/unread-count, /activity/mark-read OK.
+          • Friends (routes/friends.py): /friends with dropped_today+is_close, /friends/close
+            (Pro gating 403 for free), /friends/close list, /friends/match-contacts, /friends/add
+            (symmetric), DELETE /friends/{id} (symmetric cleanup) — ALL behave identically.
+          • Messages (routes/messages.py): /unread-count, /conversations, POST text + photo_key (R2)
+            + GET resolves photo_url with X-Amz-Signature, /react toggle — ALL behave identically.
+          • Regression spot-check on untouched code (server.py): /auth/me, /badges,
+            /friends/leaderboard, /admin/me, /music/search, /wellness/joy, /notifications/prefs — all 200.
+
+        ZERO behavior changes vs pre-refactor. Backend logs clean (only expected Spotify 403 +
+        LiteLLM INFO). Purge daemon healthy. No code fixes applied by the testing agent.
+
+agent_communication_history_archive:
 
         NEW ENDPOINT /api/media/upload-url — fully verified:
           • mood_photo as admin → 200 with {url, method:"PUT", key, headers:{"Content-Type"}, expires_in:900}
@@ -984,3 +1083,36 @@ agent_communication:
           5) Regression — admin /auth/me includes is_admin:true AND pro_source key (None for seed-Pro admin, as expected); /friends rows include is_close; /wellness/joy returns source=llm with full wellness payload.
         NOTE: backend.err.log showed a single 500 on /admin/pro-grants earlier ('can't compare offset-naive and offset-aware datetimes' at line 1017). By the time the test harness ran, the endpoint returned 200 consistently and all subsequent pro-grants calls (5+) passed. The fix is present in current server.py (line 1016-1017 normalizes tzinfo before compare). No regression observed.
         No code fixes were applied by the testing agent.
+
+    - agent: "main"
+      message: |
+        Session 14 — P1 Backend routing refactor COMPLETED. server.py went from 1972 lines → 1210 lines (-38%).
+        
+        WHAT MOVED (and where):
+          • routes/moods.py (NEW ~420 lines) — all /moods/* endpoints (today/create-upsert/delete/feed/audio/
+            comment/comments/react), /activity/* (feed/unread-count/mark-read), /moods/history, /moods/stats.
+          • routes/friends.py (NEW ~120 lines) — /friends, /friends/close/{id}, /friends/close, 
+            /friends/match-contacts, /friends/add, /friends/{id} DELETE.
+          • routes/messages.py (NEW ~170 lines) — /messages/unread-count, /messages/conversations, 
+            /messages/with/{peer_id} GET+POST, /messages/{message_id}/react.
+          • app_core/helpers.py (NEW) — shared helpers resolve_media(), _attach_url(), compute_streak(), 
+            conv_id() — removed duplication between modules.
+        
+        WHAT STAYED in server.py:
+          Startup/CORS/admin-ensure, notifications/register-token/prefs/test, music/search, profile/avatar, 
+          badges/leaderboard (plus its _compute_badges_for helper which uses compute_streak from helpers),
+          payments (stripe checkout + webhook), iap (sync/webhook/status), dev/toggle-pro, admin/*, 
+          wellness/{emotion}, shutdown handler.
+        
+        SANITY CHECKS done by main:
+          • ruff lint clean on all new files + helpers.py (0 errors)
+          • Backend reloaded 3x without any import errors (see backend.err.log: "Application startup complete.")
+          • Direct curl tests: /api/ → 200, /api/friends → 401 (auth ok), /api/moods/today → 401, 
+            /api/messages/unread-count → 401. Routes properly mounted.
+          • Live app traffic passing: the mobile client kept hitting /api/friends, /api/moods/feed, 
+            /api/messages/unread-count and all returned 200 during the refactor.
+        
+        REQUEST: Please run a full regression sweep focused on the 3 extracted routers to confirm zero 
+        behavior change: mood create/feed/redo upsert, friends add/remove/close toggle, messages 
+        send/get/react/unread-count. Admin flows, leaderboard, badges, payments remain untouched in 
+        server.py but worth a spot check since imports shifted.
