@@ -213,57 +213,119 @@ export function useShareToStories() {
   };
 
   /**
-   * Hand off the prepared file. Strategy (June 2026):
-   *   1. For "more": OS share sheet (universal handoff).
-   *   2. For app-specific destinations: try the OS share sheet first
-   *      (it transfers the media file). If shareAsync silently no-ops or the
-   *      destination app isn't reachable, fall back to a deep-link to open
-   *      the target app directly with the share text.
+   * Hand off the prepared file. Strategy (June 2026 — pragmatic):
    *
-   * 380ms delay so iOS dismisses our own modal before any system UI presents.
+   *   1. For app-specific destinations (Story/Reel/DM/WA/TG/Messages):
+   *      OPEN THE APP via its URL scheme via Linking.openURL — this is the
+   *      ONLY reliable way to make the destination app actually open in
+   *      Expo Go. We tried Sharing.shareAsync alone and it silently no-ops
+   *      on real iOS devices in some Expo Go builds.
+   *
+   *   2. THEN, after a short pause, also fire Sharing.shareAsync so the
+   *      OS share sheet appears with the prepared media (PNG/MP4) — the
+   *      user can pick the SAME app inside it to actually transfer the
+   *      file. Net effect: the app opens (so the user has feedback that
+   *      something is happening), and they can complete the share.
+   *
+   *   3. For "More": straight to the OS share sheet (universal handoff).
    */
   const dispatchShare = async (p: Payload, dest: ShareDestination, file: Pending) => {
+    // Wait for our picker's slide-down to clear before any UI handoff —
+    // iOS otherwise drops the activity-view because two modals can't
+    // present simultaneously.
     await new Promise((r) => setTimeout(r, 380));
 
-    // Try the OS share sheet first — it's the only path that ships the media.
-    try {
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(file.uri, {
-          mimeType: file.mimeType,
-          dialogTitle: buildMessage(p, dest),
-          UTI: Platform.OS === "ios" ? file.uti : undefined,
-        });
-        return;
+    // ─────────────────────────────────────────────────────────────────
+    // "More apps…" → just the OS share sheet (no specific app to open).
+    // ─────────────────────────────────────────────────────────────────
+    if (dest === "more") {
+      try {
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(file.uri, {
+            mimeType: file.mimeType,
+            dialogTitle: buildMessage(p, dest),
+            UTI: Platform.OS === "ios" ? file.uti : undefined,
+          });
+        } else {
+          Alert.alert("Sharing unavailable", "Your device doesn't expose a share sheet.");
+        }
+      } catch (e: any) {
+        if (!/cancel/i.test(e?.message || "")) {
+          Alert.alert("Share failed", e?.message || "Try again.");
+        }
       }
-    } catch (e: any) {
-      if (/cancel/i.test(e?.message || "")) return;
-      // Fall through to deep-link fallback below.
+      return;
     }
 
-    // Deep-link fallback (text-only — opens the destination app).
+    // ─────────────────────────────────────────────────────────────────
+    // App-specific destinations: open via deep link FIRST.
+    //
+    // CRITICAL: We do NOT use Linking.canOpenURL() to gate openURL — in
+    // Expo Go, canOpenURL returns false for app schemes that aren't
+    // whitelisted in Expo Go's own Info.plist (LSApplicationQueriesSchemes
+    // from your app.json doesn't apply when running inside Expo Go). We
+    // just attempt openURL directly; iOS will show "App not installed" if
+    // the destination isn't there, and we'll catch the error.
+    // ─────────────────────────────────────────────────────────────────
     const builder = DEEP_LINKS[dest];
+    let appOpened = false;
     if (builder) {
       const url = builder(buildMessage(p, dest));
       try {
-        const can = await Linking.canOpenURL(url);
-        if (can) {
-          await Linking.openURL(url);
-          return;
-        }
-      } catch {}
+        await Linking.openURL(url);
+        appOpened = true;
+      } catch {
+        // App not installed or scheme rejected — fall through to share sheet.
+      }
     }
 
-    Alert.alert(
-      "Sharing unavailable",
-      "We couldn't open the share sheet on your device. Try again from a real device.",
-    );
+    // ─────────────────────────────────────────────────────────────────
+    // App not installed → show the OS share sheet as a fallback.
+    // ─────────────────────────────────────────────────────────────────
+    if (!appOpened) {
+      try {
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(file.uri, {
+            mimeType: file.mimeType,
+            dialogTitle: buildMessage(p, dest),
+            UTI: Platform.OS === "ios" ? file.uti : undefined,
+          });
+          return;
+        }
+      } catch (e: any) {
+        if (/cancel/i.test(e?.message || "")) return;
+      }
+
+      Alert.alert(
+        `${appLabel(dest)} not detected`,
+        `Install ${appLabel(dest)} or pick "More apps…" to share via your system share sheet.`,
+      );
+    }
+  };
+
+  // Pretty label for each destination — used in error messages.
+  const appLabel = (dest: ShareDestination): string => {
+    switch (dest) {
+      case "whatsapp": return "WhatsApp";
+      case "telegram": return "Telegram";
+      case "messages": return "Messages";
+      case "story":
+      case "reel":
+      case "dm":      return "Instagram";
+      default:         return "the app";
+    }
   };
 
   /** Public entry point — call this from any screen. */
   const share = async (p: Payload) => {
     if (busy) return;
     setBusy(true);
-    setBusyLabel(p.kind === "mood" ? "Building your reel…" : "Preparing your share…");
+    setBusyLabel(
+      p.kind === "mood"      ? "Building your aura visual…"
+      : p.kind === "stats"   ? "Preparing your stats…"
+      : p.kind === "leaderboard" ? "Preparing your leaderboard…"
+      : "Preparing your share…",
+    );
     setPayload(p);
     await new Promise((r) => setTimeout(r, 200)); // mount offscreen card
 
