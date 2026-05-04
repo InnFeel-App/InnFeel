@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Image, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, Image, ActivityIndicator, AppState } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Audio } from "expo-av";
 import { useVideoPlayer, VideoView } from "expo-video";
@@ -367,14 +367,68 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
   );
 }
 
-/** Short looping video attached to an aura. Uses expo-video for efficient playback. */
+/**
+ * Short looping video attached to an aura. Uses expo-video for efficient playback.
+ *
+ * Reliability fixes:
+ *   · Re-arms `play()` on every `playerStatus` event — sometimes the player loads but
+ *     stays paused on iOS when the screen is initially offscreen or the source is slow.
+ *   · Re-plays on app focus / on visibility change so the video resumes after the user
+ *     leaves and comes back to the home tab.
+ *   · Shows a thin loading shimmer until `playerStatus === 'readyToPlay'`.
+ *   · Skips empty source defensively (avoids crash on `useVideoPlayer("")`).
+ */
 function LoopingVideo({ b64, uri }: { b64?: string; uri?: string }) {
   const source = uri || (b64 ? `data:video/mp4;base64,${b64}` : "");
-  const player = useVideoPlayer(source, (p) => {
-    p.loop = true;
-    p.muted = true;
-    p.play();
+  const [ready, setReady] = useState(false);
+
+  const player = useVideoPlayer(source || null, (p) => {
+    if (!p) return;
+    try {
+      p.loop = true;
+      p.muted = true;
+      p.timeUpdateEventInterval = 0;
+      p.play();
+    } catch {}
   });
+
+  // Listen for status changes and re-arm play() when the player becomes ready.
+  useEffect(() => {
+    if (!player) return;
+    const sub = player.addListener("statusChange", ({ status }: any) => {
+      if (status === "readyToPlay") {
+        setReady(true);
+        try { player.play(); } catch {}
+      }
+    });
+    // Best-effort kick the player if it's already ready when listener attaches.
+    const kick = setTimeout(() => {
+      try {
+        if (player.status === "readyToPlay") {
+          setReady(true);
+          player.play();
+        }
+      } catch {}
+    }, 200);
+    return () => {
+      try { sub?.remove?.(); } catch {}
+      clearTimeout(kick);
+    };
+  }, [player]);
+
+  // Re-play when app regains focus (Home tab navigation, app foreground)
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active" && player) {
+        try { player.play(); } catch {}
+      }
+    });
+    return () => {
+      try { sub?.remove?.(); } catch {}
+    };
+  }, [player]);
+
+  if (!source) return null;
   return (
     <View style={styles.photo}>
       <VideoView
@@ -382,7 +436,14 @@ function LoopingVideo({ b64, uri }: { b64?: string; uri?: string }) {
         style={{ width: "100%", height: "100%" }}
         contentFit="cover"
         nativeControls={false}
+        allowsFullscreen={false}
+        allowsPictureInPicture={false}
       />
+      {!ready ? (
+        <View style={styles.videoLoader} pointerEvents="none">
+          <ActivityIndicator color="rgba(255,255,255,0.7)" />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -418,7 +479,8 @@ const styles = StyleSheet.create({  card: {
   intensityRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 8 },
   intensityDot: { width: 16, height: 6, borderRadius: 3 },
   intensityLabel: { color: COLORS.textTertiary, fontSize: 11, marginLeft: 8 },
-  photo: { width: "100%", height: 180, borderRadius: 18, marginTop: 14 },
+  photo: { width: "100%", height: 180, borderRadius: 18, marginTop: 14, backgroundColor: "rgba(255,255,255,0.04)", overflow: "hidden" },
+  videoLoader: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.25)" },
   noteText: { color: COLORS.textSecondary, fontSize: 14, marginTop: 12, fontStyle: "italic" },
   audioRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 12, padding: 10, borderRadius: 16, borderWidth: 1, backgroundColor: "rgba(255,255,255,0.04)" },
   audioBtn: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },

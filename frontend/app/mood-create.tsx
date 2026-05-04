@@ -286,17 +286,41 @@ export default function MoodCreate() {
   };
 
   const pick = () => {
-    Alert.alert(
-      "Add media",
-      "Photo or 10s looping video.",
-      [
-        { text: "Take photo", onPress: takePhoto },
-        { text: "Pick photo", onPress: pickFromLibrary },
-        { text: "Record video (10s)", onPress: recordVideo },
-        { text: "Pick video (10s)", onPress: pickVideoFromLibrary },
-        { text: "Cancel", style: "cancel" },
-      ],
-    );
+    const proSuffix = pro ? "" : " 🔒";
+    const buttons: any[] = [
+      { text: "Take photo", onPress: takePhoto },
+      { text: "Pick photo", onPress: pickFromLibrary },
+      {
+        text: `Record video (10s · Pro${proSuffix})`,
+        onPress: () => {
+          if (!pro) {
+            Alert.alert(
+              "Video is a Pro feature ✦",
+              "Upgrade to Pro to share looping video auras.",
+              [{ text: "Maybe later", style: "cancel" }, { text: "See Pro", onPress: () => router.push("/paywall") }],
+            );
+            return;
+          }
+          recordVideo();
+        },
+      },
+      {
+        text: `Pick video (10s · Pro${proSuffix})`,
+        onPress: () => {
+          if (!pro) {
+            Alert.alert(
+              "Video is a Pro feature ✦",
+              "Upgrade to Pro to share looping video auras.",
+              [{ text: "Maybe later", style: "cancel" }, { text: "See Pro", onPress: () => router.push("/paywall") }],
+            );
+            return;
+          }
+          pickVideoFromLibrary();
+        },
+      },
+      { text: "Cancel", style: "cancel" },
+    ];
+    Alert.alert("Add media", pro ? "Photo or 10s looping video." : "Photo (Pro: 10s looping video)", buttons);
   };
 
   const submit = async () => {
@@ -395,7 +419,13 @@ export default function MoodCreate() {
               {!pro ? <Text style={styles.proHint}>Pro unlocks 1–10 intensity</Text> : null}
             </View>
 
-            <Text style={styles.section}>Photo or video</Text>
+            <View style={styles.sectionRow}>
+              <Text style={styles.section}>Photo or Video</Text>
+              <View style={styles.proInlineTag}>
+                <Ionicons name="sparkles" size={11} color="#FDE047" />
+                <Text style={styles.proInlineTxt}>Video is Pro</Text>
+              </View>
+            </View>
             <TouchableOpacity testID="mood-add-photo" onPress={pick} style={styles.photoBox}>
               {photo ? (
                 <Image source={{ uri: photo.uri }} style={styles.photoPrev} />
@@ -408,7 +438,9 @@ export default function MoodCreate() {
               ) : (
                 <View style={styles.photoEmpty}>
                   <Ionicons name="image-outline" size={22} color={COLORS.textSecondary} />
-                  <Text style={styles.photoTxt}>Add a photo or a 10s video</Text>
+                  <Text style={styles.photoTxt}>
+                    {pro ? "Add a photo or a 10s video" : "Add a photo (video is a Pro feature)"}
+                  </Text>
                 </View>
               )}
             </TouchableOpacity>
@@ -668,4 +700,11 @@ const styles = StyleSheet.create({
   proBadgeSmall: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(250,204,21,0.12)", borderWidth: 1, borderColor: "rgba(250,204,21,0.35)" },
   proBadgeSmallTxt: { color: "#FACC15", fontSize: 9, fontWeight: "700", letterSpacing: 0.5 },
   sectionRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 24, marginBottom: 10 },
+  proInlineTag: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 9, paddingVertical: 3, borderRadius: 999,
+    backgroundColor: "rgba(253,224,71,0.10)",
+    borderWidth: 1, borderColor: "rgba(253,224,71,0.35)",
+  },
+  proInlineTxt: { color: "#FDE047", fontSize: 10, fontWeight: "800", letterSpacing: 0.4, textTransform: "uppercase" },
 });
