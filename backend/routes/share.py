@@ -217,8 +217,16 @@ def _ffmpeg_compose(
     zoompan filter doesn't have to operate on a huge canvas. Subtle Ken-Burns + fades stay.
     """
     if has_video:
-        # Use the video stream as-is (cover-fit + crop + 25fps for stable encoding).
-        inputs = ["-t", str(REEL_DURATION_SEC), "-i", bg_path, "-i", overlay_path]
+        # Use the video stream as-is. CRITICAL: `-stream_loop -1` BEFORE `-i` makes
+        # short clips (e.g. 2s) loop back to fill the full REEL_DURATION_SEC instead
+        # of freezing on the last frame. The output `-t REEL_DURATION_SEC` cuts the
+        # final length consistently across short and long source clips.
+        inputs = [
+            "-stream_loop", "-1",
+            "-t", str(REEL_DURATION_SEC),
+            "-i", bg_path,
+            "-i", overlay_path,
+        ]
         vf = (
             "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
             "crop=1080:1920,setsar=1,fps=25,"

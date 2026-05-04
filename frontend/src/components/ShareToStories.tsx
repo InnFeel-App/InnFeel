@@ -6,6 +6,7 @@ import * as Sharing from "expo-sharing";
 // downloadAsync + cacheDirectory surface alive (still maintained, just deprecation-warned).
 import * as LegacyFS from "expo-file-system/legacy";
 import ShareCard from "./ShareCard";
+import ShareDestinationPicker, { ShareDestination } from "./ShareDestinationPicker";
 import { api } from "../api";
 
 type MoodShare = {
@@ -28,25 +29,38 @@ type StatsShare = {
 
 type Payload = MoodShare | StatsShare;
 
+// Internal "ready to share" file descriptor passed to the destination picker.
+type Pending = {
+  uri: string;
+  mimeType: string;
+  uti?: string;
+  msg: string;
+  hasVideo: boolean;
+};
+
 /**
  * useShareToStories
- *   The whole point of this hook is to share a *dynamic* aura snapshot to Instagram —
- *   not a static screenshot. For mood payloads we ALWAYS try the server-composed reel
- *   (POST /api/share/reel/{mood_id}) which combines the photo/video background, the
- *   selected music preview audio, and the text overlay into a 1080x1920 H.264 MP4.
- *
- *   We surface errors loudly (with details) instead of silently falling back to a PNG
- *   so the user can tell us what went wrong. The PNG fallback only runs when:
- *     - the payload is a STATS share (no mood_id), or
- *     - the user explicitly chose the static option after a reel failure.
+ *   1. For mood payloads → builds the server-composed reel (POST /share/reel/{mood_id}).
+ *   2. For stats payloads → enriches the payload with /badges + /moods/insights,
+ *      renders the offscreen ShareCard, captures it as PNG.
+ *   3. Once the file is ready, opens our own ShareDestinationPicker (Story / Reel / DM).
+ *      Each destination triggers the same native share intent but with copy hinting
+ *      the user which Instagram tab to tap. We deliberately omit "Post" since auras
+ *      don't fit IG's permanent grid.
  */
 export function useShareToStories() {
   const cardRef = useRef<View>(null);
   const [payload, setPayload] = React.useState<Payload | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [pending, setPending] = React.useState<Pending | null>(null);
 
-  const buildMessage = (p: Payload): string => {
+  const buildMessage = (p: Payload, dest?: ShareDestination): string => {
     const appLink = "https://innfeel.app";
+    const tabHint =
+      dest === "story" ? "→ Tap STORY in Instagram"
+      : dest === "reel" ? "→ Tap REEL in Instagram"
+      : dest === "dm"   ? "→ Tap DIRECT in Instagram"
+      : "";
     if (p.kind === "mood") {
       const parts = [`My aura today: ${p.word || p.emotion} ✦`];
       if (p.music?.title) {
@@ -54,70 +68,91 @@ export function useShareToStories() {
       }
       parts.push(`One aura a day! Share yours. Unlock the others!`);
       parts.push(appLink);
+      if (tabHint) parts.push(tabHint);
       return parts.join("\n");
     }
-    return `My InnFeel streak: ${p.streak} days · ${p.dropsThisWeek} auras this week ✦ Mostly feeling ${p.dominant}.\n${appLink}`;
+    const lines = [
+      `My InnFeel journey: ${p.streak} day streak ✦ Mostly feeling ${p.dominant}.`,
+      appLink,
+    ];
+    if (tabHint) lines.push(tabHint);
+    return lines.join("\n");
   };
 
-  const shareStaticPng = async (p: Payload): Promise<boolean> => {
+  /**
+   * Enrich a stats payload with achievements + insights so the ShareCard renders
+   * a layout that matches the in-app Insights page.
+   */
+  const enrichStatsPayload = async (p: StatsShare): Promise<any> => {
+    let achievements: { key: string; label: string; hint?: string }[] = [];
+    let insights: any[] = [];
+    let auras = 0;
+    let uniqueEmotions = 0;
+    let reactionsReceived = 0;
     try {
-      // Make sure the offscreen card is mounted with the latest payload before capture.
-      setPayload(p);
-      // 2 ticks → React commits + native layout settles. 400ms is the sweet spot we
-      // verified empirically across iOS / Android — going lower causes "Card not ready".
-      await new Promise((r) => setTimeout(r, 400));
-      if (!cardRef.current) {
-        // Give it one more retry — sometimes the very first capture race-loses to RN bridge.
-        await new Promise((r) => setTimeout(r, 400));
+      const b: any = await api("/badges");
+      const earned = (b?.badges || []).filter((x: any) => x.earned);
+      achievements = earned.map((x: any) => ({ key: x.key, label: x.label, hint: x.hint }));
+      const m = b?.metrics || {};
+      auras = m.moods_count || 0;
+      uniqueEmotions = m.unique_emotions || 0;
+      reactionsReceived = m.reactions_received || 0;
+    } catch {}
+    try {
+      const ins: any = await api("/moods/insights");
+      if (ins?.ready && Array.isArray(ins?.insights)) {
+        insights = ins.insights.map((x: any) => ({
+          id: x.id, title: x.title, subtitle: x.subtitle, tone: x.tone,
+        }));
       }
-      if (!cardRef.current) throw new Error("Card not ready");
-      const uri = await captureRef(cardRef, { format: "png", quality: 1, result: "tmpfile" });
-      if (!(await Sharing.isAvailableAsync())) {
-        Alert.alert("Sharing unavailable", "Your device doesn't support sharing.");
-        return false;
-      }
-      await Sharing.shareAsync(uri, {
-        mimeType: "image/png",
-        dialogTitle: buildMessage(p),
-        UTI: Platform.OS === "ios" ? "public.png" : undefined,
-      });
-      return true;
-    } catch (e: any) {
-      Alert.alert("Share failed", e?.message || "Try again.");
-      return false;
-    }
+    } catch {}
+    return {
+      kind: "stats",
+      userName: p.userName,
+      streak: p.streak,
+      auras,
+      aurasThisWeek: p.dropsThisWeek,
+      uniqueEmotions,
+      reactionsReceived,
+      dominant: p.dominant,
+      distribution: p.distribution,
+      insights,
+      achievements,
+    };
   };
 
-  // Server reel — primary path. Returns:
-  //   { ok: true } on full success
-  //   { ok: false, reason } if anything broke (so we can show a useful message)
-  const shareReel = async (
+  const captureCardAsPng = async (richProps: any): Promise<string> => {
+    setPayload(richProps);
+    await new Promise((r) => setTimeout(r, 400));
+    if (!cardRef.current) {
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    if (!cardRef.current) throw new Error("Card not ready");
+    return await captureRef(cardRef, { format: "png", quality: 1, result: "tmpfile" });
+  };
+
+  // Server reel — primary path for MOOD payloads. Returns
+  //   { ok: true, uri }  on full success
+  //   { ok: false, reason } if anything broke
+  const buildReelFile = async (
     p: MoodShare,
-  ): Promise<{ ok: true } | { ok: false; reason: string }> => {
+  ): Promise<{ ok: true; uri: string; hasVideo: boolean } | { ok: false; reason: string }> => {
     if (!p.mood_id) return { ok: false, reason: "Save your aura first" };
 
-    // 1) Build server-side
     let reel: { url: string; has_audio?: boolean; has_video?: boolean };
     try {
-      reel = await api<{ url: string; has_audio?: boolean; has_video?: boolean }>(
-        `/share/reel/${p.mood_id}`,
-        { method: "POST", body: {} },
-      );
+      reel = await api(`/share/reel/${p.mood_id}`, { method: "POST", body: {} });
       if (!reel?.url) return { ok: false, reason: "Reel server response missing URL" };
     } catch (e: any) {
       return { ok: false, reason: `Server reel build failed: ${e?.message || "unknown"}` };
     }
 
-    // 2) Download to a local file the share sheet can read
     const cache = LegacyFS.cacheDirectory || LegacyFS.documentDirectory;
     if (!cache) return { ok: false, reason: "No writable cache directory available" };
     const dest = `${cache}innfeel_reel_${Date.now()}.mp4`;
     try {
       const dl = await LegacyFS.downloadAsync(reel.url, dest);
-      if (dl.status !== 200) {
-        return { ok: false, reason: `Download HTTP ${dl.status}` };
-      }
-      // Sanity: reels under 5KB are almost certainly broken.
+      if (dl.status !== 200) return { ok: false, reason: `Download HTTP ${dl.status}` };
       const info = await LegacyFS.getInfoAsync(dl.uri, { size: true });
       if (!info.exists || (typeof info.size === "number" && info.size < 5000)) {
         return { ok: false, reason: "Downloaded reel looks empty" };
@@ -125,57 +160,112 @@ export function useShareToStories() {
     } catch (e: any) {
       return { ok: false, reason: `Download error: ${e?.message || "network"}` };
     }
+    return { ok: true, uri: dest, hasVideo: !!reel.has_video };
+  };
 
-    // 3) Hand off to the native share sheet
+  /** Hand off the prepared file to the OS share sheet. */
+  const dispatchShare = async (p: Payload, dest: ShareDestination, file: Pending) => {
+    if (!(await Sharing.isAvailableAsync())) {
+      Alert.alert("Sharing unavailable", "Your device doesn't support sharing.");
+      return;
+    }
     try {
-      if (!(await Sharing.isAvailableAsync())) {
-        return { ok: false, reason: "Sharing unavailable on this device" };
-      }
-      await Sharing.shareAsync(dest, {
-        mimeType: "video/mp4",
-        dialogTitle: buildMessage(p),
-        UTI: Platform.OS === "ios" ? "public.mpeg-4" : undefined,
+      await Sharing.shareAsync(file.uri, {
+        mimeType: file.mimeType,
+        dialogTitle: buildMessage(p, dest),
+        UTI: Platform.OS === "ios" ? file.uti : undefined,
       });
-      return { ok: true };
     } catch (e: any) {
-      return { ok: false, reason: `Share intent error: ${e?.message || "unknown"}` };
+      Alert.alert("Share failed", e?.message || "Try again.");
     }
   };
 
+  /** Public entry point — call this from any screen. */
   const share = async (p: Payload) => {
     if (busy) return;
     setBusy(true);
     setPayload(p);
-    // Let the offscreen ShareCard mount in case we need the PNG fallback (stats-only).
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 200)); // mount offscreen card
 
     try {
       if (p.kind === "stats") {
-        await shareStaticPng(p);
+        // 1) Enrich, 2) Render PNG, 3) Open destination picker
+        const rich = await enrichStatsPayload(p);
+        const uri = await captureCardAsPng(rich);
+        setPending({
+          uri,
+          mimeType: "image/png",
+          uti: "public.png",
+          msg: buildMessage(p),
+          hasVideo: false,
+        });
         return;
       }
-      // Mood payload — always try the dynamic reel first.
-      const res = await shareReel(p);
-      if (res.ok) return;
-
+      // Mood — build the dynamic reel
+      const res = await buildReelFile(p);
+      if (res.ok) {
+        setPending({
+          uri: res.uri,
+          mimeType: "video/mp4",
+          uti: "public.mpeg-4",
+          msg: buildMessage(p),
+          hasVideo: res.hasVideo,
+        });
+        return;
+      }
       // Reel failed → ask the user whether they want the static fallback.
       Alert.alert(
         "Reel build failed",
         `${res.reason}.\n\nWould you like to share a static image instead?`,
         [
           { text: "Cancel", style: "cancel" },
-          { text: "Share image", onPress: () => shareStaticPng(p) },
+          {
+            text: "Share image",
+            onPress: async () => {
+              try {
+                const uri = await captureCardAsPng({
+                  kind: "mood",
+                  word: p.word,
+                  emotion: p.emotion,
+                  intensity: p.intensity,
+                  userName: p.userName,
+                  music: p.music,
+                });
+                setPending({
+                  uri,
+                  mimeType: "image/png",
+                  uti: "public.png",
+                  msg: buildMessage(p),
+                  hasVideo: false,
+                });
+              } catch (e: any) {
+                Alert.alert("Share failed", e?.message || "Try again.");
+              }
+            },
+          },
         ],
       );
     } finally {
       setBusy(false);
-      // Keep payload mounted briefly so any pending capture can finish before unmount.
-      setTimeout(() => setPayload(null), 800);
     }
   };
 
+  const onPickDestination = async (dest: ShareDestination) => {
+    if (!pending || !payload) return;
+    const file = pending;
+    const p = payload;
+    setPending(null);
+    await dispatchShare(p, dest, file);
+    // Keep payload mounted briefly so any pending capture can finish.
+    setTimeout(() => setPayload(null), 600);
+  };
+
+  const onCancelDestination = () => {
+    setPending(null);
+    setTimeout(() => setPayload(null), 400);
+  };
+
   const Renderer = React.useCallback(() => {
-    if (!payload && !busy) return null;
     return (
       <>
         {payload ? (
@@ -183,15 +273,20 @@ export function useShareToStories() {
             <ShareCard
               ref={cardRef as any}
               kind={payload.kind}
-              userName={payload.userName}
-              word={(payload as MoodShare).word}
-              emotion={(payload as MoodShare).emotion || (payload as StatsShare).dominant}
-              intensity={(payload as MoodShare).intensity}
-              music={(payload as MoodShare).music}
-              streak={(payload as StatsShare).streak}
-              dropsThisWeek={(payload as StatsShare).dropsThisWeek}
-              dominant={(payload as StatsShare).dominant}
-              distribution={(payload as StatsShare).distribution}
+              userName={(payload as any).userName}
+              word={(payload as any).word}
+              emotion={(payload as any).emotion || (payload as any).dominant}
+              intensity={(payload as any).intensity}
+              music={(payload as any).music}
+              streak={(payload as any).streak}
+              auras={(payload as any).auras}
+              aurasThisWeek={(payload as any).aurasThisWeek ?? (payload as any).dropsThisWeek}
+              uniqueEmotions={(payload as any).uniqueEmotions}
+              reactionsReceived={(payload as any).reactionsReceived}
+              dominant={(payload as any).dominant}
+              distribution={(payload as any).distribution}
+              insights={(payload as any).insights}
+              achievements={(payload as any).achievements}
             />
           </View>
         ) : null}
@@ -202,9 +297,15 @@ export function useShareToStories() {
             </View>
           </View>
         ) : null}
+        <ShareDestinationPicker
+          visible={!!pending}
+          hasVideo={!!pending?.hasVideo}
+          onPick={onPickDestination}
+          onCancel={onCancelDestination}
+        />
       </>
     );
-  }, [payload, busy]);
+  }, [payload, busy, pending]);
 
   return { share, Renderer, busy };
 }
