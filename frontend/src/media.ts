@@ -90,8 +90,9 @@ export async function uploadBinaryToR2(
   signedUrl: string,
   fileUri: string,
   contentType: string,
+  onProgress?: (p: number) => void,
 ): Promise<void> {
-  const TIMEOUT_MS = 90_000;
+  const TIMEOUT_MS = 120_000; // 2 min — large videos on cellular
   const isWeb = typeof document !== "undefined";
   const isNativeFile = !isWeb && /^(file|content|asset|ph):/i.test(fileUri);
 
@@ -101,12 +102,12 @@ export async function uploadBinaryToR2(
     Promise.race([
       p,
       new Promise<T>((_, reject) =>
-        setTimeout(() => reject(new Error("Upload timed out (90s) — check your connection.")), TIMEOUT_MS),
+        setTimeout(() => reject(new Error("Upload timed out (120s) — check your connection.")), TIMEOUT_MS),
       ),
     ]);
 
   if (isNativeFile && (LegacyFS as any)?.uploadAsync) {
-    const { FileSystemUploadType, FileSystemSessionType } = LegacyFS as any;
+    const { FileSystemUploadType, FileSystemSessionType, createUploadTask } = LegacyFS as any;
     const uploadType =
       FileSystemUploadType?.BINARY_CONTENT ?? 0; // 0 = BINARY_CONTENT in legacy enum
     // CRITICAL — FOREGROUND session mode.
@@ -119,8 +120,44 @@ export async function uploadBinaryToR2(
     const sessionType = FileSystemSessionType?.FOREGROUND ?? 0;
     if (__DEV__) {
       // eslint-disable-next-line no-console
-      console.log("[UPLOAD] uploadAsync start", { fileUri, contentType, sessionType });
+      console.log("[UPLOAD] start", { fileUri, contentType, sessionType });
     }
+    // Prefer createUploadTask when a progress callback is wanted — it lets us
+    // surface real upload progress to the user (otherwise they wonder if the
+    // app is frozen during the 5–30 s upload of a 10 MB video clip).
+    if (typeof createUploadTask === "function" && onProgress) {
+      const task = createUploadTask(
+        signedUrl,
+        fileUri,
+        {
+          httpMethod: "PUT",
+          headers: { "Content-Type": contentType },
+          uploadType,
+          sessionType,
+        },
+        (data: any) => {
+          const total = data?.totalBytesExpectedToSend || data?.totalByteCount || 0;
+          const sent = data?.totalBytesSent || data?.totalByteSent || 0;
+          if (total > 0) {
+            const ratio = Math.max(0, Math.min(1, sent / total));
+            try { onProgress(ratio); } catch {}
+          }
+        },
+      );
+      const result = await withTimeout(task.uploadAsync());
+      const status = (result as any)?.status ?? 0;
+      if (__DEV__) {
+        // eslint-disable-next-line no-console
+        console.log("[UPLOAD] done", { status });
+      }
+      try { onProgress(1); } catch {}
+      if (status < 200 || status >= 300) {
+        const body = ((result as any)?.body || "").toString().slice(0, 200);
+        throw new Error(`R2 upload failed (${status}): ${body}`);
+      }
+      return;
+    }
+    // No progress callback path — single-shot uploadAsync.
     const result = await withTimeout(
       (LegacyFS as any).uploadAsync(signedUrl, fileUri, {
         httpMethod: "PUT",
@@ -132,7 +169,7 @@ export async function uploadBinaryToR2(
     const status = (result as any)?.status ?? 0;
     if (__DEV__) {
       // eslint-disable-next-line no-console
-      console.log("[UPLOAD] uploadAsync done", { status, body: ((result as any)?.body || "").toString().slice(0, 200) });
+      console.log("[UPLOAD] done", { status });
     }
     if (status < 200 || status >= 300) {
       const body = ((result as any)?.body || "").toString().slice(0, 200);
@@ -155,6 +192,7 @@ export async function uploadBinaryToR2(
     const txt = await put.text().catch(() => "");
     throw new Error(`R2 upload failed (${put.status}): ${txt.slice(0, 200)}`);
   }
+  try { onProgress?.(1); } catch {}
 }
 
 /**
@@ -165,7 +203,7 @@ export async function uploadMedia(
   kind: MediaKind,
   fileUri: string,
   contentType: string,
-  opts?: { compress?: boolean; maxWidth?: number; quality?: number; ext?: string },
+  opts?: { compress?: boolean; maxWidth?: number; quality?: number; ext?: string; onProgress?: (p: number) => void },
 ): Promise<string> {
   let uri = fileUri;
   let ct = contentType;
@@ -179,6 +217,6 @@ export async function uploadMedia(
     ct = "image/jpeg"; // after compression we always get JPEG
   }
   const signed = await getUploadUrl(kind, ct, opts?.ext);
-  await uploadBinaryToR2(signed.url, uri, ct);
+  await uploadBinaryToR2(signed.url, uri, ct, opts?.onProgress);
   return signed.key;
 }

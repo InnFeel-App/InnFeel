@@ -42,6 +42,10 @@ export default function MoodCreate() {
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [uploadingAudio, setUploadingAudio] = useState(false);
+  // 0..1 progress for the current upload (driven by FileSystem.createUploadTask
+  // in /src/media.ts). Used to render a thin progress bar inside the upload
+  // overlay so the user knows the app is alive and the bytes are flowing.
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   // Audio recording state (Pro) — local URI of the recording
   const [audioUri, setAudioUri] = useState<string | null>(null);
@@ -286,32 +290,42 @@ export default function MoodCreate() {
   };
 
   // Video: up to 10s looping. Pro-only.
+  // We pass videoQuality:0 (Low ≈ 480p / ~1 Mbps) so iOS re-encodes the
+  // selected clip with the native AVAsset exporter BEFORE handing us the
+  // file URI. Typical drop: 60–80 % smaller than the original 4K source,
+  // which translates directly to a 5–10× faster upload over cellular.
+  // On Android, `quality: 0.5` is the closest equivalent (the native
+  // ImagePicker honours it on most devices).
   const pickVideoFromLibrary = async () => {
     if (!pro) { Alert.alert("Pro feature", "Video auras are a Pro feature."); return; }
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { Alert.alert("Permission needed", "We need library access to attach videos."); return; }
     const r = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Videos,
-      quality: 0.6,
+      quality: 0.5,
       videoMaxDuration: 10,
+      videoQuality: 0, // Low — native iOS compression (≈ 480p)
+      allowsEditing: false,
     });
     if (r.canceled || !r.assets[0]?.uri) return;
     const a = r.assets[0];
     const dur = Math.min(10, Math.max(1, Math.round((a.duration || 10000) / 1000)));
-    // Same race-condition fix as photo: drop old key & old photo immediately so a Save
-    // mid-upload doesn't reuse the previous aura's video. Visual placeholder shows the
-    // upload progress until the new R2 key is in state.
     setVideo({ uri: a.uri, key: undefined, seconds: dur });
     setPhoto(null);
     setUploadingVideo(true);
+    setUploadProgress(0);
     try {
-      const key = await uploadMedia("mood_video", a.uri, "video/mp4", { compress: false, ext: "mp4" });
+      const key = await uploadMedia(
+        "mood_video", a.uri, "video/mp4",
+        { compress: false, ext: "mp4", onProgress: (p) => setUploadProgress(p) },
+      );
       setVideo({ uri: a.uri, key, seconds: dur });
     } catch (e: any) {
       Alert.alert("Upload failed", e?.message || "Try again.");
       setVideo(null);
     } finally {
       setUploadingVideo(false);
+      setUploadProgress(0);
     }
   };
 
@@ -321,8 +335,9 @@ export default function MoodCreate() {
     if (!perm.granted) { Alert.alert("Permission needed", "We need camera access to record videos."); return; }
     const r = await ImagePicker.launchCameraAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Videos,
-      quality: 0.6,
+      quality: 0.5,
       videoMaxDuration: 10,
+      videoQuality: 0, // Low — native iOS compression (≈ 480p)
     });
     if (r.canceled || !r.assets[0]?.uri) return;
     const a = r.assets[0];
@@ -330,14 +345,19 @@ export default function MoodCreate() {
     setVideo({ uri: a.uri, key: undefined, seconds: dur });
     setPhoto(null);
     setUploadingVideo(true);
+    setUploadProgress(0);
     try {
-      const key = await uploadMedia("mood_video", a.uri, "video/mp4", { compress: false, ext: "mp4" });
+      const key = await uploadMedia(
+        "mood_video", a.uri, "video/mp4",
+        { compress: false, ext: "mp4", onProgress: (p) => setUploadProgress(p) },
+      );
       setVideo({ uri: a.uri, key, seconds: dur });
     } catch (e: any) {
       Alert.alert("Upload failed", e?.message || "Try again.");
       setVideo(null);
     } finally {
       setUploadingVideo(false);
+      setUploadProgress(0);
     }
   };
 
@@ -534,7 +554,12 @@ export default function MoodCreate() {
                   {uploadingVideo ? (
                     <>
                       <ActivityIndicator color="#fff" size="small" />
-                      <Text style={{ color: "#fff", fontWeight: "600" }}>Uploading video…</Text>
+                      <Text style={{ color: "#fff", fontWeight: "600" }}>
+                        Uploading video… {uploadProgress > 0 ? `${Math.round(uploadProgress * 100)}%` : ""}
+                      </Text>
+                      <View style={styles.uploadBarTrack}>
+                        <View style={[styles.uploadBarFill, { width: `${Math.max(4, Math.round(uploadProgress * 100))}%` }]} />
+                      </View>
                       <Text style={{ color: COLORS.textSecondary, fontSize: 11 }}>Don't tap Save just yet ✦</Text>
                     </>
                   ) : (
@@ -872,4 +897,13 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: "rgba(250,204,21,0.35)",
   },
   uploadingBannerTxt: { color: "#FACC15", fontSize: 12, fontWeight: "600" },
+  uploadBarTrack: {
+    width: 180, height: 6, borderRadius: 3,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    overflow: "hidden",
+  },
+  uploadBarFill: {
+    height: "100%", borderRadius: 3,
+    backgroundColor: "#FACC15",
+  },
 });
