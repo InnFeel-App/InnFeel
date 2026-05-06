@@ -158,6 +158,7 @@ from routes.messages import router as messages_router
 from routes.share import router as share_router
 from routes.streak import router as streak_router
 from routes.coach import router as coach_router
+from routes.journal import router as journal_router
 from app_core import r2 as _r2
 from app_core.helpers import compute_streak
 api.include_router(auth_router)
@@ -169,6 +170,7 @@ api.include_router(messages_router)
 api.include_router(share_router)
 api.include_router(streak_router)
 api.include_router(coach_router)
+api.include_router(journal_router)
 
 
 

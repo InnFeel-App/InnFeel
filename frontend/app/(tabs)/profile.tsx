@@ -85,6 +85,12 @@ export default function Profile() {
             <Ionicons name="chevron-forward" size={18} color={COLORS.textTertiary} />
           </TouchableOpacity>
 
+          <TouchableOpacity testID="go-journal" style={styles.link} onPress={() => router.push("/journal")}>
+            <Ionicons name="book-outline" size={20} color="#FACC15" />
+            <Text style={styles.linkTxt}>Journal · Morning & Evening</Text>
+            <Ionicons name="chevron-forward" size={18} color={COLORS.textTertiary} />
+          </TouchableOpacity>
+
           <TouchableOpacity testID="go-history" style={styles.link} onPress={() => router.push("/history")}>
             <Ionicons name="time-outline" size={20} color="#fff" />
             <Text style={styles.linkTxt}>{t("history.title")}</Text>

@@ -2530,7 +2530,7 @@ metadata:
 
 test_plan:
   current_focus:
-    - "AI Wellness Coach — POST /api/coach/chat + /coach/history + quotas (Session 23)"
+    - "Guided Journaling — POST /api/journal/checkin + /journal/today + /journal/reflect (Session 23)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -2614,6 +2614,51 @@ agent_communication:
     -agent: "main"
     -message: |
         Session 21 — Implemented Streak Freeze (B3) with monthly quotas + bundle purchase.
+
+agent_communication:
+    -agent: "main"
+    -message: |
+        Session 23 — Guided Journaling backend (morning/evening check-ins + AI reflection).
+
+        BACKEND CHANGES (routes/journal.py + wired into server.py):
+          • POST /api/journal/checkin {kind:"morning|evening", answers:dict, note?} → upsert today's entry; one entry per (user_id, day_key, kind), re-saving replaces.
+          • GET /api/journal/today → returns {day_key, morning?, evening?}
+          • GET /api/journal/history?days=N → grouped entries by day_key (default 30, max 180).
+          • POST /api/journal/reflect {kind:"morning|evening|day"} → Pro/Zen only — runs through the existing Coach quota + LLM pipeline (consumes 1 credit), persists `reflection` + `reflected_at` on the matching journal docs, returns {reflection, quota_left}. Soft-refund on LLM failure.
+          • DELETE /api/journal/{kind} → wipes today's entry of that kind.
+
+        TESTS NEEDED:
+
+          1) POST /api/journal/checkin — auth required (401 without token).
+             - Auth as luna. POST kind=morning, answers={"sleep":"OK","intentions":"Be kind"} → 200, returns the saved entry.
+             - Re-POST same kind with new answers → 200, same day_key, ENTRY REPLACED (verify in DB only one doc for (user,day,morning)).
+             - POST with empty answers and empty note → 400 "Write at least one answer or a note."
+             - POST with kind="random" → 422.
+
+          2) GET /api/journal/today
+             - After step 1, returns morning populated, evening null.
+             - Then POST evening → both populated.
+
+          3) GET /api/journal/history?days=N
+             - Validates default 30, caps at 180.
+             - Returns at most one record per day_key with morning/evening sub-objects (no duplicates).
+
+          4) POST /api/journal/reflect (Pro/Zen)
+             - Free user → 402 "AI reflection is a Pro feature." (luna is Pro per env).
+             - Pro user (luna) with no journal entries today → 404 "No journal entries for today yet."
+             - Pro user with morning entry, kind="morning" → 200, returns {reflection:non-empty, quota_left:int}; reflection stored on the morning entry doc.
+             - Subsequent GET /api/journal/today shows reflection on the morning entry.
+             - Quota counter incremented in coach_limits (kind="daily" for Pro).
+             - Soft-refund test: corrupt EMERGENT_LLM_KEY in /app/backend/.env → reflect → 200 with fallback string + quota NOT decremented. Restore key + restart backend.
+
+          5) DELETE /api/journal/{kind}
+             - DELETE /api/journal/morning → 200 with deleted=1.
+             - Subsequent /journal/today returns morning=null.
+
+          6) No regression on existing /api/coach/* endpoints (sanity ping).
+
+        Credentials: luna@innfeel.app/demo1234 (Pro), hello@innfeel.app/admin123, rio@innfeel.app/demo1234.
+
 
         NEW MODULE: /app/backend/routes/streak.py (already mounted in server.py).
 
@@ -2931,3 +2976,149 @@ test_plan:
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+
+backend_session25:
+  - task: "Guided Journaling — POST /api/journal/checkin, GET /journal/today, GET /journal/history, POST /journal/reflect, DELETE /journal/{kind}"
+    implemented: true
+    working: true
+    file: "/app/backend/routes/journal.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Session 25 Guided Journaling backend test COMPLETE — 60/60 PASS (100%).
+            Harness: /app/backend_test.py vs https://charming-wescoff-8.preview.emergentagent.com/api.
+            Creds: luna@innfeel.app / demo1234 (Pro), rio@innfeel.app / demo1234 (Free),
+                   hello@innfeel.app / admin123 (Admin+Pro).
+
+            1) POST /api/journal/checkin happy path — 15/15 PASS:
+              · No-auth → 401 (fresh httpx client, no cookies).
+              · luna POST {kind:"morning", answers:{sleep:"OK", intentions:"Be kind"}} → 200 in 80ms;
+                response.entry has kind, day_key="2026-05-06", answers map, updated_at ISO ts.
+              · DB verify: exactly 1 doc in journal_entries for (user_id=luna, day_key=today,
+                kind=morning) with answers map intact.
+              · Re-POST same kind with different answers → 200; updated_at advanced
+                (21:18:23.928 → 21:18:25.206); DB still has ONE doc (upsert not insert).
+              · kind="random" → 422 (Pydantic regex pattern violation).
+              · Empty answers + no note → 400 with detail "Write at least one answer or a note."
+                (exact wording).
+
+            2) GET /api/journal/today — 9/9 PASS:
+              · After morning checkin → {day_key, morning:{answers,note,updated_at}, evening:null}.
+              · POST evening {answers:{highlight:"Yes!"}} → 200.
+              · GET today → both morning AND evening populated; evening.answers exact.
+
+            3) GET /api/journal/history — 6/6 PASS:
+              · GET → 200 {items:[…]} (1 item for today, sort untestable with <2).
+              · ?days=200 → 200 (server caps to 180, no error).
+              · ?days=1 → 200 with ≤1 item (1 returned).
+
+            4) POST /api/journal/reflect (Pro/Zen only) — 14/14 PASS:
+              · rio (Free) → 402 "AI reflection is a Pro feature." (exact).
+              · luna with no entries (after DELETE morning + DELETE evening) → 404
+                "No journal entries for today yet." (exact).
+              · After re-posting morning, POST /reflect {kind:"morning"} → 200 in 5.68s;
+                reflection len=541 ("Luna, I love how specific your intentions are…"),
+                quota_left=8 (int).
+              · DB verify: morning doc now has reflection (string) AND reflected_at (datetime).
+              · coach_limits daily counter for luna incremented from 1 → 2 (verified via
+                direct Mongo read: db.coach_limits.find_one({user_id, kind:"daily", day_key})).
+              · LLM call confirmed via backend.err.log: "LiteLLM completion() model=
+                claude-sonnet-4-5-20250929" + success_handler.
+
+            5) Soft-refund on LLM failure — 6/6 PASS (CRITICAL):
+              · Replaced EMERGENT_LLM_KEY="sk-emergent-9D26eE3272eC0781bB" → "sk-emergent-INVALID"
+                in /app/backend/.env, restarted backend (sleep 6s).
+              · GET /api/coach/history → 200 with quota_left=8 (baseline).
+              · POST /api/journal/checkin morning → 200 (still works without LLM).
+              · POST /api/journal/reflect {kind:"morning"} → 200 in 0.23s with body
+                {reflection:"I couldn't reach my words right now — try again in a moment. Your
+                journal entries were saved.", quota_left:8}.
+              · quota_left UNCHANGED (8 → 8) — soft-refund successful. Backend log shows the
+                expected warning: "WARNING:innfeel.journal:journal reflect LLM error for
+                user_e96b072d4480: Failed to generate chat completion: litellm.AuthenticationError:
+                AuthenticationError: OpenAIException - Invalid API key" — graceful handler caught
+                it, decremented coach_limits.daily by 1, and returned the fallback string.
+              · CRITICAL CLEANUP DONE: /app/backend/.env restored to
+                EMERGENT_LLM_KEY="sk-emergent-9D26eE3272eC0781bB" (verified via grep), backend
+                restarted, /api/auth/me responsive after restore.
+
+            6) DELETE /api/journal/{kind} — 8/8 PASS:
+              · POST checkin to ensure morning exists → 200.
+              · DELETE /api/journal/morning → 200 {ok:true, deleted:1}.
+              · GET today → morning:null after delete.
+              · DELETE /api/journal/morning again (idempotent) → 200 {ok:true, deleted:0}.
+              · DELETE /api/journal/random → 400 "Invalid kind".
+
+            7) Regression on /api/coach/* — 3/3 PASS:
+              · GET /api/coach/history → 200 with items list (len=2 reflecting the journal-reflect
+                turn writes), tier="pro". No regression from the journal endpoints sharing the
+                Coach quota plumbing.
+
+            BACKEND HEALTH:
+              · /var/log/supervisor/backend.err.log clean — only the deliberate
+                AuthenticationError warning from the soft-refund test (expected). Zero Tracebacks,
+                zero 500s, zero unhandled exceptions across the full 60-call run.
+              · backend.out.log shows expected status codes throughout
+                (401/200/200/200/422/400/200/402/404/200…).
+              · Two separate LiteLLM completion() lines confirm the real LLM call (test 4)
+                and the AuthenticationError on the corrupted-key call (test 5).
+
+            TIMINGS:
+              · checkin: 80ms (cold), <50ms steady-state.
+              · reflect (real LLM): 5.68s (Claude Sonnet 4.5 round-trip).
+              · reflect (corrupted key, fallback): 0.23s (fast-fail to fallback).
+
+            CONCLUSION: All 5 new Guided Journaling endpoints work exactly as specified.
+            Pydantic validation, quota gate (Pro/Zen only), DB persistence (one doc per
+            user_id+day_key+kind, upsert semantics), reflection persistence on the matching
+            journal docs, coach_limits counter integration, and soft-refund on LLM failure
+            all verified end-to-end. EMERGENT_LLM_KEY restored to the canonical value before
+            exit. No regressions on /api/coach/*. No backend code was modified by the
+            testing agent.
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Session 25 Guided Journaling backend test COMPLETE — 60/60 PASS.
+
+        ✅ POST /api/journal/checkin (15/15): 401 unauth, 200 morning, upsert (not insert)
+           on re-POST with advanced updated_at, kind=random→422, empty answers+no note→400
+           "Write at least one answer or a note." (exact). DB has 1 doc per (user, day, kind).
+
+        ✅ GET /api/journal/today (9/9): morning/evening/null logic correct; both populated
+           after evening checkin; answers map intact.
+
+        ✅ GET /api/journal/history (6/6): default 200, ?days=200 caps without error,
+           ?days=1 ≤1 item.
+
+        ✅ POST /api/journal/reflect (14/14):
+           • rio (Free) → 402 "AI reflection is a Pro feature." (exact).
+           • luna no-entries → 404 "No journal entries for today yet." (exact).
+           • luna with morning entry → 200 in 5.68s, reflection 541 chars (warm, specific,
+             names emotion, suggests practice). DB morning doc gets reflection +
+             reflected_at fields. coach_limits.daily counter incremented 1→2.
+
+        ✅ Soft-refund on LLM failure (6/6) — CRITICAL:
+           • Corrupted EMERGENT_LLM_KEY → restart → quota_left baseline = 8.
+           • POST /reflect → 200 in 0.23s with fallback "I couldn't reach my words
+             right now…" AND quota_left UNCHANGED (8 → 8).
+           • Restored EMERGENT_LLM_KEY = sk-emergent-9D26eE3272eC0781bB → restart →
+             /auth/me responsive. ✅ KEY RESTORED.
+
+        ✅ DELETE /api/journal/{kind} (8/8): morning delete=1, today.morning=null,
+           idempotent re-delete=0, /random→400.
+
+        ✅ /api/coach/* regression (3/3): /coach/history items=2 (reflect inserted turn),
+           tier="pro".
+
+        BACKEND HEALTH: backend.err.log clean except the deliberate AuthenticationError
+        warning during the soft-refund test (expected). Zero 500s.
+
+        Timing summary: checkin 80ms / reflect (real LLM) 5.68s / reflect (fallback) 230ms.
+
+        No backend code was modified by the testing agent.

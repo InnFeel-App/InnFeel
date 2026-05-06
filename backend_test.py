@@ -1,357 +1,444 @@
-"""Session 25 — AI Wellness Coach backend tests.
+"""Session 25 — Guided Journaling endpoints backend test.
 
-Tests for /api/coach/{history,chat,reset} endpoints implemented in
-/app/backend/routes/coach.py. Backed by Claude Sonnet 4.5 via Emergent LLM Key.
+Covers:
+  • POST /api/journal/checkin
+  • GET  /api/journal/today
+  • GET  /api/journal/history
+  • POST /api/journal/reflect
+  • DELETE /api/journal/{kind}
+  • Soft-refund on LLM failure
+  • Regression on /api/coach/history
 """
 import os
-import re
+import sys
 import time
-import json
 import asyncio
 import subprocess
-from typing import Optional
+from typing import Tuple
 
 import httpx
 from motor.motor_asyncio import AsyncIOMotorClient
 
+BACKEND_URL = "https://charming-wescoff-8.preview.emergentagent.com"
+API = f"{BACKEND_URL}/api"
 
-BASE = "https://charming-wescoff-8.preview.emergentagent.com/api"
 LUNA = ("luna@innfeel.app", "demo1234")
-HELLO = ("hello@innfeel.app", "admin123")
-MONGO_URL = "mongodb://localhost:27017"
-DB_NAME = "test_database"
-ENV_PATH = "/app/backend/.env"
-GOOD_KEY = "sk-emergent-9D26eE3272eC0781bB"
+RIO = ("rio@innfeel.app", "demo1234")
+ADMIN = ("hello@innfeel.app", "admin123")
 
-results = []  # (name, ok, msg)
+MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017")
+DB_NAME = os.getenv("DB_NAME", "test_database")
 
-
-def log(name, ok, msg=""):
-    results.append((name, ok, msg))
-    icon = "PASS" if ok else "FAIL"
-    print(f"  [{icon}] {name}{(' — ' + msg) if msg else ''}")
+PASS = []
+FAIL = []
 
 
-def login(client: httpx.Client, email: str, pw: str) -> str:
-    r = client.post(f"{BASE}/auth/login", json={"email": email, "password": pw})
-    r.raise_for_status()
+def log_pass(msg: str):
+    PASS.append(msg)
+    print(f"  PASS  {msg}")
+
+
+def log_fail(msg: str):
+    FAIL.append(msg)
+    print(f"  FAIL  {msg}")
+
+
+def assert_eq(actual, expected, label):
+    if actual == expected:
+        log_pass(f"{label}: {actual!r}")
+        return True
+    log_fail(f"{label}: expected {expected!r} got {actual!r}")
+    return False
+
+
+def assert_truthy(actual, label):
+    if actual:
+        log_pass(f"{label}: {str(actual)[:100]}")
+        return True
+    log_fail(f"{label}: falsy ({actual!r})")
+    return False
+
+
+def login(client: httpx.Client, creds: Tuple[str, str]) -> str:
+    email, pw = creds
+    r = client.post(f"{API}/auth/login", json={"email": email, "password": pw})
+    assert r.status_code == 200, f"login failed for {email}: {r.status_code} {r.text}"
     body = r.json()
-    return body["access_token"]
+    token = body.get("access_token") or body.get("token")
+    assert token, f"no token returned for {email}: {body}"
+    client.headers.update({"Authorization": f"Bearer {token}"})
+    client.cookies.clear()
+    return token
 
 
-async def get_user_id_by_email(email: str) -> str:
+def fresh_client() -> httpx.Client:
+    return httpx.Client(timeout=60.0, follow_redirects=False)
+
+
+async def _clean_today(user_email: str):
     cli = AsyncIOMotorClient(MONGO_URL)
-    try:
-        u = await cli[DB_NAME].users.find_one({"email": email}, {"user_id": 1})
-        return u["user_id"]
-    finally:
-        cli.close()
+    db = cli[DB_NAME]
+    u = await db.users.find_one({"email": user_email})
+    if not u:
+        return 0
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    day_key = now.strftime("%Y-%m-%d")
+    res = await db.journal_entries.delete_many({"user_id": u["user_id"], "day_key": day_key})
+    return res.deleted_count
 
 
-async def db_run(coro_fn):
+async def _today_entries(user_email: str):
     cli = AsyncIOMotorClient(MONGO_URL)
-    try:
-        return await coro_fn(cli[DB_NAME])
-    finally:
-        cli.close()
+    db = cli[DB_NAME]
+    u = await db.users.find_one({"email": user_email})
+    if not u:
+        return []
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    day_key = now.strftime("%Y-%m-%d")
+    return [d async for d in db.journal_entries.find({"user_id": u["user_id"], "day_key": day_key})]
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Test scenarios
-# ──────────────────────────────────────────────────────────────────────
+async def _coach_daily_count(user_email: str):
+    cli = AsyncIOMotorClient(MONGO_URL)
+    db = cli[DB_NAME]
+    u = await db.users.find_one({"email": user_email})
+    if not u:
+        return 0
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    day_key = now.strftime("%Y-%m-%d")
+    doc = await db.coach_limits.find_one({"user_id": u["user_id"], "kind": "daily", "day_key": day_key})
+    return (doc or {}).get("count", 0)
 
-def t1_history_unauth():
-    print("\n[1] GET /api/coach/history without auth")
-    with httpx.Client(timeout=15) as c:
-        r = c.get(f"{BASE}/coach/history")
-        log("1.1 GET /coach/history no-auth → 401", r.status_code == 401, f"got {r.status_code}")
 
+def test_1_checkin_happy_path():
+    print("\n=== TEST 1: POST /api/journal/checkin happy path ===")
+    asyncio.run(_clean_today(LUNA[0]))
 
-def t2_chat_happy(luna_token: str, luna_id: str):
-    print("\n[2] POST /api/coach/chat happy path (luna)")
-    headers = {"Authorization": f"Bearer {luna_token}"}
-    with httpx.Client(timeout=60) as c:
-        # Verify pro
-        me = c.get(f"{BASE}/auth/me", headers=headers).json()
-        log("2.0 /auth/me luna pro=true", bool(me.get("pro")), f"pro={me.get('pro')}")
+    with fresh_client() as c:
+        r = c.post(f"{API}/journal/checkin", json={"kind": "morning", "answers": {"a": "b"}})
+        assert_eq(r.status_code, 401, "no-auth → 401")
+
+    with fresh_client() as c:
+        login(c, LUNA)
+
         t0 = time.time()
-        r = c.post(
-            f"{BASE}/coach/chat",
-            headers=headers,
-            json={"text": "I feel a bit overwhelmed today, can you help me ground?"},
-        )
-        elapsed = time.time() - t0
-        log("2.1 POST /coach/chat 200", r.status_code == 200, f"got {r.status_code} in {elapsed:.2f}s")
-        if r.status_code != 200:
-            print("    body:", r.text[:500])
-            return None, None, None
+        r = c.post(f"{API}/journal/checkin", json={
+            "kind": "morning",
+            "answers": {"sleep": "OK", "intentions": "Be kind"},
+        })
+        dt = time.time() - t0
+        assert_eq(r.status_code, 200, f"morning checkin → 200 ({dt:.2f}s)")
         body = r.json()
-        reply = body.get("reply") or ""
-        log("2.2 reply length > 30", len(reply.strip()) > 30, f"len={len(reply)}")
-        log("2.3 tier == 'pro'", body.get("tier") == "pro", f"tier={body.get('tier')}")
-        ql = body.get("quota_left")
-        log("2.4 quota_left integer 0..10", isinstance(ql, int) and 0 <= ql <= 10, f"quota_left={ql}")
-        tid = body.get("turn_id") or ""
-        log("2.5 turn_id 24-char hex", bool(re.fullmatch(r"[a-f0-9]{24}", tid)), f"turn_id={tid}")
-        log("2.6 timing 2-15s (Claude)", 1.5 <= elapsed <= 20, f"elapsed={elapsed:.2f}s")
+        entry = body.get("entry", {})
+        assert_eq(entry.get("kind"), "morning", "entry.kind")
+        assert_truthy(entry.get("day_key"), "entry.day_key")
+        assert_eq(entry.get("answers"), {"sleep": "OK", "intentions": "Be kind"}, "entry.answers")
+        first_updated_at = entry.get("updated_at")
+        assert_truthy(first_updated_at, "entry.updated_at present")
 
-    async def check_db(d):
-        cur = d.coach_messages.find({"user_id": luna_id}).sort("created_at", -1).limit(2)
-        rows = [x async for x in cur]
-        return rows
+        docs = asyncio.run(_today_entries(LUNA[0]))
+        morning_docs = [d for d in docs if d["kind"] == "morning"]
+        assert_eq(len(morning_docs), 1, "DB: one morning doc")
+        if morning_docs:
+            assert_eq(morning_docs[0].get("answers"), {"sleep": "OK", "intentions": "Be kind"}, "DB answers map")
 
-    rows = asyncio.run(db_run(check_db))
-    roles = sorted([r.get("role") for r in rows])
-    log("2.7 DB has user+assistant for luna", roles == ["assistant", "user"], f"roles={roles} count={len(rows)}")
-    return body.get("quota_left"), body.get("reply"), body.get("turn_id")
+        time.sleep(1.2)
+        r = c.post(f"{API}/journal/checkin", json={
+            "kind": "morning",
+            "answers": {"sleep": "Great", "intentions": "Move slowly"},
+        })
+        assert_eq(r.status_code, 200, "re-POST morning → 200")
+        new_entry = r.json().get("entry", {})
+        assert_eq(new_entry.get("answers"), {"sleep": "Great", "intentions": "Move slowly"}, "re-POST answers updated")
+        second_updated_at = new_entry.get("updated_at")
+        if first_updated_at and second_updated_at and second_updated_at > first_updated_at:
+            log_pass(f"updated_at advanced ({first_updated_at} → {second_updated_at})")
+        else:
+            log_fail(f"updated_at did NOT advance ({first_updated_at} → {second_updated_at})")
+        docs = asyncio.run(_today_entries(LUNA[0]))
+        morning_docs = [d for d in docs if d["kind"] == "morning"]
+        assert_eq(len(morning_docs), 1, "DB: still ONE morning doc (upsert not insert)")
+
+        r = c.post(f"{API}/journal/checkin", json={"kind": "random", "answers": {"x": "y"}})
+        assert_eq(r.status_code, 422, "kind=random → 422")
+
+        r = c.post(f"{API}/journal/checkin", json={"kind": "evening", "answers": {}})
+        assert_eq(r.status_code, 400, "empty answers + no note → 400")
+        if r.status_code == 400:
+            detail = r.json().get("detail", "")
+            if "Write at least one answer" in detail:
+                log_pass(f"400 detail msg matches: {detail!r}")
+            else:
+                log_fail(f"400 detail msg unexpected: {detail!r}")
 
 
-def t3_history(luna_token: str):
-    print("\n[3] GET /api/coach/history?limit=80 (luna)")
-    headers = {"Authorization": f"Bearer {luna_token}"}
-    with httpx.Client(timeout=15) as c:
-        r = c.get(f"{BASE}/coach/history?limit=80", headers=headers)
-        log("3.1 GET /coach/history 200", r.status_code == 200, f"got {r.status_code}")
-        if r.status_code != 200:
-            print("    body:", r.text[:500])
-            return
+def test_2_today():
+    print("\n=== TEST 2: GET /api/journal/today ===")
+    with fresh_client() as c:
+        login(c, LUNA)
+
+        r = c.get(f"{API}/journal/today")
+        assert_eq(r.status_code, 200, "GET today → 200")
         body = r.json()
-        items = body.get("items") or []
-        log("3.2 items has at least 2 entries", len(items) >= 2, f"count={len(items)}")
-        log("3.3 tier == 'pro'", body.get("tier") == "pro", f"tier={body.get('tier')}")
-        ql = body.get("quota_left")
-        log("3.4 quota_left integer 0..10", isinstance(ql, int) and 0 <= ql <= 10, f"quota_left={ql}")
-        roles_seq = [it.get("role") for it in items]
-        log("3.5 first item role=user", roles_seq[0] == "user" if roles_seq else False, f"first={roles_seq[:1]}")
-        log("3.6 contains an assistant turn", "assistant" in roles_seq, f"roles={roles_seq[:6]}")
-        ts = [it.get("created_at") for it in items]
-        ascending = all(ts[i] <= ts[i + 1] for i in range(len(ts) - 1))
-        log("3.7 created_at ascending", ascending)
+        assert_truthy(body.get("day_key"), "today.day_key")
+        assert_truthy(body.get("morning"), "today.morning populated")
+        assert_eq(body.get("evening"), None, "today.evening is null")
+
+        r = c.post(f"{API}/journal/checkin", json={
+            "kind": "evening",
+            "answers": {"highlight": "Yes!"},
+        })
+        assert_eq(r.status_code, 200, "evening checkin → 200")
+
+        r = c.get(f"{API}/journal/today")
+        assert_eq(r.status_code, 200, "GET today (after evening) → 200")
+        body = r.json()
+        assert_truthy(body.get("morning"), "today.morning still populated")
+        assert_truthy(body.get("evening"), "today.evening populated")
+        if body.get("evening"):
+            assert_eq(body["evening"].get("answers"), {"highlight": "Yes!"}, "evening.answers")
 
 
-def t4_multi_turn(luna_token: str, prev_quota):
-    print("\n[4] Multi-turn continuity")
-    headers = {"Authorization": f"Bearer {luna_token}"}
-    with httpx.Client(timeout=60) as c:
+def test_3_history():
+    print("\n=== TEST 3: GET /api/journal/history ===")
+    with fresh_client() as c:
+        login(c, LUNA)
+
+        r = c.get(f"{API}/journal/history")
+        assert_eq(r.status_code, 200, "GET history → 200")
+        body = r.json()
+        items = body.get("items", [])
+        assert_truthy(isinstance(items, list), f"items is list (len={len(items)})")
+        if len(items) >= 2:
+            day_keys = [it.get("day_key") for it in items]
+            if day_keys == sorted(day_keys, reverse=True):
+                log_pass(f"items sorted by day_key DESC ({day_keys[:3]})")
+            else:
+                log_fail(f"items NOT sorted DESC: {day_keys[:5]}")
+        else:
+            log_pass(f"items.len={len(items)} (cannot test sort with <2)")
+
+        r = c.get(f"{API}/journal/history?days=200")
+        assert_eq(r.status_code, 200, "history?days=200 → 200 (no error, server caps)")
+
+        r = c.get(f"{API}/journal/history?days=1")
+        assert_eq(r.status_code, 200, "history?days=1 → 200")
+        body = r.json()
+        n = len(body.get("items", []))
+        if n <= 1:
+            log_pass(f"days=1 → {n} item(s) (≤1)")
+        else:
+            log_fail(f"days=1 → {n} items (expected ≤1)")
+
+
+def test_4_reflect_pro_only():
+    print("\n=== TEST 4: POST /api/journal/reflect (Pro only) ===")
+
+    with fresh_client() as c:
+        login(c, RIO)
+        r = c.post(f"{API}/journal/reflect", json={"kind": "morning"})
+        assert_eq(r.status_code, 402, "rio (Free) reflect → 402")
+        if r.status_code == 402:
+            detail = r.json().get("detail", "")
+            if "Pro" in detail or "pro" in detail.lower():
+                log_pass(f"402 detail mentions Pro: {detail!r}")
+            else:
+                log_fail(f"402 detail missing Pro mention: {detail!r}")
+
+    with fresh_client() as c:
+        login(c, LUNA)
+        r1 = c.delete(f"{API}/journal/morning")
+        assert_eq(r1.status_code, 200, "DELETE /journal/morning → 200")
+        r2 = c.delete(f"{API}/journal/evening")
+        assert_eq(r2.status_code, 200, "DELETE /journal/evening → 200")
+
+        r = c.post(f"{API}/journal/reflect", json={"kind": "morning"})
+        assert_eq(r.status_code, 404, "reflect with no entries → 404")
+        if r.status_code == 404:
+            detail = r.json().get("detail", "")
+            if "No journal entries" in detail or "no journal entries" in detail.lower():
+                log_pass(f"404 detail: {detail!r}")
+
+        r = c.post(f"{API}/journal/checkin", json={
+            "kind": "morning",
+            "answers": {"sleep": "Restless", "intentions": "Soften shoulders, drink water, breathe before replying."},
+        })
+        assert_eq(r.status_code, 200, "re-post morning → 200")
+
+        coach_count_before = asyncio.run(_coach_daily_count(LUNA[0]))
+        print(f"  [info] coach daily count before reflect: {coach_count_before}")
+
         t0 = time.time()
-        r = c.post(
-            f"{BASE}/coach/chat",
-            headers=headers,
-            json={"text": "Yes, can you give me a 60-second exercise?"},
-        )
-        elapsed = time.time() - t0
-        log("4.1 POST /coach/chat 200", r.status_code == 200, f"got {r.status_code} in {elapsed:.2f}s")
-        if r.status_code != 200:
-            print("    body:", r.text[:500])
-            return None
-        body = r.json()
-        reply = (body.get("reply") or "").lower()
-        keywords = ["ground", "breath", "feet", "60", "second", "minute", "overwhelm", "anchor", "body", "sense", "inhale", "exhale"]
-        hit = [k for k in keywords if k in reply]
-        log("4.2 reply references prior context", len(hit) >= 1, f"keywords_hit={hit}")
-        ql = body.get("quota_left")
-        expected = (prev_quota - 1) if prev_quota is not None else None
-        log("4.3 quota_left == prev - 1", ql == expected, f"prev={prev_quota} got={ql}")
-        return ql
-
-
-def t5_quota_exhaustion(luna_token: str, luna_id: str):
-    print("\n[5] Quota exhaustion (Pro)")
-    quota = 10
-
-    async def setup(d):
-        from datetime import datetime, timezone, timedelta
-        now = datetime.now(timezone.utc)
-        anchor = now - timedelta(hours=12)
-        day = anchor.strftime("%Y-%m-%d")
-        await d.coach_limits.update_one(
-            {"user_id": luna_id, "kind": "daily", "day_key": day},
-            {"$set": {"count": quota - 1, "last_used_at": now}},
-            upsert=True,
-        )
-        return day
-
-    day = asyncio.run(db_run(setup))
-    log("5.0 pre-set counter=9", True, f"day_key={day}")
-
-    headers = {"Authorization": f"Bearer {luna_token}"}
-    with httpx.Client(timeout=60) as c:
-        r = c.post(f"{BASE}/coach/chat", headers=headers, json={"text": "Tiny ping?"})
-        log("5.1 chat #10 → 200", r.status_code == 200, f"got {r.status_code}")
+        r = c.post(f"{API}/journal/reflect", json={"kind": "morning"})
+        dt = time.time() - t0
+        assert_eq(r.status_code, 200, f"reflect (morning) → 200 ({dt:.2f}s)")
         if r.status_code == 200:
-            ql = r.json().get("quota_left")
-            log("5.2 quota_left == 0", ql == 0, f"quota_left={ql}")
+            body = r.json()
+            reflection = body.get("reflection", "")
+            quota_left = body.get("quota_left")
+            if isinstance(reflection, str) and len(reflection) > 30:
+                log_pass(f"reflection non-empty len={len(reflection)} preview={reflection[:80]!r}")
+            else:
+                log_fail(f"reflection too short or wrong type: {reflection!r}")
+            if isinstance(quota_left, int):
+                log_pass(f"quota_left is int: {quota_left}")
+            else:
+                log_fail(f"quota_left wrong type: {quota_left!r}")
+
+        docs = asyncio.run(_today_entries(LUNA[0]))
+        morning_doc = next((d for d in docs if d["kind"] == "morning"), None)
+        if morning_doc:
+            assert_truthy(morning_doc.get("reflection"), "DB morning.reflection persisted")
+            assert_truthy(morning_doc.get("reflected_at"), "DB morning.reflected_at persisted")
         else:
-            print("    body:", r.text[:400])
+            log_fail("morning doc not found after reflect")
 
-        r2 = c.post(f"{BASE}/coach/chat", headers=headers, json={"text": "Another ping?"})
-        log("5.3 chat #11 → 402", r2.status_code == 402, f"got {r2.status_code}")
-        if r2.status_code == 402:
-            detail = (r2.json().get("detail") or "")
-            log(
-                "5.4 detail contains 'reached your daily coach quota'",
-                "reached your daily coach quota" in detail,
-                f"detail={detail!r}",
-            )
+        coach_count_after = asyncio.run(_coach_daily_count(LUNA[0]))
+        if coach_count_after == coach_count_before + 1:
+            log_pass(f"coach_limits daily counter +1 ({coach_count_before} → {coach_count_after})")
         else:
-            print("    body:", r2.text[:400])
-
-    async def reset(d):
-        from datetime import datetime, timezone, timedelta
-        now = datetime.now(timezone.utc)
-        anchor = now - timedelta(hours=12)
-        day = anchor.strftime("%Y-%m-%d")
-        await d.coach_limits.update_one(
-            {"user_id": luna_id, "kind": "daily", "day_key": day},
-            {"$set": {"count": 0, "last_used_at": now}},
-            upsert=True,
-        )
-
-    asyncio.run(db_run(reset))
-    log("5.5 counter reset to 0", True)
+            log_fail(f"coach_limits daily counter expected {coach_count_before+1}, got {coach_count_after}")
 
 
-def restart_backend():
+def test_5_soft_refund_on_llm_failure():
+    print("\n=== TEST 5: Soft-refund on LLM failure ===")
+
+    env_path = "/app/backend/.env"
+    with open(env_path, "r") as f:
+        original_env = f.read()
+
+    real_key = "sk-emergent-9D26eE3272eC0781bB"
+    bad_key = "sk-emergent-INVALID"
+
+    corrupted = original_env.replace(f'EMERGENT_LLM_KEY="{real_key}"', f'EMERGENT_LLM_KEY="{bad_key}"')
+    if corrupted == original_env:
+        log_fail("Could not find EMERGENT_LLM_KEY=real value to corrupt")
+        return
+    with open(env_path, "w") as f:
+        f.write(corrupted)
+    print("  [setup] Corrupted EMERGENT_LLM_KEY, restarting backend...")
     subprocess.run(["sudo", "supervisorctl", "restart", "backend"], capture_output=True)
-    time.sleep(5)
+    time.sleep(6)
 
+    try:
+        with fresh_client() as c:
+            login(c, LUNA)
 
-def set_env_key(new_key: str):
-    with open(ENV_PATH, "r") as f:
-        text = f.read()
-    text = re.sub(r'EMERGENT_LLM_KEY="[^"]*"', f'EMERGENT_LLM_KEY="{new_key}"', text)
-    with open(ENV_PATH, "w") as f:
-        f.write(text)
+            r = c.get(f"{API}/coach/history")
+            assert_eq(r.status_code, 200, "coach/history → 200 (corrupted key, endpoint still up)")
+            quota_before = None
+            if r.status_code == 200:
+                quota_before = r.json().get("quota_left")
+                log_pass(f"quota_left before reflect (bad key): {quota_before}")
 
+            r = c.post(f"{API}/journal/checkin", json={
+                "kind": "morning",
+                "answers": {"sleep": "test soft-refund", "intentions": "verify quota stays unchanged"},
+            })
+            if r.status_code != 200:
+                log_fail(f"checkin failed under bad key: {r.status_code} {r.text[:100]}")
+                return
 
-def t6_soft_refund(luna_creds):
-    print("\n[6] Quota soft-refund on LLM failure")
-    set_env_key("sk-emergent-INVALID")
-    restart_backend()
+            t0 = time.time()
+            r = c.post(f"{API}/journal/reflect", json={"kind": "morning"})
+            dt = time.time() - t0
+            assert_eq(r.status_code, 200, f"reflect (bad key) → 200 fallback ({dt:.2f}s)")
+            if r.status_code == 200:
+                body = r.json()
+                reflection = body.get("reflection", "")
+                quota_after = body.get("quota_left")
+                if "couldn't reach my words" in reflection.lower():
+                    log_pass(f"fallback message present: {reflection[:100]!r}")
+                else:
+                    log_fail(f"fallback message NOT detected: {reflection[:200]!r}")
 
-    with httpx.Client(timeout=60) as c:
+                if quota_before is not None and quota_after is not None:
+                    if quota_after == quota_before:
+                        log_pass(f"quota_left UNCHANGED ({quota_before}) — soft-refund works")
+                    else:
+                        log_fail(f"quota_left CHANGED ({quota_before} → {quota_after}) — soft-refund FAILED")
+    finally:
+        with open(env_path, "w") as f:
+            f.write(original_env)
+        print("  [cleanup] Restored EMERGENT_LLM_KEY, restarting backend...")
+        subprocess.run(["sudo", "supervisorctl", "restart", "backend"], capture_output=True)
+        time.sleep(6)
         try:
-            tok = login(c, *luna_creds)
+            r = httpx.get(f"{API}/auth/me", timeout=10.0)
+            log_pass(f"backend back up after key restore (auth/me → {r.status_code})")
         except Exception as e:
-            log("6.0 re-login luna", False, str(e))
-            set_env_key(GOOD_KEY)
-            restart_backend()
-            return
-        log("6.0 re-login luna", True)
-        headers = {"Authorization": f"Bearer {tok}"}
+            log_fail(f"backend NOT back up after key restore: {e}")
 
-        h0 = c.get(f"{BASE}/coach/history?limit=1", headers=headers).json()
-        ql_before = h0.get("quota_left")
 
-        r = c.post(
-            f"{BASE}/coach/chat",
-            headers=headers,
-            json={"text": "Hello coach, I need a tiny anchor."},
-        )
-        log("6.1 chat with bad key → 200 (fallback)", r.status_code == 200, f"got {r.status_code}")
+def test_6_delete():
+    print("\n=== TEST 6: DELETE /api/journal/{kind} ===")
+    with fresh_client() as c:
+        login(c, LUNA)
+
+        r = c.post(f"{API}/journal/checkin", json={
+            "kind": "morning",
+            "answers": {"sleep": "ok"},
+        })
+        assert_eq(r.status_code, 200, "ensure morning exists → 200")
+
+        r = c.delete(f"{API}/journal/morning")
+        assert_eq(r.status_code, 200, "DELETE /journal/morning → 200")
         if r.status_code == 200:
             body = r.json()
-            reply = body.get("reply") or ""
-            log(
-                "6.2 fallback reply contains 'trouble reaching my thoughts'",
-                "trouble reaching my thoughts" in reply,
-                f"reply[:80]={reply[:80]!r}",
-            )
-            ql_after = body.get("quota_left")
-            log(
-                "6.3 quota soft-refunded (unchanged)",
-                ql_after == ql_before,
-                f"before={ql_before} after={ql_after}",
-            )
-        else:
-            print("    body:", r.text[:400])
+            assert_eq(body.get("ok"), True, "delete.ok=true")
+            assert_eq(body.get("deleted"), 1, "delete.deleted=1")
 
-    set_env_key(GOOD_KEY)
-    restart_backend()
-    with open(ENV_PATH) as f:
-        ok_restore = GOOD_KEY in f.read()
-    log("6.4 EMERGENT_LLM_KEY restored", ok_restore)
+        r = c.get(f"{API}/journal/today")
+        if r.status_code == 200:
+            assert_eq(r.json().get("morning"), None, "today.morning=null after delete")
+
+        r = c.delete(f"{API}/journal/morning")
+        assert_eq(r.status_code, 200, "DELETE morning again → 200")
+        if r.status_code == 200:
+            assert_eq(r.json().get("deleted"), 0, "delete.deleted=0 (idempotent)")
+
+        r = c.delete(f"{API}/journal/random")
+        assert_eq(r.status_code, 400, "DELETE /journal/random → 400")
 
 
-def t7_reset(luna_creds):
-    print("\n[7] POST /api/coach/reset")
-    with httpx.Client(timeout=30) as c:
-        tok = login(c, *luna_creds)
-        headers = {"Authorization": f"Bearer {tok}"}
-        h_before = c.get(f"{BASE}/coach/history?limit=80", headers=headers).json()
-        ql_before = h_before.get("quota_left")
-        items_before = len(h_before.get("items") or [])
-        log("7.0 history items >= 4 before reset", items_before >= 4, f"items={items_before}")
-
-        r = c.post(f"{BASE}/coach/reset", headers=headers)
-        log("7.1 POST /coach/reset 200", r.status_code == 200, f"got {r.status_code}")
+def test_7_coach_regression():
+    print("\n=== TEST 7: Regression on /api/coach/history ===")
+    with fresh_client() as c:
+        login(c, LUNA)
+        r = c.get(f"{API}/coach/history")
+        assert_eq(r.status_code, 200, "GET /coach/history → 200")
         if r.status_code == 200:
             body = r.json()
-            log("7.2 ok==true", body.get("ok") is True)
-            log("7.3 deleted >= 4", (body.get("deleted") or 0) >= 4, f"deleted={body.get('deleted')}")
-
-        h_after = c.get(f"{BASE}/coach/history?limit=80", headers=headers).json()
-        log("7.4 items==[] after reset", (h_after.get("items") or []) == [], f"len={len(h_after.get('items') or [])}")
-        ql_after = h_after.get("quota_left")
-        log(
-            "7.5 quota unchanged across reset",
-            ql_after == ql_before,
-            f"before={ql_before} after={ql_after}",
-        )
-
-
-def t8_validation(luna_creds):
-    print("\n[8] Validation")
-    with httpx.Client(timeout=15) as c:
-        tok = login(c, *luna_creds)
-        headers = {"Authorization": f"Bearer {tok}"}
-        r1 = c.post(f"{BASE}/coach/chat", headers=headers, json={"text": ""})
-        log("8.1 empty text → 422", r1.status_code == 422, f"got {r1.status_code}")
-        big = "x" * 2001
-        r2 = c.post(f"{BASE}/coach/chat", headers=headers, json={"text": big})
-        log("8.2 2001-char text → 422", r2.status_code == 422, f"got {r2.status_code}")
-        r3 = httpx.post(f"{BASE}/coach/chat", json={"text": "hi"}, timeout=15)
-        log("8.3 no auth → 401", r3.status_code == 401, f"got {r3.status_code}")
+            assert_truthy(isinstance(body.get("items"), list), f"history.items is list (len={len(body.get('items', []))})")
+            if body.get("tier") in ("free", "pro", "zen"):
+                log_pass(f"history.tier valid: {body.get('tier')}")
+            else:
+                log_fail(f"history.tier invalid: {body.get('tier')!r}")
 
 
 def main():
-    print("=" * 70)
-    print(f"InnFeel Coach backend tests vs {BASE}")
-    print("=" * 70)
-
-    luna_id = asyncio.run(get_user_id_by_email(LUNA[0]))
-    print(f"luna user_id = {luna_id}")
-
-    async def cleanup(d):
-        await d.coach_messages.delete_many({"user_id": luna_id})
-        await d.coach_limits.delete_many({"user_id": luna_id})
-
-    asyncio.run(db_run(cleanup))
-    print("[setup] cleared coach_messages + coach_limits for luna")
-
-    with httpx.Client(timeout=15) as c:
-        luna_token = login(c, *LUNA)
-
-    t1_history_unauth()
-    prev_q, _, _ = t2_chat_happy(luna_token, luna_id)
-    t3_history(luna_token)
-    t4_multi_turn(luna_token, prev_q)
-    t5_quota_exhaustion(luna_token, luna_id)
-    t6_soft_refund(LUNA)
-    t7_reset(LUNA)
-    t8_validation(LUNA)
+    print(f"Backend URL: {API}")
+    print(f"Mongo: {MONGO_URL}/{DB_NAME}")
+    test_1_checkin_happy_path()
+    test_2_today()
+    test_3_history()
+    test_4_reflect_pro_only()
+    test_5_soft_refund_on_llm_failure()
+    test_6_delete()
+    test_7_coach_regression()
 
     print("\n" + "=" * 70)
-    passed = sum(1 for _, ok, _ in results if ok)
-    failed = [(n, m) for n, ok, m in results if not ok]
-    print(f"RESULTS: {passed}/{len(results)} PASS")
-    if failed:
+    print(f"RESULTS: {len(PASS)} pass, {len(FAIL)} fail")
+    if FAIL:
         print("\nFAILURES:")
-        for n, m in failed:
-            print(f"  - {n}: {m}")
+        for f in FAIL:
+            print(f"  - {f}")
     print("=" * 70)
-    return 0 if not failed else 1
+    sys.exit(0 if not FAIL else 1)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
