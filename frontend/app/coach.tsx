@@ -6,10 +6,12 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
+import * as Speech from "expo-speech";
 import { useRouter } from "expo-router";
 import { api } from "../src/api";
 import { useAuth } from "../src/auth";
 import { COLORS } from "../src/theme";
+import { currentLocale } from "../src/i18n";
 
 /**
  * AI Wellness Coach chat — Claude Sonnet 4.5 via Emergent LLM Key.
@@ -72,6 +74,11 @@ export default function CoachScreen() {
   const [loading, setLoading] = useState(true);
   const [tier, setTier] = useState<"free" | "pro" | "zen">("free");
   const [quotaLeft, setQuotaLeft] = useState<number | null>(null);
+  // Track which assistant message is currently being read aloud via TTS,
+  // and whether the user has opted-in to auto-speak every new reply (handy
+  // for breathing/meditation prompts where reading is distracting).
+  const [speakingId, setSpeakingId] = useState<string | null>(null);
+  const [autoSpeak, setAutoSpeak] = useState(false);
   const listRef = useRef<FlatList<Turn>>(null);
 
   const scrollToEnd = useCallback(() => {
@@ -91,6 +98,50 @@ export default function CoachScreen() {
   }, [scrollToEnd]);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // Stop any TTS playback when leaving the screen — otherwise the coach's
+  // voice keeps reading after the user navigates away (poor UX, drains
+  // battery, and weird if a different audio source kicks in).
+  useEffect(() => {
+    return () => {
+      Speech.stop().catch(() => {});
+    };
+  }, []);
+
+  // Map our app locale to BCP-47 codes for the TTS engine. iOS picks the best
+  // local voice (en-US, fr-FR, es-ES…) so the coach sounds native.
+  const ttsLanguage = (() => {
+    const lc = currentLocale();
+    const map: Record<string, string> = {
+      en: "en-US", fr: "fr-FR", es: "es-ES",
+      it: "it-IT", de: "de-DE", pt: "pt-PT", ar: "ar-SA",
+    };
+    return map[lc] || "en-US";
+  })();
+
+  const speak = useCallback(async (turnId: string, text: string) => {
+    try {
+      // If we're already speaking THIS turn, treat the tap as a "stop".
+      const isSpeaking = await Speech.isSpeakingAsync().catch(() => false);
+      if (isSpeaking) {
+        await Speech.stop();
+        if (speakingId === turnId) { setSpeakingId(null); return; }
+      }
+      setSpeakingId(turnId);
+      Speech.speak(text, {
+        language: ttsLanguage,
+        // Slightly slower than default — this is a wellness coach, not a news
+        // anchor. Calm pace is part of the product.
+        rate: 0.96,
+        pitch: 1.0,
+        onDone: () => setSpeakingId((prev) => (prev === turnId ? null : prev)),
+        onStopped: () => setSpeakingId((prev) => (prev === turnId ? null : prev)),
+        onError: () => setSpeakingId((prev) => (prev === turnId ? null : prev)),
+      });
+    } catch {
+      setSpeakingId(null);
+    }
+  }, [speakingId, ttsLanguage]);
 
   const send = async (text?: string) => {
     const body = (text ?? input).trim();
@@ -113,6 +164,12 @@ export default function CoachScreen() {
       setTier(r.tier || tier);
       setQuotaLeft(typeof r.quota_left === "number" ? r.quota_left : quotaLeft);
       scrollToEnd();
+      // Auto-speak the new reply if the user opted in via the speaker toggle.
+      // Wrapped in a tiny delay so React paints the bubble before the audio
+      // engine spins up (otherwise the first word can clip on iOS).
+      if (autoSpeak && r?.reply) {
+        setTimeout(() => speak(r.turn_id, r.reply), 120);
+      }
     } catch (e: any) {
       // Roll back the optimistic user turn so the user can resend without seeing
       // a duplicate. The error toast tells them what happened.
@@ -149,8 +206,12 @@ export default function CoachScreen() {
     );
   };
 
-  const renderItem = ({ item }: { item: Turn }) => {
+  const renderItem = ({ item, index }: { item: Turn; index: number }) => {
     const mine = item.role === "user";
+    // Stable id for TTS playback tracking — backend gives `id` for fresh turns,
+    // older history rows fall back to a position+timestamp composite.
+    const turnId = item.id || `${index}-${item.created_at}`;
+    const isPlaying = speakingId === turnId;
     return (
       <View style={[styles.row, mine ? styles.rowMine : styles.rowTheirs]}>
         {mine ? (
@@ -164,6 +225,24 @@ export default function CoachScreen() {
         ) : (
           <View style={[styles.bubble, styles.bubbleTheirs]}>
             <Text style={styles.bubbleTxtTheirs}>{item.text}</Text>
+            {/* Listen button — taps the on-device TTS engine. Tap again on the
+                same bubble to stop. iOS picks the locale-appropriate native
+                voice automatically (e.g. `Amélie` for fr-FR). */}
+            <TouchableOpacity
+              onPress={() => speak(turnId, item.text)}
+              style={styles.listenBtn}
+              hitSlop={6}
+              testID={`tts-${turnId}`}
+            >
+              <Ionicons
+                name={isPlaying ? "stop-circle" : "volume-high-outline"}
+                size={14}
+                color={isPlaying ? "#FACC15" : "rgba(255,255,255,0.55)"}
+              />
+              <Text style={[styles.listenTxt, isPlaying && { color: "#FACC15" }]}>
+                {isPlaying ? "Stop" : "Listen"}
+              </Text>
+            </TouchableOpacity>
           </View>
         )}
       </View>
@@ -189,6 +268,23 @@ export default function CoachScreen() {
           <Text style={styles.headerTitle}>Wellness Coach</Text>
           <Text style={styles.headerSub}>{headerHint}</Text>
         </View>
+        <TouchableOpacity
+          onPress={() => {
+            setAutoSpeak((v) => {
+              if (v) Speech.stop().catch(() => {});
+              return !v;
+            });
+          }}
+          hitSlop={8}
+          style={styles.headerBtn}
+          testID="toggle-autospeak"
+        >
+          <Ionicons
+            name={autoSpeak ? "volume-high" : "volume-mute-outline"}
+            size={20}
+            color={autoSpeak ? "#FACC15" : "rgba(255,255,255,0.55)"}
+          />
+        </TouchableOpacity>
         <TouchableOpacity onLongPress={onResetLongPress} hitSlop={8} style={styles.headerBtn}>
           <Ionicons name="trash-outline" size={20} color="rgba(255,255,255,0.55)" />
         </TouchableOpacity>
@@ -314,6 +410,18 @@ const styles = StyleSheet.create({
   },
   bubbleTxtMine: { color: "#fff", fontSize: 15, lineHeight: 21, fontWeight: "500" },
   bubbleTxtTheirs: { color: "#fff", fontSize: 15, lineHeight: 21 },
+  // Listen / Stop button rendered inside each assistant bubble — small, ghost,
+  // sits flush-left so it doesn't dominate the message text. Yellow when active.
+  listenBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    alignSelf: "flex-start",
+    marginTop: 6,
+    paddingVertical: 4, paddingHorizontal: 8,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.10)",
+  },
+  listenTxt: { color: "rgba(255,255,255,0.6)", fontSize: 11, fontWeight: "700", letterSpacing: 0.4 },
   typingDot: { width: 6, height: 6, borderRadius: 3 },
 
   composerWrap: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 12 },
