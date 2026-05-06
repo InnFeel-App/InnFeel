@@ -184,7 +184,7 @@ export default function Friends() {
               >
                 <Animated.View style={{ transform: [{ scale: press }] }}>
                   <LinearGradient
-                    colors={["#1B1331", "#2A1846", "#1B1331"]}
+                    colors={["rgba(15,15,20,0.92)", "rgba(20,20,28,0.92)", "rgba(15,15,20,0.92)"]}
                     start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
                     style={styles.shareBtn}
                   >
