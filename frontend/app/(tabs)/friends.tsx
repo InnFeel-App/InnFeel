@@ -200,16 +200,13 @@ export default function Friends() {
                       />
                     </Animated.View>
                     <View style={styles.shareInner}>
-                      <View style={styles.shareIconChip}>
-                        <Ionicons name="share-outline" size={20} color="#0E0A1F" />
-                      </View>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.shareKicker}>Share your code</Text>
                         <Text style={styles.shareCode} numberOfLines={1}>
                           {myCode}
                         </Text>
                       </View>
-                      <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.5)" />
+                      <Ionicons name="share-outline" size={26} color="#FACC15" />
                     </View>
                   </LinearGradient>
                 </Animated.View>
