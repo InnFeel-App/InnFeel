@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Alert, RefreshControl, Linking, Share } from "react-native";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Alert, RefreshControl, Animated, Easing, Share, Pressable } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import RadialAura from "../../src/components/RadialAura";
@@ -35,16 +36,31 @@ export default function Friends() {
     ? `Hey! I'm on InnFeel — we share our aura once a day in color. Tap to add me: ${inviteLink} ✦`
     : `Hey! I'm on InnFeel — we share our aura once a day in color. Join me: https://innfeel.app ✦`;
 
-  const inviteWhatsApp = async () => {
-    const url = `whatsapp://send?text=${encodeURIComponent(inviteText)}`;
-    const ok = await Linking.canOpenURL(url);
-    if (ok) { Linking.openURL(url); return; }
-    Linking.openURL(`https://wa.me/?text=${encodeURIComponent(inviteText)}`);
-  };
-
-  const inviteGeneric = async () => {
+  const shareInvite = async () => {
     try { await Share.share({ message: inviteText }); } catch {}
   };
+
+  // ── Animations for the share-code button ───────────────────────────────
+  // - Glow pulse: outer ring breathes between 60% and 100% opacity (1.6 s)
+  // - Shimmer:   gradient sweeps the pill horizontally (3.5 s loop)
+  // - Press:     subtle scale-down for tactile feedback
+  const glowPulse = useRef(new Animated.Value(0)).current;
+  const shimmer = useRef(new Animated.Value(0)).current;
+  const press = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(glowPulse, { toValue: 1, duration: 1600, easing: Easing.inOut(Easing.quad), useNativeDriver: false }),
+        Animated.timing(glowPulse, { toValue: 0, duration: 1600, easing: Easing.inOut(Easing.quad), useNativeDriver: false }),
+      ]),
+    ).start();
+    Animated.loop(
+      Animated.timing(shimmer, { toValue: 1, duration: 3500, easing: Easing.linear, useNativeDriver: true }),
+    ).start();
+  }, [glowPulse, shimmer]);
+  const glowOpacity = glowPulse.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0.95] });
+  const glowScale = glowPulse.interpolate({ inputRange: [0, 1], outputRange: [1.0, 1.06] });
+  const shimmerX = shimmer.interpolate({ inputRange: [0, 1], outputRange: [-220, 220] });
 
   const load = useCallback(async () => {
     try { const r = await api<any>("/friends"); setFriends(r.friends || []); } catch {}
@@ -138,27 +154,69 @@ export default function Friends() {
           </View>
           {err ? <Text style={styles.err}>{err}</Text> : null}
 
-          {/* Share-safe invite identity. Tapping copies the link to the system
-              share sheet — never exposes the user's email to the recipient. */}
+          {/* Privacy-safe share-my-code hero button.
+              Replaces the previous WhatsApp + Generic share buttons AND the
+              tiny code pill — one big, glowing CTA that opens the OS share
+              sheet (which already shows WhatsApp, SMS, Mail, AirDrop, etc.). */}
           {myCode ? (
-            <TouchableOpacity onPress={inviteGeneric} style={styles.codePill} testID="my-invite-code">
-              <Ionicons name="ticket-outline" size={14} color="#FACC15" />
-              <Text style={styles.codePillLabel}>Your code</Text>
-              <Text style={styles.codePillValue}>{myCode}</Text>
-              <Ionicons name="share-outline" size={14} color={COLORS.textSecondary} />
-            </TouchableOpacity>
+            <View style={styles.shareWrap}>
+              {/* Pulsing glow halo behind the pill — pure visual flourish. */}
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.shareGlow,
+                  { opacity: glowOpacity, transform: [{ scale: glowScale }] },
+                ]}
+              >
+                <LinearGradient
+                  colors={["#A78BFA", "#F472B6", "#FACC15", "#34D399"]}
+                  start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                  style={StyleSheet.absoluteFill}
+                />
+              </Animated.View>
+              <Pressable
+                testID="my-invite-code"
+                accessibilityRole="button"
+                accessibilityLabel={`Share your invite code ${myCode}`}
+                onPress={shareInvite}
+                onPressIn={() => Animated.spring(press, { toValue: 0.97, useNativeDriver: true }).start()}
+                onPressOut={() => Animated.spring(press, { toValue: 1, friction: 4, useNativeDriver: true }).start()}
+              >
+                <Animated.View style={{ transform: [{ scale: press }] }}>
+                  <LinearGradient
+                    colors={["#1B1331", "#2A1846", "#1B1331"]}
+                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                    style={styles.shareBtn}
+                  >
+                    {/* Diagonal shimmer streak that sweeps across the pill. */}
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[styles.shareShimmer, { transform: [{ translateX: shimmerX }] }]}
+                    >
+                      <LinearGradient
+                        colors={["transparent", "rgba(255,255,255,0.18)", "transparent"]}
+                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                        style={StyleSheet.absoluteFill}
+                      />
+                    </Animated.View>
+                    <View style={styles.shareInner}>
+                      <View style={styles.shareIconChip}>
+                        <Ionicons name="share-outline" size={20} color="#0E0A1F" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.shareKicker}>Share your code</Text>
+                        <Text style={styles.shareCode} numberOfLines={1}>
+                          {myCode}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.5)" />
+                    </View>
+                  </LinearGradient>
+                </Animated.View>
+              </Pressable>
+              <Text style={styles.shareHint}>Tap to invite — opens your share sheet ✦</Text>
+            </View>
           ) : null}
-
-          <View style={styles.inviteRow}>
-            <TouchableOpacity testID="invite-whatsapp" onPress={inviteWhatsApp} style={[styles.inviteBtn, { backgroundColor: "#25D366" }]}>
-              <Ionicons name="logo-whatsapp" size={18} color="#fff" />
-              <Text style={styles.inviteTxt}>Invite via WhatsApp</Text>
-            </TouchableOpacity>
-            <TouchableOpacity testID="invite-share" onPress={inviteGeneric} style={[styles.inviteBtn, { backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: COLORS.border }]}>
-              <Ionicons name="share-outline" size={18} color="#fff" />
-              <Text style={styles.inviteTxt}>More</Text>
-            </TouchableOpacity>
-          </View>
 
           <View style={{ height: 20 }} />
           <View style={styles.sectionHdr}>
@@ -226,6 +284,64 @@ const styles = StyleSheet.create({
   err: { color: "#F87171", marginTop: 8 },
   hint: { color: COLORS.textTertiary, fontSize: 11, marginTop: 8 },
   inviteRow: { flexDirection: "row", gap: 10, marginTop: 14 },
+  // ── Share-my-code hero button ─────────────────────────────────────────
+  // Big, animated, halo-glowing pill that opens the OS share sheet.
+  // Replaces the old "WhatsApp" + "More" buttons + tiny pill trio.
+  shareWrap: { marginTop: 18, alignItems: "center" },
+  shareGlow: {
+    position: "absolute",
+    top: -6, left: -6, right: -6, bottom: -6,
+    borderRadius: 28,
+    overflow: "hidden",
+  },
+  shareBtn: {
+    width: "100%",
+    minHeight: 76,
+    borderRadius: 22,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+  },
+  shareShimmer: {
+    position: "absolute",
+    top: 0, bottom: 0,
+    width: 140,
+  },
+  shareInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+  },
+  shareIconChip: {
+    width: 44, height: 44, borderRadius: 22,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: "#FACC15",
+  },
+  shareKicker: {
+    color: "rgba(255,255,255,0.65)",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 1.6,
+    textTransform: "uppercase",
+    marginBottom: 2,
+  },
+  shareCode: {
+    color: "#fff",
+    fontSize: 24,
+    fontWeight: "900",
+    letterSpacing: 4,
+  },
+  shareHint: {
+    color: COLORS.textSecondary,
+    fontSize: 11,
+    marginTop: 10,
+    fontWeight: "500",
+    letterSpacing: 0.3,
+  },
+  // Legacy styles (codePill / inviteBtn) kept in case future code references
+  // them, but are no longer rendered anywhere.
   codePill: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
     marginTop: 10, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999,
