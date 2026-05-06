@@ -119,6 +119,61 @@ export default function CoachScreen() {
     return map[lc] || "en-US";
   })();
 
+  // Pick the most natural-sounding voice available on the device.
+  // iOS ships several quality tiers — Premium (neural, ~80MB download) and
+  // Enhanced (mid-tier, ~30MB) sound dramatically more human than the default
+  // Compact voices. We resolve the best match for the current locale once on
+  // mount and cache it so every Speech.speak call reuses it.
+  //
+  // The user has to download the Premium voice manually in iOS Settings →
+  // Accessibility → Spoken Content → Voices. If they haven't, we silently
+  // fall back to whatever Enhanced/Compact voice is installed for that locale.
+  const [bestVoice, setBestVoice] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    (async () => {
+      try {
+        const voices = await Speech.getAvailableVoicesAsync();
+        if (!voices?.length) return;
+        const lang = ttsLanguage;
+        const langPrefix = lang.split("-")[0];
+        // Quality ordering: Premium > Enhanced > Default.
+        const QUALITY_RANK: Record<string, number> = {
+          Premium: 3, Enhanced: 2, Default: 1,
+        };
+        // Prefer voices that match the EXACT BCP-47 locale, then language prefix.
+        const matchingExact = voices.filter((v) => v.language === lang);
+        const matchingPrefix = voices.filter((v) => (v.language || "").startsWith(langPrefix));
+        const candidates = matchingExact.length ? matchingExact : matchingPrefix;
+        if (!candidates.length) return;
+        // Sort by quality, then by name (stable)
+        candidates.sort((a, b) => {
+          const qa = QUALITY_RANK[(a as any).quality || "Default"] || 1;
+          const qb = QUALITY_RANK[(b as any).quality || "Default"] || 1;
+          if (qa !== qb) return qb - qa;
+          return (a.identifier || "").localeCompare(b.identifier || "");
+        });
+        // Hand-curated favorite voices that are known to sound especially
+        // warm/natural for a wellness app. If one of them is installed, prefer
+        // it over the alphabetical pick. Names follow the iOS voice catalogue.
+        const PREFERRED_BY_LANG: Record<string, string[]> = {
+          en: ["Ava", "Evan", "Zoe", "Allison", "Samantha", "Serena", "Karen", "Tessa"],
+          fr: ["Audrey", "Aurélie", "Marie", "Amélie", "Thomas"],
+          es: ["Mónica", "Marisol", "Paulina", "Diego"],
+          it: ["Alice", "Federica", "Luca"],
+          de: ["Anna", "Helena", "Markus", "Petra"],
+          pt: ["Joana", "Luciana", "Catarina"],
+          ar: ["Maged", "Tarik"],
+        };
+        const prefer = PREFERRED_BY_LANG[langPrefix] || [];
+        const preferred = candidates.find((v) =>
+          prefer.some((p) => (v.name || v.identifier || "").includes(p)),
+        );
+        const chosen = preferred || candidates[0];
+        if (chosen?.identifier) setBestVoice(chosen.identifier);
+      } catch {}
+    })();
+  }, [ttsLanguage]);
+
   const speak = useCallback(async (turnId: string, text: string) => {
     try {
       // If we're already speaking THIS turn, treat the tap as a "stop".
@@ -130,6 +185,9 @@ export default function CoachScreen() {
       setSpeakingId(turnId);
       Speech.speak(text, {
         language: ttsLanguage,
+        // If we discovered a Premium / Enhanced voice for this locale, use it.
+        // Falls back to the OS default voice when undefined.
+        voice: bestVoice,
         // Slightly slower than default — this is a wellness coach, not a news
         // anchor. Calm pace is part of the product.
         rate: 0.96,
