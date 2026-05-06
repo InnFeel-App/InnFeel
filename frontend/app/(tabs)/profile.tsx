@@ -79,6 +79,12 @@ export default function Profile() {
             </View>
           </View>
 
+          <TouchableOpacity testID="go-coach" style={styles.link} onPress={() => router.push("/coach")}>
+            <Ionicons name="sparkles-outline" size={20} color="#A78BFA" />
+            <Text style={styles.linkTxt}>Wellness Coach ✦</Text>
+            <Ionicons name="chevron-forward" size={18} color={COLORS.textTertiary} />
+          </TouchableOpacity>
+
           <TouchableOpacity testID="go-history" style={styles.link} onPress={() => router.push("/history")}>
             <Ionicons name="time-outline" size={20} color="#fff" />
             <Text style={styles.linkTxt}>{t("history.title")}</Text>

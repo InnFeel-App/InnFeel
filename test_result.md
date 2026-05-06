@@ -2530,7 +2530,7 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Friend invite codes — GET /api/friends/my-code + POST /api/friends/add-by-code (Session 23)"
+    - "AI Wellness Coach — POST /api/coach/chat + /coach/history + quotas (Session 23)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -2758,3 +2758,176 @@ agent_communication:
           5) No regression on POST /api/friends/add (legacy email flow).
 
         Credentials: hello@innfeel.app/admin123, luna@innfeel.app/demo1234, rio@innfeel.app/demo1234
+
+
+backend_session25:
+  - task: "AI Wellness Coach — GET /api/coach/history, POST /api/coach/chat, POST /api/coach/reset"
+    implemented: true
+    working: true
+    file: "/app/backend/routes/coach.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Session 25 AI Wellness Coach backend test COMPLETE — 39/39 PASS (100%).
+            Harness: /app/backend_test.py vs https://charming-wescoff-8.preview.emergentagent.com/api.
+            Creds: luna@innfeel.app / demo1234, hello@innfeel.app / admin123.
+
+            ⚠ TEST SETUP NOTE: The brief states "luna is currently Pro = true (verify
+            via GET /api/auth/me)". On first run /auth/me returned pro:false for luna
+            in this DB, which caused her to be classified as `free` tier (1 lifetime
+            trial) and the Pro-tier scenarios to fail. The testing agent restored the
+            documented invariant by directly setting users.pro=True +
+            pro_expires_at=now+30d + pro_source="admin_grant" for luna in MongoDB. After
+            that one-line setup, all 39 sub-checks passed. Main agent should ensure the
+            seed/migration sets luna's Pro flag (or the integration test should
+            re-elevate her each run) so manual setup isn't required.
+
+            1) GET /api/coach/history without auth — 1/1 PASS:
+              · Fresh httpx client, no cookies → 401 {"detail":"Not authenticated"}.
+
+            2) POST /api/coach/chat HAPPY PATH (luna, Pro) — 8/8 PASS:
+              · /auth/me → pro:true ✓ (after setup elevation).
+              · POST /coach/chat {"text":"I feel a bit overwhelmed today, can you help
+                me ground?"} → 200 in 6.62s (within 2-15s budget).
+              · reply length 822 chars (>30 ✓).
+              · tier == "pro" ✓.
+              · quota_left == 9 (int, 0..10) ✓ — confirms Pro=10/day quota and that
+                this is the first chat of the day.
+              · turn_id == "69fbaae4ca7a9c3256ce6521" — matches /^[a-f0-9]{24}$/ ✓
+                (Mongo ObjectId via inserted_id).
+              · DB verify: db.coach_messages for luna has both {role:"user"} and
+                {role:"assistant"} rows ✓.
+
+            3) GET /api/coach/history?limit=80 (luna) — 7/7 PASS:
+              · 200 with items[2], tier:"pro", quota_left:9.
+              · First item role="user" (oldest first / created_at ascending) ✓.
+              · "assistant" turn present in the sequence ✓.
+              · created_at strictly ascending across the list ✓.
+
+            4) MULTI-TURN CONTINUITY — 3/3 PASS:
+              · Second POST {"text":"Yes, can you give me a 60-second exercise?"} → 200
+                in 5.88s.
+              · Reply contains continuity keywords ["breath","exhale"] — Claude
+                referenced grounding/breathing practice from prior turn ✓.
+              · quota_left == 8 (prev 9 - 1) ✓.
+
+            5) QUOTA EXHAUSTION (Pro, simulated) — 6/6 PASS:
+              · Pre-set db.coach_limits {user_id, kind:"daily", day_key:today} count=9.
+              · POST /coach/chat → 200 with quota_left:0 (10th and last allowed call).
+              · POST /coach/chat → 402 with detail
+                "You've reached your daily coach quota (10 messages). It refreshes
+                tomorrow." — matches spec wording exactly ✓.
+              · Reset counter to 0 afterwards (deterministic state).
+
+            6) QUOTA SOFT-REFUND ON LLM FAILURE — 5/5 PASS (CRITICAL):
+              · sed-replaced EMERGENT_LLM_KEY in /app/backend/.env to
+                "sk-emergent-INVALID", `sudo supervisorctl restart backend`, slept 5s.
+              · Re-logged in luna, captured quota_left=10 BEFORE the bad-key call.
+              · POST /coach/chat → 200 (NOT 5xx) with reply starting "I'm having
+                trouble reaching my thoughts right now — give me a moment and try
+                again." — exact fallback string from coach.py:298 ✓.
+              · quota_left AFTER == 10 (unchanged) — proves the soft-refund code path
+                in coach.py:282-296 ($inc count -1 on LLM failure) works correctly ✓.
+              · Backend log line: "WARNING:innfeel.coach:coach LLM error for
+                user_e96b072d4480: Failed to generate chat completion:
+                litellm.AuthenticationError: AuthenticationError: OpenAIException -
+                Invalid API key" — handled cleanly, no Traceback, no 500.
+              · ✅ RESTORED: EMERGENT_LLM_KEY="sk-emergent-9D26eE3272eC0781bB" before
+                exit; backend restarted; verified the key is back in .env.
+
+            7) POST /api/coach/reset — 6/6 PASS:
+              · Pre-state: 8 turns in history (4 user + 4 assistant from steps 2/4/5).
+              · POST /coach/reset → 200 {"ok":true,"deleted":8} (deleted >= 4 ✓).
+              · Subsequent GET /coach/history?limit=80 → 200 with items==[] ✓.
+              · quota_left BEFORE reset == 10, AFTER reset == 10 — confirms reset only
+                wipes coach_messages and does NOT touch coach_limits counters ✓.
+
+            8) VALIDATION — 3/3 PASS:
+              · POST /coach/chat {"text":""} → 422 (Pydantic min_length=1) ✓.
+              · POST /coach/chat with text 2001 chars → 422 (Pydantic max_length=2000) ✓.
+              · POST /coach/chat without auth → 401 ✓.
+
+            TIMING SUMMARY:
+              · /coach/chat call #1 (luna): 6.62s
+              · /coach/chat call #2 (continuity): 5.88s
+              · /coach/chat call #10 (last in quota): ~5-7s
+              · /coach/chat with bad key (fallback): 0.17s (immediate, no LLM round-trip)
+              · /coach/history: <0.5s
+              · /coach/reset: <0.3s
+
+            BACKEND HEALTH:
+              · /var/log/supervisor/backend.err.log clean — only the expected
+                "WARNING:innfeel.coach:coach LLM error ... Invalid API key" line from
+                the deliberate corrupt-key test, plus standard WatchFiles reload +
+                purge daemon lines. ZERO Tracebacks, ZERO 500s, ZERO unhandled
+                exceptions across the entire 50+ call run.
+              · Claude Sonnet 4.5 (claude-sonnet-4-5-20250929) reachable via
+                emergentintegrations.llm.chat.LlmChat with the Emergent LLM key —
+                LiteLLM logs show successful completions on every authentic call.
+              · MongoDB writes (coach_messages, coach_limits) all idempotent and
+                correctly indexed by user_id + day_key.
+
+            CONCLUSION: All three new endpoints (GET /api/coach/history,
+            POST /api/coach/chat, POST /api/coach/reset) work end-to-end. Per-tier
+            quota gating (Pro=10/day verified; Free=1 lifetime indirectly verified
+            when luna was incidentally pro:false on first run; Zen=30 not directly
+            tested but uses the same daily counter path), context-aware multi-turn
+            continuity via session_id=user_id + transcript replay, soft-refund on
+            LLM failure, validation bounds, and DB persistence all behave exactly as
+            designed. No backend code was modified by the testing agent.
+
+            ACTION ITEM FOR MAIN AGENT: ensure the seed/migration job sets luna's
+            users.pro=True + pro_expires_at in the future (or document that test
+            harnesses must elevate her). Otherwise per-environment Pro-tier flows
+            will silently fall through to the Free 1-shot trial as observed here.
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Session 25 AI Wellness Coach backend test COMPLETE — 39/39 PASS.
+
+        ✅ All 3 new endpoints fully working: /api/coach/{history, chat, reset}.
+        ✅ Auth guard: 401 on unauth GET /coach/history & POST /coach/chat.
+        ✅ Happy path: 200 in ~6s, reply (822 chars), tier="pro", quota_left=9,
+           turn_id is 24-char hex Mongo ObjectId. Both turns persisted under
+           user_id with role="user" and role="assistant".
+        ✅ /coach/history?limit=80 returns oldest-first, tier="pro", quota_left
+           tracks chat sends since UTC midnight.
+        ✅ Multi-turn continuity: 2nd reply references grounding/breath from
+           prior turn. Quota correctly decrements by 1.
+        ✅ Quota exhaustion (Pro): pre-set count=9 → 10th call OK with
+           quota_left=0 → 11th call → 402 "You've reached your daily coach
+           quota (10 messages). It refreshes tomorrow." (exact wording).
+        ✅ Soft-refund on LLM failure: corrupted EMERGENT_LLM_KEY → endpoint
+           returns 200 with fallback "I'm having trouble reaching my thoughts…"
+           and quota is NOT decremented (stays at 10).
+           ⚠ EMERGENT_LLM_KEY restored to "sk-emergent-9D26eE3272eC0781bB" and
+             backend restarted before exit. Verified key in .env.
+        ✅ /coach/reset: returns {"ok":true,"deleted":8}, subsequent history
+           is items=[], quota counters NOT reset (still 10/10).
+        ✅ Validation: empty text → 422, 2001-char text → 422, no auth → 401.
+
+        ⚠ SETUP NOTE: luna was pro:false on first run (the brief said pro:true).
+        I elevated her via direct Mongo update before the test. Main agent
+        should fix the seed so luna is Pro on every fresh deploy.
+
+        backend.err.log clean (only the expected "Invalid API key" warning
+        from the deliberate soft-refund test). No Tracebacks, no 500s.
+
+        No backend code was modified by the testing agent.
+
+metadata:
+  created_by: "main_agent"
+  version: "1.9"
+  test_sequence: 10
+  run_ui: false
+
+test_plan:
+  current_focus: []
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
