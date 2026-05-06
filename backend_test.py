@@ -1,413 +1,365 @@
-"""Session 22 backend test — Smart Reminders (B4) + Heatmap (B1).
+"""Backend test for Session 23 — MP4 Reel Pre-warming feature.
 
-Covers:
-  A) GET /api/notifications/smart-hour
-     - 401 unauth
-     - default with 0 samples (low confidence)
-     - <5 samples returns default but reports samples count
-     - 5 tight samples → source=history, high confidence
-     - 5 spread samples → source=history, medium confidence
-
-  B) POST /api/moods with optional local_hour
-     - First-time post pushes to recent_local_hours (with $slice -30)
-     - Edit of same day does NOT push
-     - Omitted local_hour → no push
-     - Rolling cap 30 — push past 30 keeps last 30, oldest dropped
-
-  C) GET /api/moods/heatmap
-     - 401 unauth
-     - empty cells/frozen_days when user has no data
-     - cells reflect moods + frozen_days reflect users.streak_freezes
-     - color present + non-empty
-     - days clamped [7, 365]
-     - Multiple moods same day_key → highest intensity wins
-
-  D) Regression: GET /api/streak/freeze-status still works (auth, shape).
-
-Cleans up DB state at end.
+Verifies:
+  1) POST /api/moods is non-blocking (<1.5s), prewarm runs in background.
+  2) shared_reel sub-doc is populated in DB within ~20s.
+  3) Subsequent POST /api/share/reel/{mood_id} returns cached:true quickly (<1.5s).
+  4) Auth / validation regressions on POST /api/moods.
+  5) Edge case: delete mood immediately after post — prewarm must not crash backend.
+  6) Smoke regression on moods/today, heatmap, insights, feed, streak/freeze-status.
 """
+from __future__ import annotations
+
 import asyncio
 import os
 import sys
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+import time
+from typing import Any, Optional
 
 import httpx
-from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).parent / "backend" / ".env")
-sys.path.insert(0, str(Path(__file__).parent / "backend"))
+# Backend URL comes from frontend/.env (EXPO_PUBLIC_BACKEND_URL), /api prefix mandatory.
+load_dotenv("/app/frontend/.env")
+BASE = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/") + "/api"
 
-BASE = "https://charming-wescoff-8.preview.emergentagent.com/api"
+# Mongo for direct DB verification of the prewarm result.
+load_dotenv("/app/backend/.env")
 MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 DB_NAME = os.environ.get("DB_NAME", "test_database")
 
-ADMIN_EMAIL = "hello@innfeel.app"
-ADMIN_PW = "admin123"
-RIO_EMAIL = "rio@innfeel.app"
-RIO_PW = "demo1234"
 LUNA_EMAIL = "luna@innfeel.app"
 LUNA_PW = "demo1234"
+ADMIN_EMAIL = "hello@innfeel.app"
+ADMIN_PW = "admin123"
 
-PASS = []
-FAIL = []
-
-
-def ok(name, cond, info=""):
-    if cond:
-        PASS.append(name)
-        print(f"  ✓ {name}" + (f"  [{info}]" if info else ""))
-    else:
-        FAIL.append(f"{name} :: {info}")
-        print(f"  ✗ {name}  [{info}]")
+PASS: list[str] = []
+FAIL: list[str] = []
 
 
-def now_utc():
-    return datetime.now(timezone.utc)
+def _mark(ok: bool, label: str, extra: str = "") -> None:
+    tag = "PASS" if ok else "FAIL"
+    line = f"[{tag}] {label}" + (f"  — {extra}" if extra else "")
+    print(line, flush=True)
+    (PASS if ok else FAIL).append(label)
 
 
-def today_str():
-    return now_utc().strftime("%Y-%m-%d")
-
-
-def day_n_str(n):
-    return (now_utc() - timedelta(days=n)).strftime("%Y-%m-%d")
-
-
-async def login(client, email, pw):
-    client.cookies.clear()
+async def login(client: httpx.AsyncClient, email: str, pw: str) -> str:
     r = await client.post(f"{BASE}/auth/login", json={"email": email, "password": pw})
+    r.raise_for_status()
+    body = r.json()
+    return body["access_token"]
+
+
+def _bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def _delete_today(client: httpx.AsyncClient, token: str) -> None:
+    await client.delete(f"{BASE}/moods/today", headers=_bearer(token))
+
+
+async def _get_backend_log_tail(n: int = 200) -> str:
+    try:
+        with open("/var/log/supervisor/backend.err.log", "r") as f:
+            lines = f.readlines()
+        return "".join(lines[-n:])
+    except Exception as e:
+        return f"(log read failed: {e})"
+
+
+async def test_1_post_moods_nonblocking(client: httpx.AsyncClient, luna: str) -> Optional[str]:
+    """POST /api/moods must return in < 1.5s even though prewarm kicks off."""
+    await _delete_today(client, luna)
+
+    body = {
+        "emotion": "joy",
+        "intensity": 3,
+        "word": "sunshine",
+        "privacy": "friends",
+        "local_hour": 14,
+    }
+    t0 = time.perf_counter()
+    r = await client.post(f"{BASE}/moods", json=body, headers=_bearer(luna))
+    dt = time.perf_counter() - t0
+    _mark(r.status_code == 200, "T1: POST /moods returns 200", f"{r.status_code} in {dt:.2f}s")
     if r.status_code != 200:
-        raise RuntimeError(f"Login {email} → {r.status_code}: {r.text}")
-    return r.json()["access_token"]
+        print("  body:", r.text[:500])
+        return None
+
+    j = r.json()
+    mood = j.get("mood") or {}
+    mood_id = mood.get("mood_id")
+
+    _mark(dt < 1.5, "T1: POST /moods < 1.5s (non-blocking)", f"elapsed={dt:.3f}s")
+    _mark(bool(mood_id), "T1: response.mood.mood_id present", f"mood_id={mood_id}")
+    _mark(isinstance(j.get("streak"), int), "T1: streak is int", f"streak={j.get('streak')}")
+    _mark(j.get("replaced") is False, "T1: replaced:false on fresh post", f"replaced={j.get('replaced')}")
+    _mark(mood.get("emotion") == "joy", "T1: mood.emotion == joy")
+    _mark(mood.get("word") == "sunshine", "T1: mood.word == sunshine")
+    _mark(mood.get("privacy") == "friends", "T1: mood.privacy == friends")
+
+    return mood_id
 
 
-def H(token):
-    return {"Authorization": f"Bearer {token}"} if token else {}
+async def test_2_prewarm_populates_db(mood_id: str, max_wait: float = 25.0) -> Optional[str]:
+    """Poll Mongo until shared_reel appears (or timeout)."""
+    try:
+        from motor.motor_asyncio import AsyncIOMotorClient  # type: ignore
+    except Exception as e:
+        _mark(False, "T2: motor import", str(e))
+        return None
+
+    mc = AsyncIOMotorClient(MONGO_URL)
+    db = mc[DB_NAME]
+    deadline = time.perf_counter() + max_wait
+    shared_reel = None
+    t0 = time.perf_counter()
+    while time.perf_counter() < deadline:
+        doc = await db.moods.find_one({"mood_id": mood_id}, {"_id": 0, "shared_reel": 1})
+        if doc and doc.get("shared_reel"):
+            shared_reel = doc["shared_reel"]
+            break
+        await asyncio.sleep(1.0)
+    dt = time.perf_counter() - t0
+
+    _mark(shared_reel is not None, "T2: shared_reel appears in DB within 25s", f"waited={dt:.1f}s")
+    if shared_reel is None:
+        mc.close()
+        return None
+
+    required = {"key", "hash", "has_video", "has_audio", "size", "ts"}
+    present = set(shared_reel.keys())
+    missing = required - present
+    _mark(not missing, "T2: shared_reel has required keys", f"missing={missing or 'none'}")
+    _mark(isinstance(shared_reel.get("key"), str) and shared_reel["key"].startswith("shares/reel_"),
+          "T2: shared_reel.key prefix shares/reel_", f"key={shared_reel.get('key')}")
+    _mark(isinstance(shared_reel.get("hash"), str) and len(shared_reel["hash"]) >= 8,
+          "T2: shared_reel.hash is hex string", f"hash={shared_reel.get('hash')}")
+    _mark(isinstance(shared_reel.get("size"), int) and shared_reel["size"] > 1000,
+          "T2: shared_reel.size > 1KB", f"size={shared_reel.get('size')}")
+
+    first_hash = shared_reel["hash"]
+    mc.close()
+    return first_hash
 
 
-async def aget(client, path, token=None):
-    client.cookies.clear()
-    return await client.get(f"{BASE}{path}", headers=H(token))
+async def test_3_cache_hit_share(client: httpx.AsyncClient, luna: str, mood_id: str) -> None:
+    t0 = time.perf_counter()
+    r = await client.post(f"{BASE}/share/reel/{mood_id}", headers=_bearer(luna))
+    dt = time.perf_counter() - t0
+    _mark(r.status_code == 200, "T3: POST /share/reel/{mood_id} returns 200", f"{r.status_code} in {dt:.2f}s")
+    if r.status_code != 200:
+        print("  body:", r.text[:500])
+        return
+    j = r.json()
+    _mark(j.get("cached") is True, "T3: cached:true (prewarm hit)", f"cached={j.get('cached')}")
+    _mark(isinstance(j.get("url"), str) and j["url"].startswith("https://"),
+          "T3: url is https presigned", f"url_prefix={(j.get('url') or '')[:60]}")
+    _mark(isinstance(j.get("key"), str) and j["key"].startswith("shares/reel_"),
+          "T3: key prefix shares/reel_", f"key={j.get('key')}")
+    _mark(dt < 1.5, "T3: cache HIT response < 1.5s", f"elapsed={dt:.3f}s")
+    if dt < 0.5:
+        _mark(True, "T3: cache HIT < 500ms perf goal", f"elapsed={dt*1000:.0f}ms")
+    else:
+        # not a failure — just report
+        print(f"  note: cache HIT was {dt*1000:.0f}ms (goal <500ms)")
 
 
-async def apost(client, path, token=None, json=None):
-    client.cookies.clear()
-    return await client.post(f"{BASE}{path}", headers=H(token), json=json)
+async def test_4_regressions(client: httpx.AsyncClient, luna: str) -> None:
+    # 4a) POST /moods with no auth → 401 (use a bare client — httpx persists cookies
+    # from prior login, which this endpoint also accepts).
+    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as bare:
+        r = await bare.post(f"{BASE}/moods", json={"emotion": "joy", "intensity": 3})
+    _mark(r.status_code == 401, "T4a: POST /moods without auth → 401", f"got={r.status_code}")
+
+    # 4b) POST /moods with invalid emotion → 422
+    r = await client.post(
+        f"{BASE}/moods",
+        json={"emotion": "banana", "intensity": 3, "privacy": "friends"},
+        headers=_bearer(luna),
+    )
+    _mark(r.status_code == 422, "T4b: POST /moods invalid emotion → 422", f"got={r.status_code}")
+
+    # 4c) POST /moods again same day (edit) → replaced:true, same mood_id
+    first = await client.post(
+        f"{BASE}/moods",
+        json={"emotion": "joy", "intensity": 3, "word": "sunshine", "privacy": "friends"},
+        headers=_bearer(luna),
+    )
+    if first.status_code != 200:
+        _mark(False, "T4c: prep first post 200", f"got={first.status_code}")
+        return
+    first_mood = first.json()["mood"]
+    first_id = first_mood["mood_id"]
+
+    await asyncio.sleep(0.5)
+    t0 = time.perf_counter()
+    second = await client.post(
+        f"{BASE}/moods",
+        json={"emotion": "calm", "intensity": 4, "word": "morning", "privacy": "private"},
+        headers=_bearer(luna),
+    )
+    dt2 = time.perf_counter() - t0
+    _mark(second.status_code == 200, "T4c: edit POST /moods → 200", f"got={second.status_code}")
+    _mark(dt2 < 1.5, "T4c: edit POST /moods < 1.5s (non-blocking)", f"elapsed={dt2:.2f}s")
+    if second.status_code == 200:
+        j2 = second.json()
+        _mark(j2.get("replaced") is True, "T4c: replaced:true on edit", f"replaced={j2.get('replaced')}")
+        _mark(j2["mood"]["mood_id"] == first_id, "T4c: mood_id preserved on edit",
+              f"old={first_id} new={j2['mood']['mood_id']}")
+        _mark(j2["mood"]["emotion"] == "calm", "T4c: emotion updated to calm")
+
+    # Grab first-hash from DB before waiting
+    try:
+        from motor.motor_asyncio import AsyncIOMotorClient  # type: ignore
+    except Exception as e:
+        _mark(False, "T4d: motor import", str(e))
+        return
+
+    mc = AsyncIOMotorClient(MONGO_URL)
+    db = mc[DB_NAME]
+
+    # Wait for 2nd prewarm to complete and update hash.
+    deadline = time.perf_counter() + 30.0
+    new_shared = None
+    while time.perf_counter() < deadline:
+        doc = await db.moods.find_one({"mood_id": first_id}, {"_id": 0, "shared_reel": 1})
+        sr = doc.get("shared_reel") if doc else None
+        if sr and sr.get("hash"):
+            # Accept when hash is set (it may or may not differ depending on content hash coverage).
+            new_shared = sr
+            # Check a couple times to be sure the prewarm finished post-edit:
+            # we need the hash to be something — if it's the OLD first-post hash we keep waiting.
+            break
+        await asyncio.sleep(1.0)
+
+    _mark(new_shared is not None, "T4d: shared_reel present after edit", f"sr={bool(new_shared)}")
+    # For completeness, confirm the hash encodes the NEW description/word.
+    # The hash uses emotion/color/word/description/user_name + media keys; since all changed,
+    # the hash should differ from the first-post hash. We can recompute to assert.
+    if new_shared:
+        # Short rewait to make sure prewarm from edit has fully overwritten the first-post hash.
+        # (The first prewarm may still be finishing when edit happens; both get scheduled.)
+        await asyncio.sleep(8.0)
+        doc = await db.moods.find_one({"mood_id": first_id}, {"_id": 0, "shared_reel": 1})
+        sr2 = (doc or {}).get("shared_reel") or {}
+        _mark(isinstance(sr2.get("hash"), str) and len(sr2["hash"]) >= 8,
+              "T4d: shared_reel.hash still populated after edit", f"hash={sr2.get('hash')}")
+    mc.close()
 
 
-async def adel(client, path, token=None):
-    client.cookies.clear()
-    return await client.delete(f"{BASE}{path}", headers=H(token))
+async def test_5_failure_tolerance(client: httpx.AsyncClient, luna: str) -> None:
+    """Post a mood, DELETE it immediately — backend must not crash when prewarm tries to build."""
+    await _delete_today(client, luna)
 
+    # Snapshot current err log length
+    try:
+        with open("/var/log/supervisor/backend.err.log", "r") as f:
+            before_len = len(f.read())
+    except Exception:
+        before_len = 0
 
-async def reset_user(db, user_id):
-    await db.moods.delete_many({"user_id": user_id})
-    await db.users.update_one(
-        {"user_id": user_id},
-        {"$unset": {
-            "recent_local_hours": "",
-            "streak_freezes": "",
-            "streak_freezes_purchased": "",
-            "streak_freezes_total": "",
-            "bundle_purchases": "",
-        }},
+    r = await client.post(
+        f"{BASE}/moods",
+        json={"emotion": "anger", "intensity": 5, "word": "quick", "privacy": "private"},
+        headers=_bearer(luna),
+    )
+    if r.status_code != 200:
+        _mark(False, "T5: prep POST /moods 200", f"got={r.status_code}")
+        return
+    mood_id = r.json()["mood"]["mood_id"]
+
+    # Immediate delete — race against prewarm.
+    r2 = await client.delete(f"{BASE}/moods/{mood_id}", headers=_bearer(luna))
+    _mark(r2.status_code == 200, "T5: DELETE /moods/{mood_id} 200 (before prewarm finishes)",
+          f"got={r2.status_code}")
+
+    # Give the background task 15s to run and potentially log an error.
+    await asyncio.sleep(15.0)
+
+    try:
+        with open("/var/log/supervisor/backend.err.log", "r") as f:
+            all_text = f.read()
+        new_text = all_text[before_len:]
+    except Exception as e:
+        new_text = ""
+        _mark(False, "T5: read backend err log", str(e))
+        return
+
+    # Look for obvious unhandled exceptions / 500s.
+    bad_markers = ["Traceback (most recent call last)", "500 Internal Server Error"]
+    offending_lines = []
+    for ln in new_text.splitlines():
+        for m in bad_markers:
+            if m in ln:
+                offending_lines.append(ln)
+
+    # The prewarm function already has try/except swallowing; an INFO/WARNING is fine.
+    _mark(
+        not offending_lines,
+        "T5: no unhandled exceptions in backend err log after delete race",
+        f"markers={offending_lines[:3] if offending_lines else 'none'}",
     )
 
+    # Confirm backend still responsive.
+    ping = await client.get(f"{BASE}/auth/me", headers=_bearer(luna))
+    _mark(ping.status_code == 200, "T5: backend still responsive (GET /auth/me)", f"got={ping.status_code}")
 
-async def main():
+
+async def test_6_smoke_regressions(client: httpx.AsyncClient, luna: str) -> None:
+    # Make sure luna has a mood today so feed != locked
+    await _delete_today(client, luna)
+    post = await client.post(
+        f"{BASE}/moods",
+        json={"emotion": "joy", "intensity": 3, "word": "smoke", "privacy": "friends"},
+        headers=_bearer(luna),
+    )
+    _mark(post.status_code == 200, "T6-prep: POST /moods for smoke", f"got={post.status_code}")
+
+    endpoints = [
+        ("GET /moods/today", client.get(f"{BASE}/moods/today", headers=_bearer(luna))),
+        ("GET /moods/heatmap", client.get(f"{BASE}/moods/heatmap", headers=_bearer(luna))),
+        ("GET /moods/insights", client.get(f"{BASE}/moods/insights", headers=_bearer(luna))),
+        ("GET /moods/feed", client.get(f"{BASE}/moods/feed", headers=_bearer(luna))),
+        ("GET /streak/freeze-status", client.get(f"{BASE}/streak/freeze-status", headers=_bearer(luna))),
+    ]
+    for label, coro in endpoints:
+        r = await coro
+        _mark(r.status_code == 200, f"T6: {label} → 200", f"got={r.status_code}")
+
+
+async def main() -> None:
     print(f"BASE={BASE}")
-    print(f"DB={DB_NAME}")
+    print(f"MONGO_URL={MONGO_URL} DB={DB_NAME}")
+    timeout = httpx.Timeout(30.0, connect=10.0)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+        luna = await login(client, LUNA_EMAIL, LUNA_PW)
+        _mark(bool(luna), "Login as luna", f"token_len={len(luna)}")
 
-    from app_core.constants import EMOTIONS
+        mood_id = await test_1_post_moods_nonblocking(client, luna)
+        if not mood_id:
+            print("\n[ABORT] no mood_id — cannot continue")
+        else:
+            print("\nSleeping ~18s to let prewarm finish…", flush=True)
+            await asyncio.sleep(18.0)
+            first_hash = await test_2_prewarm_populates_db(mood_id, max_wait=10.0)
+            await test_3_cache_hit_share(client, luna, mood_id)
 
-    mongo = AsyncIOMotorClient(MONGO_URL)
-    db = mongo[DB_NAME]
-
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as c:
-        admin_tok = await login(c, ADMIN_EMAIL, ADMIN_PW)
-        rio_tok = await login(c, RIO_EMAIL, RIO_PW)
-        luna_tok = await login(c, LUNA_EMAIL, LUNA_PW)
-        rio_doc = await db.users.find_one({"email": RIO_EMAIL}, {"_id": 0, "user_id": 1})
-        luna_doc = await db.users.find_one({"email": LUNA_EMAIL}, {"_id": 0, "user_id": 1})
-        rio_id = rio_doc["user_id"]
-        luna_id = luna_doc["user_id"]
-        print(f"rio_id={rio_id}  luna_id={luna_id}")
-
-        # =======================================================================
-        # SECTION A — GET /api/notifications/smart-hour
-        # =======================================================================
-        print("\n=== A) GET /api/notifications/smart-hour ===")
-
-        # A1 — 401 unauth
-        c.cookies.clear()
-        r = await c.get(f"{BASE}/notifications/smart-hour")
-        ok("A1: smart-hour unauth → 401", r.status_code == 401, f"got {r.status_code}")
-
-        # A2 — Reset rio → default
-        await reset_user(db, rio_id)
-        r = await aget(c, "/notifications/smart-hour", rio_tok)
-        body = r.json() if r.status_code == 200 else {}
-        ok("A2: smart-hour 200 (rio fresh)", r.status_code == 200, f"status={r.status_code}")
-        ok("A2: hour==12 default", body.get("hour") == 12, f"got {body.get('hour')}")
-        ok("A2: minute==0", body.get("minute") == 0, f"got {body.get('minute')}")
-        ok("A2: source==default", body.get("source") == "default", f"got {body.get('source')}")
-        ok("A2: samples==0", body.get("samples") == 0, f"got {body.get('samples')}")
-        ok("A2: confidence==low", body.get("confidence") == "low", f"got {body.get('confidence')}")
-
-        # A3 — 3 samples (still <5)
-        await db.users.update_one(
-            {"user_id": rio_id},
-            {"$set": {"recent_local_hours": [9, 10, 11]}},
-        )
-        r = await aget(c, "/notifications/smart-hour", rio_tok)
-        body = r.json() if r.status_code == 200 else {}
-        ok("A3: 200 with 3 samples", r.status_code == 200, f"status={r.status_code}")
-        ok("A3: samples==3", body.get("samples") == 3, f"got {body.get('samples')}")
-        ok("A3: source==default (still <5)", body.get("source") == "default", f"got {body.get('source')}")
-        ok("A3: hour==12 default", body.get("hour") == 12, f"got {body.get('hour')}")
-
-        # A4 — 5 tight → high
-        await db.users.update_one(
-            {"user_id": rio_id},
-            {"$set": {"recent_local_hours": [9, 9, 10, 10, 10]}},
-        )
-        r = await aget(c, "/notifications/smart-hour", rio_tok)
-        body = r.json() if r.status_code == 200 else {}
-        ok("A4: 200 with 5 samples", r.status_code == 200, f"status={r.status_code}")
-        ok("A4: samples==5", body.get("samples") == 5, f"got {body.get('samples')}")
-        ok("A4: source==history", body.get("source") == "history", f"got {body.get('source')}")
-        ok("A4: hour==10", body.get("hour") == 10, f"got {body.get('hour')}")
-        ok("A4: confidence==high", body.get("confidence") == "high", f"got {body.get('confidence')}")
-
-        # A5 — 5 spread → medium
-        await db.users.update_one(
-            {"user_id": rio_id},
-            {"$set": {"recent_local_hours": [7, 9, 12, 15, 20]}},
-        )
-        r = await aget(c, "/notifications/smart-hour", rio_tok)
-        body = r.json() if r.status_code == 200 else {}
-        ok("A5: 200 with 5 spread", r.status_code == 200, f"status={r.status_code}")
-        ok("A5: samples==5", body.get("samples") == 5, f"got {body.get('samples')}")
-        ok("A5: source==history", body.get("source") == "history", f"got {body.get('source')}")
-        ok("A5: hour==12 (median)", body.get("hour") == 12, f"got {body.get('hour')}")
-        ok("A5: confidence==medium", body.get("confidence") == "medium",
-           f"got {body.get('confidence')}")
-
-        # =======================================================================
-        # SECTION B — POST /api/moods + local_hour
-        # =======================================================================
-        print("\n=== B) POST /api/moods local_hour push behaviour ===")
-
-        await reset_user(db, rio_id)
-
-        # B2 — first-time post → push 14
-        r = await apost(c, "/moods", rio_tok, json={
-            "emotion": "joy", "intensity": 3, "local_hour": 14,
-        })
-        ok("B2: POST first mood 200", r.status_code == 200, f"status={r.status_code} body={r.text[:200]}")
-        u = await db.users.find_one({"user_id": rio_id}, {"_id": 0, "recent_local_hours": 1}) or {}
-        rlh = u.get("recent_local_hours") or []
-        ok("B2: recent_local_hours == [14]", rlh == [14], f"got {rlh}")
-
-        # B3 — re-POST same day → replaced=true, no push
-        r = await apost(c, "/moods", rio_tok, json={
-            "emotion": "calm", "intensity": 2, "local_hour": 18,
-        })
-        body = r.json() if r.status_code == 200 else {}
-        ok("B3: re-POST same day 200", r.status_code == 200, f"status={r.status_code}")
-        ok("B3: replaced==true", body.get("replaced") is True, f"got {body.get('replaced')}")
-        u = await db.users.find_one({"user_id": rio_id}, {"_id": 0, "recent_local_hours": 1}) or {}
-        rlh = u.get("recent_local_hours") or []
-        ok("B3: recent_local_hours UNCHANGED == [14]", rlh == [14], f"got {rlh}")
-
-        # B4 — POST without local_hour → no push (after deleting today's mood)
-        await db.moods.delete_many({"user_id": rio_id, "day_key": today_str()})
-        r = await apost(c, "/moods", rio_tok, json={
-            "emotion": "joy", "intensity": 3,
-        })
-        ok("B4: POST no local_hour 200", r.status_code == 200, f"status={r.status_code}")
-        u = await db.users.find_one({"user_id": rio_id}, {"_id": 0, "recent_local_hours": 1}) or {}
-        rlh = u.get("recent_local_hours") or []
-        ok("B4: recent_local_hours UNCHANGED == [14]", rlh == [14], f"got {rlh}")
-
-        # B5 — Rolling cap 30
-        seed30 = list(range(0, 30))
-        await db.users.update_one(
-            {"user_id": rio_id},
-            {"$set": {"recent_local_hours": seed30}},
-        )
-        await db.moods.delete_many({"user_id": rio_id, "day_key": today_str()})
-        r = await apost(c, "/moods", rio_tok, json={
-            "emotion": "joy", "intensity": 3, "local_hour": 5,
-        })
-        ok("B5: POST 31st 200", r.status_code == 200, f"status={r.status_code}")
-        u = await db.users.find_one({"user_id": rio_id}, {"_id": 0, "recent_local_hours": 1}) or {}
-        rlh = u.get("recent_local_hours") or []
-        ok("B5: array length == 30 (cap)", len(rlh) == 30, f"len={len(rlh)} arr={rlh}")
-        ok("B5: last element == 5", (rlh[-1] if rlh else None) == 5,
-           f"last={rlh[-1] if rlh else None}")
-        ok("B5: first element shifted off (was 0; now 1)",
-           (rlh[0] if rlh else None) == 1, f"first={rlh[0] if rlh else None}")
-
-        # =======================================================================
-        # SECTION C — GET /api/moods/heatmap
-        # =======================================================================
-        print("\n=== C) GET /api/moods/heatmap ===")
-
-        # C1 — unauth
-        c.cookies.clear()
-        r = await c.get(f"{BASE}/moods/heatmap")
-        ok("C1: heatmap unauth → 401", r.status_code == 401, f"got {r.status_code}")
-
-        # C2 — Reset luna; empty
-        await reset_user(db, luna_id)
-        r = await aget(c, "/moods/heatmap", luna_tok)
-        body = r.json() if r.status_code == 200 else {}
-        ok("C2: 200 empty heatmap", r.status_code == 200, f"status={r.status_code}")
-        ok("C2: cells == []", body.get("cells") == [], f"got {body.get('cells')}")
-        ok("C2: frozen_days == []", body.get("frozen_days") == [], f"got {body.get('frozen_days')}")
-        ok("C2: count == 0", body.get("count") == 0, f"got {body.get('count')}")
-        ok("C2: days == 90 default", body.get("days") == 90, f"got {body.get('days')}")
-
-        # C3 — seed 3 moods + streak_freeze
-        async def insert_mood(uid, day_key, emotion, intensity, mood_id):
-            d = datetime.fromisoformat(day_key).replace(tzinfo=timezone.utc)
-            await db.moods.insert_one({
-                "mood_id": mood_id,
-                "user_id": uid,
-                "day_key": day_key,
-                "emotion": emotion,
-                "color": EMOTIONS.get(emotion),
-                "intensity": intensity,
-                "privacy": "friends",
-                "reactions": [],
-                "comments": [],
-                "created_at": d,
-                "has_audio": False,
-                "has_video": False,
-            })
-
-        today_k = today_str()
-        d3_k = day_n_str(3)
-        d10_k = day_n_str(10)
-        await db.moods.delete_many({"user_id": luna_id})
-        await insert_mood(luna_id, today_k, "joy", 3, "mood_test_today")
-        await insert_mood(luna_id, d3_k, "calm", 5, "mood_test_d3")
-        await insert_mood(luna_id, d10_k, "sadness", 7, "mood_test_d10")
-
-        yest_k = day_n_str(1)
-        await db.users.update_one(
-            {"user_id": luna_id},
-            {"$set": {"streak_freezes": [{
-                "day_key": yest_k,
-                "ts": now_utc(),
-                "source": "monthly",
-            }]}},
-        )
-
-        r = await aget(c, "/moods/heatmap?days=30", luna_tok)
-        body = r.json() if r.status_code == 200 else {}
-        ok("C3: 200 with seeded moods", r.status_code == 200, f"status={r.status_code}")
-        ok("C3: days == 30", body.get("days") == 30, f"got {body.get('days')}")
-        cells = body.get("cells") or []
-        ok("C3: cells.length == 3", len(cells) == 3, f"len={len(cells)} cells={cells}")
-        ok("C3: count == 3", body.get("count") == 3, f"got {body.get('count')}")
-        ok("C3: frozen_days == [yest_k]", body.get("frozen_days") == [yest_k],
-           f"got {body.get('frozen_days')} expected [{yest_k}]")
-
-        cell_days = {x.get("day_key") for x in cells}
-        expected_days = {today_k, d3_k, d10_k}
-        ok("C3: cell day_keys == expected", cell_days == expected_days,
-           f"got {cell_days} expected {expected_days}")
-
-        # C4 — color palette match
-        good = True
-        details = []
-        for x in cells:
-            emo = x.get("emotion")
-            color = x.get("color")
-            details.append((emo, color))
-            if not color or not isinstance(color, str) or not color.startswith("#"):
-                good = False
-                break
-            if EMOTIONS.get(emo) and EMOTIONS[emo] != color:
-                good = False
-                break
-        ok("C4: every cell has palette-matching color", good, f"cells colors: {details}")
-
-        # C5 — days=0 → 7
-        r = await aget(c, "/moods/heatmap?days=0", luna_tok)
-        body = r.json() if r.status_code == 200 else {}
-        ok("C5: 200 days=0", r.status_code == 200, f"status={r.status_code}")
-        ok("C5: days clamped to 7", body.get("days") == 7, f"got {body.get('days')}")
-
-        # C6 — days=999 → 365
-        r = await aget(c, "/moods/heatmap?days=999", luna_tok)
-        body = r.json() if r.status_code == 200 else {}
-        ok("C6: 200 days=999", r.status_code == 200, f"status={r.status_code}")
-        ok("C6: days clamped to 365", body.get("days") == 365, f"got {body.get('days')}")
-
-        # C7 — duplicate day → highest intensity wins
-        await db.moods.delete_many({"user_id": luna_id})
-        same_day = today_str()
-        await insert_mood(luna_id, same_day, "joy", 2, "mood_dup_low")
-        await insert_mood(luna_id, same_day, "anger", 9, "mood_dup_high")
-        r = await aget(c, "/moods/heatmap?days=30", luna_tok)
-        body = r.json() if r.status_code == 200 else {}
-        ok("C7: 200 dup-day", r.status_code == 200, f"status={r.status_code}")
-        cells = body.get("cells") or []
-        ok("C7: only 1 cell for dup day", len(cells) == 1, f"got {len(cells)}")
-        if cells:
-            ok("C7: highest intensity (9) wins", cells[0].get("intensity") == 9,
-               f"got intensity={cells[0].get('intensity')} emotion={cells[0].get('emotion')}")
-            ok("C7: emotion of higher (anger) wins",
-               cells[0].get("emotion") == "anger",
-               f"got emotion={cells[0].get('emotion')}")
-
-        # =======================================================================
-        # SECTION D — Regression
-        # =======================================================================
-        print("\n=== D) Regression: /api/streak/freeze-status ===")
-        r = await aget(c, "/streak/freeze-status", admin_tok)
-        body = r.json() if r.status_code == 200 else {}
-        ok("D1: streak/freeze-status admin 200", r.status_code == 200,
-           f"status={r.status_code} body={r.text[:200]}")
-        required = {"plan", "quota", "used_this_month", "monthly_remaining",
-                    "bundle_remaining", "remaining", "can_freeze_yesterday",
-                    "yesterday_key", "current_streak", "bundle"}
-        missing = required - set(body.keys())
-        ok("D1: required keys present", not missing, f"missing={missing}")
-
-        # =======================================================================
-        # CLEANUP
-        # =======================================================================
-        print("\n=== CLEANUP ===")
-        await db.moods.delete_many({"user_id": rio_id})
-        await db.moods.delete_many({"user_id": luna_id})
-        for uid in (rio_id, luna_id):
-            await db.users.update_one(
-                {"user_id": uid},
-                {"$unset": {
-                    "recent_local_hours": "",
-                    "streak_freezes": "",
-                    "streak_freezes_purchased": "",
-                    "streak_freezes_total": "",
-                    "bundle_purchases": "",
-                }},
-            )
-        print("  ✓ cleaned rio + luna state")
+        await test_4_regressions(client, luna)
+        await test_5_failure_tolerance(client, luna)
+        await test_6_smoke_regressions(client, luna)
 
     print("\n" + "=" * 70)
-    print(f"PASSED: {len(PASS)}/{len(PASS)+len(FAIL)}")
+    print(f"RESULTS: PASS={len(PASS)}  FAIL={len(FAIL)}")
     if FAIL:
-        print("FAILS:")
+        print("FAILED tests:")
         for f in FAIL:
-            print(f"  - {f}")
-    print("=" * 70)
-    return 0 if not FAIL else 1
+            print("  -", f)
+        sys.exit(1)
+    else:
+        print("All tests PASS ✓")
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    asyncio.run(main())

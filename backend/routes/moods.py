@@ -2,6 +2,7 @@
 
 Extracted from server.py for maintainability. Every endpoint here is mounted under /api/.
 """
+import asyncio
 import uuid
 import logging
 from datetime import datetime, timedelta
@@ -14,6 +15,7 @@ from app_core.helpers import compute_streak, resolve_media
 from app_core.models import InnFeelIn, ReactionIn, CommentIn
 from app_core.push import send_push
 from app_core import r2 as _r2
+from routes.share import prewarm_reel_for_mood
 
 router = APIRouter()
 logger = logging.getLogger("innfeel")
@@ -138,6 +140,14 @@ async def create_mood(data: InnFeelIn, user: dict = Depends(get_current_user)):
     if isinstance(doc.get("updated_at"), datetime):
         doc["updated_at"] = doc["updated_at"].isoformat()
     resolve_media(doc)
+    # B-Phase: Pre-warm the MP4 reel in the background so when the user later
+    # taps "Share to Stories" the response is instant (cache HIT). Failures
+    # in the prewarm task are swallowed inside `prewarm_reel_for_mood` and
+    # never block this endpoint's 200 OK.
+    try:
+        asyncio.create_task(prewarm_reel_for_mood(mood_id))
+    except Exception as e:  # pragma: no cover — defensive
+        logger.warning(f"prewarm task scheduling failed for {mood_id}: {e}")
     return {"mood": doc, "streak": streak, "replaced": bool(existing)}
 
 
