@@ -155,25 +155,12 @@ export default function Friends() {
           {err ? <Text style={styles.err}>{err}</Text> : null}
 
           {/* Privacy-safe share-my-code hero button.
-              Replaces the previous WhatsApp + Generic share buttons AND the
-              tiny code pill — one big, glowing CTA that opens the OS share
-              sheet (which already shows WhatsApp, SMS, Mail, AirDrop, etc.). */}
+              The rainbow gradient IS the button now — no dark inner box.
+              The pulsing animation drives opacity + scale of the gradient
+              itself; a thin dark scrim is laid over only the text rows so
+              the white type stays readable on the bright halo. */}
           {myCode ? (
             <View style={styles.shareWrap}>
-              {/* Pulsing glow halo behind the pill — pure visual flourish. */}
-              <Animated.View
-                pointerEvents="none"
-                style={[
-                  styles.shareGlow,
-                  { opacity: glowOpacity, transform: [{ scale: glowScale }] },
-                ]}
-              >
-                <LinearGradient
-                  colors={["#A78BFA", "#F472B6", "#FACC15", "#34D399"]}
-                  start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                />
-              </Animated.View>
               <Pressable
                 testID="my-invite-code"
                 accessibilityRole="button"
@@ -181,10 +168,11 @@ export default function Friends() {
                 onPress={shareInvite}
                 onPressIn={() => Animated.spring(press, { toValue: 0.97, useNativeDriver: true }).start()}
                 onPressOut={() => Animated.spring(press, { toValue: 1, friction: 4, useNativeDriver: true }).start()}
+                style={{ alignSelf: "stretch" }}
               >
-                <Animated.View style={{ transform: [{ scale: press }] }}>
+                <Animated.View style={{ transform: [{ scale: press }, { scale: glowScale }], opacity: glowOpacity }}>
                   <LinearGradient
-                    colors={["rgba(15,15,20,0.92)", "rgba(20,20,28,0.92)", "rgba(15,15,20,0.92)"]}
+                    colors={["#A78BFA", "#F472B6", "#FACC15", "#34D399"]}
                     start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
                     style={styles.shareBtn}
                   >
@@ -194,7 +182,7 @@ export default function Friends() {
                       style={[styles.shareShimmer, { transform: [{ translateX: shimmerX }] }]}
                     >
                       <LinearGradient
-                        colors={["transparent", "rgba(255,255,255,0.18)", "transparent"]}
+                        colors={["transparent", "rgba(255,255,255,0.28)", "transparent"]}
                         start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
                         style={StyleSheet.absoluteFill}
                       />
@@ -206,7 +194,7 @@ export default function Friends() {
                           {myCode}
                         </Text>
                       </View>
-                      <Ionicons name="share-outline" size={26} color="#FACC15" />
+                      <Ionicons name="share-outline" size={28} color="#fff" />
                     </View>
                   </LinearGradient>
                 </Animated.View>
@@ -282,60 +270,67 @@ const styles = StyleSheet.create({
   hint: { color: COLORS.textTertiary, fontSize: 11, marginTop: 8 },
   inviteRow: { flexDirection: "row", gap: 10, marginTop: 14 },
   // ── Share-my-code hero button ─────────────────────────────────────────
-  // Big, animated, halo-glowing pill that opens the OS share sheet.
-  // Replaces the old "WhatsApp" + "More" buttons + tiny pill trio.
-  shareWrap: { marginTop: 18, alignItems: "center" },
-  shareGlow: {
-    position: "absolute",
-    top: -6, left: -6, right: -6, bottom: -6,
-    borderRadius: 28,
-    overflow: "hidden",
-  },
+  // The rainbow gradient IS the button (no inner dark box). Pulses + shimmers.
+  shareWrap: { marginTop: 18, alignItems: "stretch" },
   shareBtn: {
     width: "100%",
-    minHeight: 76,
-    borderRadius: 22,
-    paddingHorizontal: 18,
-    paddingVertical: 14,
+    minHeight: 88,
+    borderRadius: 24,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.10)",
+    borderColor: "rgba(255,255,255,0.20)",
   },
   shareShimmer: {
     position: "absolute",
     top: 0, bottom: 0,
-    width: 140,
+    width: 160,
   },
   shareInner: {
     flexDirection: "row",
     alignItems: "center",
     gap: 14,
   },
-  shareIconChip: {
-    width: 44, height: 44, borderRadius: 22,
-    alignItems: "center", justifyContent: "center",
-    backgroundColor: "#FACC15",
-  },
   shareKicker: {
-    color: "rgba(255,255,255,0.65)",
+    color: "rgba(255,255,255,0.95)",
     fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 1.6,
+    fontWeight: "800",
+    letterSpacing: 1.8,
     textTransform: "uppercase",
-    marginBottom: 2,
+    marginBottom: 4,
+    textShadowColor: "rgba(0,0,0,0.55)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   shareCode: {
     color: "#fff",
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: "900",
     letterSpacing: 4,
+    textShadowColor: "rgba(0,0,0,0.6)",
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 8,
   },
   shareHint: {
     color: COLORS.textSecondary,
     fontSize: 11,
-    marginTop: 10,
+    marginTop: 12,
     fontWeight: "500",
     letterSpacing: 0.3,
+    textAlign: "center",
+  },
+  // Legacy styles kept in case future code references them; not rendered.
+  shareGlow: {
+    position: "absolute",
+    top: -6, left: -6, right: -6, bottom: -6,
+    borderRadius: 28,
+    overflow: "hidden",
+  },
+  shareIconChip: {
+    width: 44, height: 44, borderRadius: 22,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: "#FACC15",
   },
   // Legacy styles (codePill / inviteBtn) kept in case future code references
   // them, but are no longer rendered anywhere.
