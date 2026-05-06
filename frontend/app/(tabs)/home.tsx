@@ -210,12 +210,17 @@ export default function Home() {
             </View>
           )}
 
-          <View style={{ height: 8 }} />
+          {/* Breathing room between the personal aura actions (share/redo)
+              and the friends-feed section. The empty View acts as a vertical
+              spacer — easier to tweak than juggling marginTop on the next
+              section header. */}
+          <View style={{ height: 36 }} />
 
           <View style={styles.feedHead}>
             <Text style={styles.sectionTitle}>{t("home.friendsFeed")}</Text>
             {feed.locked ? <Ionicons name="lock-closed" size={14} color={COLORS.textTertiary} /> : null}
           </View>
+          <View style={{ height: 14 }} />
 
           {feed.locked ? (
             <View style={styles.locked} testID="feed-locked">
