@@ -33,13 +33,21 @@ const KEY_LAST_SCHEDULED = "innfeel_last_notif_scheduled_day";
 // Bump this when we change notification scheduling semantics — forces every client to
 // nuke any stale schedules (e.g. legacy ones that fired on UTC hour instead of local hour).
 const KEY_SCHEDULE_VERSION = "innfeel_notif_schedule_version";
-const CURRENT_SCHEDULE_VERSION = "v3_smart_hour_2026_06";
+const CURRENT_SCHEDULE_VERSION = "v4_journal_2026_06";
 
 // Fixed reminder times — fallback when smart hour is unavailable
 export const REMINDER_NOON_HOUR = 12;
 export const REMINDER_NOON_MINUTE = 0;
 export const REMINDER_EVENING_HOUR = 19;
 export const REMINDER_EVENING_MINUTE = 30;
+
+// Journaling smart-notification anchors. We deliberately hard-code these
+// because journaling has natural anchor points (waking-up & winding-down)
+// that benefit less from learned timing than the aura check-in does.
+export const JOURNAL_MORNING_HOUR = 8;
+export const JOURNAL_MORNING_MINUTE = 0;
+export const JOURNAL_EVENING_HOUR = 20;
+export const JOURNAL_EVENING_MINUTE = 0;
 
 // Legacy constants kept for import compat elsewhere
 export const DEFAULT_HOUR = REMINDER_NOON_HOUR;
@@ -254,6 +262,35 @@ export async function scheduleDailyReminder(): Promise<{ scheduled: boolean; hou
       });
     }
 
+    // Journaling daily reminders — gated by the same `reminder` toggle so the
+    // whole "daily reminder" UX is one switch. We schedule both regardless of
+    // the smart hour because morning/evening journaling has its own cadence
+    // (waking-up + winding-down) that doesn't piggyback on aura posting times.
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "Morning intention ✦",
+        body: "Set the tone for the day — three short prompts.",
+        data: { kind: "journal_morning", route: "/journal" },
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DAILY,
+        hour: JOURNAL_MORNING_HOUR,
+        minute: JOURNAL_MORNING_MINUTE,
+      } as any,
+    });
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "Evening reflection 🌙",
+        body: "Land the day with kindness — three short prompts.",
+        data: { kind: "journal_evening", route: "/journal" },
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DAILY,
+        hour: JOURNAL_EVENING_HOUR,
+        minute: JOURNAL_EVENING_MINUTE,
+      } as any,
+    });
+
     await setItem(KEY_LAST_SCHEDULED, todayKey);
     return { scheduled: true, hour: smart.hour, source: smart.source };
   } catch {
@@ -276,13 +313,14 @@ export async function refreshSmartReminder(): Promise<{ scheduled: boolean }> {
   }
 }
 
-/** Cancel only the scheduled DAILY reminders (not the instant push ones). */
+/** Cancel only the scheduled DAILY reminders (not the instant push ones).
+ * Covers all 4 daily kinds: noon-aura, evening-aura, journal-morning, journal-evening. */
 export async function cancelReminderOnly() {
   try {
     const all = await Notifications.getAllScheduledNotificationsAsync();
     for (const n of all) {
       const kind = (n.content?.data as any)?.kind;
-      if (kind === "reminder_noon" || kind === "reminder_evening") {
+      if (kind === "reminder_noon" || kind === "reminder_evening" || kind === "journal_morning" || kind === "journal_evening") {
         await Notifications.cancelScheduledNotificationAsync(n.identifier);
       }
     }
