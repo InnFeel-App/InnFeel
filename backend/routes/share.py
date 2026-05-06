@@ -17,7 +17,9 @@ returns 502 because the worker can't ack health pings during encoding.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
+import json
 import logging
 import os
 import shutil
@@ -35,7 +37,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app_core import r2 as _r2
 from app_core.constants import EMOTIONS
 from app_core.db import db
-from app_core.deps import get_current_user
+from app_core.deps import get_current_user, now_utc
 
 router = APIRouter()
 logger = logging.getLogger("innfeel.share")
@@ -255,6 +257,7 @@ def _ffmpeg_compose(
         # short clips (e.g. 2s) loop back to fill the full REEL_DURATION_SEC instead
         # of freezing on the last frame. The output `-t REEL_DURATION_SEC` cuts the
         # final length consistently across short and long source clips.
+        # Encode at 720x1280 (Stories displays it back at 1080 — saves ~50% encode time).
         inputs = [
             "-stream_loop", "-1",
             "-t", str(REEL_DURATION_SEC),
@@ -262,22 +265,24 @@ def _ffmpeg_compose(
             "-i", overlay_path,
         ]
         vf = (
-            "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
-            "crop=1080:1920,setsar=1,fps=25,"
+            "[0:v]scale=720:1280:force_original_aspect_ratio=increase,"
+            "crop=720:1280,setsar=1,fps=25,"
             f"fade=t=in:st=0:d=0.6,fade=t=out:st={REEL_DURATION_SEC - 0.6}:d=0.6[bg];"
-            "[bg][1:v]overlay=0:0:format=auto[vout]"
+            "[1:v]scale=720:1280[ov];"
+            "[bg][ov]overlay=0:0:format=auto[vout]"
         )
     else:
         # Static photo → loop, light Ken-Burns zoom (1.0 → 1.10 over 15s @ 25fps).
-        # Pre-scale at 1.5x target keeps zoompan under ~6s wall-clock at ultrafast.
+        # Pre-scale at 1080×1920 keeps zoompan crisp; final output is 720×1280.
         zoom_frames = REEL_DURATION_SEC * 25
         inputs = ["-loop", "1", "-t", str(REEL_DURATION_SEC), "-i", bg_path, "-i", overlay_path]
         vf = (
-            "[0:v]scale=1620:2880:force_original_aspect_ratio=increase,"
-            "crop=1620:2880,setsar=1,"
-            f"zoompan=z='min(zoom+0.0005,1.10)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={zoom_frames}:s=1080x1920:fps=25,"
+            "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
+            "crop=1080:1920,setsar=1,"
+            f"zoompan=z='min(zoom+0.0005,1.10)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={zoom_frames}:s=720x1280:fps=25,"
             f"fade=t=in:st=0:d=0.6,fade=t=out:st={REEL_DURATION_SEC - 0.6}:d=0.6[bg];"
-            "[bg][1:v]overlay=0:0:format=auto[vout]"
+            "[1:v]scale=720:1280[ov];"
+            "[bg][ov]overlay=0:0:format=auto[vout]"
         )
 
     if has_audio and audio_path:
@@ -305,7 +310,7 @@ def _ffmpeg_compose(
         *inputs,
         "-filter_complex", full_filter,
         *map_args,
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-pix_fmt", "yuv420p",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
         "-r", "25",
         "-t", str(REEL_DURATION_SEC),
@@ -331,6 +336,12 @@ async def build_reel(mood_id: str, user: dict = Depends(get_current_user)):
     thread via `asyncio.to_thread` so the FastAPI event loop keeps answering health pings
     and other requests during the 5-25s composition window. Without this, the ingress
     proxy would 502 on long encodes.
+
+    Optimizations:
+      • Content-addressable caching — when the same aura is shared twice without
+        edits, we just re-presign the cached MP4 (~50ms instead of ~10s).
+      • Parallel downloads — background (video/photo) + audio (voice/music) +
+        overlay rendering run concurrently via asyncio.gather (~1-2s saved).
     """
     mood = await db.moods.find_one({"mood_id": mood_id}, {"_id": 0})
     if not mood:
@@ -346,6 +357,45 @@ async def build_reel(mood_id: str, user: dict = Depends(get_current_user)):
     owner = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0, "name": 1})
     user_name = (owner or {}).get("name") or ""
 
+    # ──────────────────────────────────────────────────────────────────────
+    # CACHE LOOKUP — re-share path (~50ms instead of full rebuild).
+    # We hash content-relevant fields; if they match the last build for this
+    # mood, we reuse the same R2 object.
+    # ──────────────────────────────────────────────────────────────────────
+    music = mood.get("music") or {}
+    cache_payload = json.dumps({
+        "v": 3,  # bump when overlay/encoder logic changes to invalidate caches
+        "emotion": emotion,
+        "color": color_hex,
+        "word": word,
+        "description": description,
+        "user_name": user_name,
+        "video_key": mood.get("video_key"),
+        "photo_key": mood.get("photo_key"),
+        "audio_key": mood.get("audio_key"),
+        "music_preview_url": music.get("preview_url"),
+    }, sort_keys=True)
+    content_hash = hashlib.sha1(cache_payload.encode()).hexdigest()[:16]
+    cached_key = (mood.get("shared_reel") or {}).get("key")
+    cached_hash = (mood.get("shared_reel") or {}).get("hash")
+    if cached_key and cached_hash == content_hash:
+        try:
+            url = _r2.generate_get_url(cached_key, expires=60 * 60)
+            if url:
+                logger.info(f"[share] cache HIT mood={mood_id} key={cached_key}")
+                return {
+                    "ok": True,
+                    "url": url,
+                    "key": cached_key,
+                    "duration": REEL_DURATION_SEC,
+                    "has_audio": bool((mood.get("shared_reel") or {}).get("has_audio")),
+                    "has_video": bool((mood.get("shared_reel") or {}).get("has_video")),
+                    "cached": True,
+                }
+        except Exception as e:
+            logger.warning(f"[share] cache hit but presign failed: {e}")
+            # fall through to rebuild
+
     work = tempfile.mkdtemp(prefix="innfeel_reel_")
     try:
         bg_path = os.path.join(work, "bg.bin")
@@ -353,48 +403,51 @@ async def build_reel(mood_id: str, user: dict = Depends(get_current_user)):
         overlay_path = os.path.join(work, "overlay.png")
         out_path = os.path.join(work, "reel.mp4")
 
-        has_video = False
-        has_audio = False
-
-        # Background download stays on the event loop (httpx is async-friendly).
-        if mood.get("video_key"):
-            url = _r2.generate_get_url(mood["video_key"], expires=600)
-            if url and await _download(url, bg_path):
-                has_video = True
-        if not has_video and mood.get("photo_key"):
-            url = _r2.generate_get_url(mood["photo_key"], expires=600)
-            if url and await _download(url, bg_path):
-                has_video = False  # stays photo
-        if not has_video and not os.path.exists(bg_path):
-            # paint fallback in a thread (Pillow is CPU-bound)
+        # ──────────────────────────────────────────────────────────────────
+        # PARALLEL: background download + audio download + overlay render.
+        # Each task owns its own state; results are collected after gather.
+        # ──────────────────────────────────────────────────────────────────
+        async def _bg_task() -> bool:
+            """Returns True if the background is a video (vs. photo / fallback)."""
+            if mood.get("video_key"):
+                url = _r2.generate_get_url(mood["video_key"], expires=600)
+                if url and await _download(url, bg_path):
+                    return True
+            if mood.get("photo_key"):
+                url = _r2.generate_get_url(mood["photo_key"], expires=600)
+                if url and await _download(url, bg_path):
+                    return False
+            # No source media → paint a gradient fallback (Pillow in a thread).
             fallback = await asyncio.to_thread(_render_fallback_background, color_hex)
             with open(bg_path, "wb") as f:
                 f.write(fallback)
+            return False
 
-        music = mood.get("music") or {}
-        preview_url = music.get("preview_url")
-        if preview_url and await _download(preview_url, audio_path):
-            has_audio = True
-        # Fallback: if no music track was picked, use the user's own voice memo
-        # (audio_key in R2). This ensures every aura with sound gets sound in
-        # the reel — without a voice memo OR a music track, the reel is silent
-        # which is fine (gradient + text only).
-        if not has_audio and mood.get("audio_key"):
-            audio_url = _r2.generate_get_url(mood["audio_key"], expires=600)
-            if audio_url and await _download(audio_url, audio_path):
-                has_audio = True
+        async def _audio_task() -> bool:
+            preview_url = music.get("preview_url")
+            if preview_url and await _download(preview_url, audio_path):
+                return True
+            if mood.get("audio_key"):
+                audio_url = _r2.generate_get_url(mood["audio_key"], expires=600)
+                if audio_url and await _download(audio_url, audio_path):
+                    return True
+            return False
 
-        # Pillow overlay rendering is CPU-bound — offload to a thread.
-        overlay_bytes = await asyncio.to_thread(
-            _render_overlay_png,
-            color_hex=color_hex,
-            word=word,
-            emotion=emotion,
-            description=description,
-            user_name=user_name,
+        async def _overlay_task() -> None:
+            overlay_bytes = await asyncio.to_thread(
+                _render_overlay_png,
+                color_hex=color_hex,
+                word=word,
+                emotion=emotion,
+                description=description,
+                user_name=user_name,
+            )
+            with open(overlay_path, "wb") as f:
+                f.write(overlay_bytes)
+
+        has_video, has_audio, _ = await asyncio.gather(
+            _bg_task(), _audio_task(), _overlay_task()
         )
-        with open(overlay_path, "wb") as f:
-            f.write(overlay_bytes)
 
         # ffmpeg is BLOCKING (subprocess.run) — must run in a thread or we 502.
         ok = await asyncio.to_thread(
@@ -419,6 +472,19 @@ async def build_reel(mood_id: str, user: dict = Depends(get_current_user)):
             logger.warning(f"[share] R2 upload failed: {e}")
             raise HTTPException(status_code=500, detail="Upload failed")
 
+        # Persist cache pointer so the next share returns instantly.
+        await db.moods.update_one(
+            {"mood_id": mood_id},
+            {"$set": {"shared_reel": {
+                "key": key,
+                "hash": content_hash,
+                "has_video": has_video,
+                "has_audio": has_audio,
+                "size": len(data),
+                "ts": now_utc(),
+            }}},
+        )
+
         url = _r2.generate_get_url(key, expires=60 * 60)
         return {
             "ok": True,
@@ -427,6 +493,7 @@ async def build_reel(mood_id: str, user: dict = Depends(get_current_user)):
             "duration": REEL_DURATION_SEC,
             "has_audio": has_audio,
             "has_video": has_video,
+            "cached": False,
         }
     finally:
         try:
