@@ -12,6 +12,7 @@ import { COLORS, EMOTION_COLORS } from "../../src/theme";
 import { Ionicons } from "@expo/vector-icons";
 import { useShareToStories } from "../../src/components/ShareToStories";
 import ShareAuraButton from "../../src/components/ShareAuraButton";
+import EmptyState from "../../src/components/EmptyState";
 import { notifyIfNew } from "../../src/notifications";
 import { useScreenCaptureGuard } from "../../src/hooks/useScreenCaptureGuard";
 
@@ -223,21 +224,21 @@ export default function Home() {
           <View style={{ height: 14 }} />
 
           {feed.locked ? (
-            <View style={styles.locked} testID="feed-locked">
-              <Ionicons name="sparkles" size={24} color="#fff" />
-              <Text style={styles.lockedTxt}>{t("home.feedLocked")}</Text>
-            </View>
+            <EmptyState
+              testID="feed-locked"
+              tone="lock"
+              title={t("home.feedLocked")}
+              subtitle="Drop your aura to unblur your friends — it's a daily gift in both directions."
+            />
           ) : feed.items.length === 0 ? (
-            <View style={styles.locked}>
-              <Ionicons name="people" size={24} color="#fff" />
-              <Text style={styles.lockedTxt}>{t("home.noFriendsYet")}</Text>
-              <Text style={[styles.lockedTxt, { fontSize: 12, marginTop: 6, opacity: 0.7 }]}>
-                Share your invite link from the Friends tab — they'll be added with one tap.
-              </Text>
-              <View style={{ marginTop: 12 }}>
+            <EmptyState
+              tone="people"
+              title={t("home.noFriendsYet")}
+              subtitle="Share your invite link from the Friends tab — they'll be added with one tap."
+              cta={
                 <Button testID="add-friend-cta" variant="secondary" label={t("friends.add")} onPress={() => router.push("/(tabs)/friends")} />
-              </View>
-            </View>
+              }
+            />
           ) : (
             feed.items.map((m) => (
               <MoodCard

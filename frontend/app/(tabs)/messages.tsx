@@ -4,6 +4,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import RadialAura from "../../src/components/RadialAura";
+import EmptyState from "../../src/components/EmptyState";
 import { api } from "../../src/api";
 import { COLORS } from "../../src/theme";
 
@@ -76,21 +77,21 @@ export default function MessagesInbox() {
           {loading ? (
             <Text style={styles.empty}>Loading…</Text>
           ) : convs.length === 0 ? (
-            <View style={styles.emptyBox}>
-              <Ionicons name="chatbubble-ellipses-outline" size={40} color={COLORS.textTertiary} />
-              <Text style={styles.emptyTitle}>No messages yet</Text>
-              <Text style={styles.empty}>
-                When a friend sends you a message from your aura, it will land here.
-              </Text>
-              <TouchableOpacity
-                style={styles.friendsBtn}
-                testID="go-friends"
-                onPress={() => router.push("/(tabs)/friends")}
-              >
-                <Ionicons name="people" size={14} color="#000" />
-                <Text style={styles.friendsBtnTxt}>Find friends</Text>
-              </TouchableOpacity>
-            </View>
+            <EmptyState
+              tone="default"
+              title="No messages yet"
+              subtitle="When a friend sends you a message from your aura, it will land here."
+              cta={
+                <TouchableOpacity
+                  style={styles.friendsBtn}
+                  testID="go-friends"
+                  onPress={() => router.push("/(tabs)/friends")}
+                >
+                  <Ionicons name="people" size={14} color="#000" />
+                  <Text style={styles.friendsBtnTxt}>Find friends</Text>
+                </TouchableOpacity>
+              }
+            />
           ) : (
             convs.map((c) => (
               <TouchableOpacity

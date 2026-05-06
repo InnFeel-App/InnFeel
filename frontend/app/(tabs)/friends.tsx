@@ -5,6 +5,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import RadialAura from "../../src/components/RadialAura";
 import Button from "../../src/components/Button";
+import EmptyState from "../../src/components/EmptyState";
 import { api } from "../../src/api";
 import { useAuth } from "../../src/auth";
 import { COLORS } from "../../src/theme";
@@ -214,7 +215,11 @@ export default function Friends() {
             ) : null}
           </View>
           {friends.length === 0 ? (
-            <Text style={styles.empty}>No friends yet. Add someone by email to start sharing moods.</Text>
+            <EmptyState
+              tone="people"
+              title="No friends yet"
+              subtitle="Tap your code above and share it on WhatsApp, SMS or AirDrop. They'll be added with one tap."
+            />
           ) : friends.map((f) => (
             <View key={f.user_id} style={[styles.row, f.is_close && styles.rowClose]} testID={`friend-${f.user_id}`}>
               <View style={[styles.avatar, { backgroundColor: f.avatar_color || "#A78BFA" }]}>
