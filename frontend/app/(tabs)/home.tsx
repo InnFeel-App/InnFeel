@@ -266,7 +266,7 @@ const styles = StyleSheet.create({
   cta: { padding: 24, borderRadius: 28, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.04)", marginBottom: 24 },
   ctaTitle: { color: "#fff", fontSize: 28, fontWeight: "700", letterSpacing: -0.5 },
   ctaSub: { color: COLORS.textSecondary, marginTop: 8 },
-  sectionTitle: { color: COLORS.textSecondary, fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12 },
+  sectionTitle: { color: COLORS.textSecondary, fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12, textAlign: "center" },
   feedHead: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
   myMoodHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   myMoodActions: { flexDirection: "row", gap: 10, marginTop: 14, marginBottom: 4, alignItems: "center", justifyContent: "center", paddingHorizontal: 4 },
