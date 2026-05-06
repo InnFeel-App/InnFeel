@@ -9,6 +9,11 @@
  *   4) Return the `key` to the caller so it can be attached to a mood/message/avatar
  */
 import * as ImageManipulator from "expo-image-manipulator";
+// Legacy export of expo-file-system keeps `uploadAsync` + `FileSystemUploadType`
+// available on SDK 54. Streams the local file directly to R2 without ever
+// hydrating the bytes into a JS-side Blob — critical for ~10–30 MB videos
+// where `fetch(fileUri).blob()` would hang or OOM on iOS / older Androids.
+import * as LegacyFS from "expo-file-system/legacy";
 import { api } from "./api";
 
 export type MediaKind =
@@ -68,21 +73,67 @@ export async function getUploadUrl(
   });
 }
 
-/** PUTs the bytes of a local file URI to the signed R2 URL. Throws on HTTP errors. */
+/** PUTs the bytes of a local file URI to the signed R2 URL. Throws on HTTP errors.
+ *
+ * Implementation notes:
+ *  • On native (iOS/Android) we use `FileSystem.uploadAsync` with
+ *    `BINARY_CONTENT`. This streams the file from disk straight to the
+ *    network without ever materialising it as a JS Blob — essential for
+ *    10 s videos (10–30 MB) where `fetch(fileUri).blob()` was hanging
+ *    indefinitely on iOS and OOMing on older Android devices.
+ *  • On web (Expo Web) we keep the original `fetch + blob` path because
+ *    `expo-file-system` doesn't proxy file:// URIs in browsers.
+ *  • A hard 90 s wall-clock timeout wraps the whole call so a flaky
+ *    network never leaves the UI's "Uploading…" spinner spinning forever.
+ */
 export async function uploadBinaryToR2(
   signedUrl: string,
   fileUri: string,
   contentType: string,
 ): Promise<void> {
-  // react-native fetch supports { uri, type, name } body shapes via blob; cleanest is to
-  // fetch the file as a blob then PUT the blob back out.
+  const TIMEOUT_MS = 90_000;
+  const isWeb = typeof document !== "undefined";
+  const isNativeFile = !isWeb && /^(file|content|asset|ph):/i.test(fileUri);
+
+  // Race the actual upload against a wall-clock timeout — guarantees the
+  // caller's spinner can't hang forever on a stalled connection.
+  const withTimeout = <T,>(p: Promise<T>): Promise<T> =>
+    Promise.race([
+      p,
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error("Upload timed out (90s) — check your connection.")), TIMEOUT_MS),
+      ),
+    ]);
+
+  if (isNativeFile && (LegacyFS as any)?.uploadAsync) {
+    const { FileSystemUploadType } = LegacyFS as any;
+    const uploadType =
+      FileSystemUploadType?.BINARY_CONTENT ?? 0; // 0 = BINARY_CONTENT in legacy enum
+    const result = await withTimeout(
+      (LegacyFS as any).uploadAsync(signedUrl, fileUri, {
+        httpMethod: "PUT",
+        headers: { "Content-Type": contentType },
+        uploadType,
+      }),
+    );
+    const status = (result as any)?.status ?? 0;
+    if (status < 200 || status >= 300) {
+      const body = ((result as any)?.body || "").toString().slice(0, 200);
+      throw new Error(`R2 upload failed (${status}): ${body}`);
+    }
+    return;
+  }
+
+  // Web fallback — fetch the (likely blob:) URI and PUT the resulting Blob.
   const res = await fetch(fileUri);
   const blob = await res.blob();
-  const put = await fetch(signedUrl, {
-    method: "PUT",
-    headers: { "Content-Type": contentType },
-    body: blob as any,
-  });
+  const put = await withTimeout(
+    fetch(signedUrl, {
+      method: "PUT",
+      headers: { "Content-Type": contentType },
+      body: blob as any,
+    }),
+  );
   if (put.status < 200 || put.status >= 300) {
     const txt = await put.text().catch(() => "");
     throw new Error(`R2 upload failed (${put.status}): ${txt.slice(0, 200)}`);
