@@ -106,17 +106,34 @@ export async function uploadBinaryToR2(
     ]);
 
   if (isNativeFile && (LegacyFS as any)?.uploadAsync) {
-    const { FileSystemUploadType } = LegacyFS as any;
+    const { FileSystemUploadType, FileSystemSessionType } = LegacyFS as any;
     const uploadType =
       FileSystemUploadType?.BINARY_CONTENT ?? 0; // 0 = BINARY_CONTENT in legacy enum
+    // CRITICAL — FOREGROUND session mode.
+    // `expo-file-system`'s default on iOS is the BACKGROUND URLSession, which
+    // has a long-standing known bug inside Expo Go SDK 54 where large file
+    // uploads stall for minutes or never complete (see github.com/expo/expo
+    // issue #26754). Forcing the foreground session keeps the upload on the
+    // app's main URLSession and uploads complete in normal time.
+    // Production EAS builds are unaffected, but we keep this for safety.
+    const sessionType = FileSystemSessionType?.FOREGROUND ?? 0;
+    if (__DEV__) {
+      // eslint-disable-next-line no-console
+      console.log("[UPLOAD] uploadAsync start", { fileUri, contentType, sessionType });
+    }
     const result = await withTimeout(
       (LegacyFS as any).uploadAsync(signedUrl, fileUri, {
         httpMethod: "PUT",
         headers: { "Content-Type": contentType },
         uploadType,
+        sessionType,
       }),
     );
     const status = (result as any)?.status ?? 0;
+    if (__DEV__) {
+      // eslint-disable-next-line no-console
+      console.log("[UPLOAD] uploadAsync done", { status, body: ((result as any)?.body || "").toString().slice(0, 200) });
+    }
     if (status < 200 || status >= 300) {
       const body = ((result as any)?.body || "").toString().slice(0, 200);
       throw new Error(`R2 upload failed (${status}): ${body}`);
