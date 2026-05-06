@@ -130,34 +130,74 @@ def _render_overlay_png(
         f_user = _load_font(_LIB_SANS_REG, 34)
         d.text((72, 160), user_name, font=f_user, fill=(255, 255, 255, 210))
 
-    # Emotion label (centered, small cap-style).
-    f_emo = _load_font(_LIB_SANS, 46)
+    # ──────────────────────────────────────────────────────────────────────
+    # TOP-RIGHT HEADLINE BLOCK (right-aligned)
+    #   • EMOTION — big bold uppercase title (the dominant visual)
+    #   • word    — smaller line directly under, same right anchor
+    # Sizes shrink with character length so long emotions ("OVERWHELMED",
+    # "UNMOTIVATED") still fit on a single line within 1080 - 2×60 = 960 px.
+    # ──────────────────────────────────────────────────────────────────────
+    RIGHT_MARGIN = 60
     emo_txt = (emotion or "").upper()
+    emo_len = len(emo_txt)
+    if emo_len >= 11:
+        emo_size = 140
+    elif emo_len >= 9:
+        emo_size = 170
+    elif emo_len >= 7:
+        emo_size = 200
+    else:
+        emo_size = 230
+    f_emo = _load_font(_LIB_SANS, emo_size)
     emo_bbox = d.textbbox((0, 0), emo_txt, font=f_emo)
     emo_w = emo_bbox[2] - emo_bbox[0]
-    d.text(((REEL_W - emo_w) / 2, REEL_H - 520), emo_txt, font=f_emo, fill=(*rgb, 255))
-
-    # Headline word (big, bold).
-    headline = word or emotion or "Today"
-    # Dynamic font size — shrink if long.
-    base_size = 180
-    if len(headline) > 12:
-        base_size = 130
-    if len(headline) > 20:
-        base_size = 96
-    f_word = _load_font(_LIB_SANS, base_size)
-    hw_bbox = d.textbbox((0, 0), headline, font=f_word)
-    hw = hw_bbox[2] - hw_bbox[0]
-    # Drop shadow for readability
-    shadow = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    sd = ImageDraw.Draw(shadow)
-    sd.text(((REEL_W - hw) / 2 + 4, REEL_H - 430 + 4), headline, font=f_word, fill=(0, 0, 0, 180))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(8))
-    img = Image.alpha_composite(img, shadow)
+    emo_h = emo_bbox[3] - emo_bbox[1]
+    emo_x = REEL_W - RIGHT_MARGIN - emo_w
+    emo_y = 150  # leaves room for the InnFeel ✦ + user name on the left
+    # Drop shadow for legibility on photo backgrounds.
+    emo_shadow = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    sd = ImageDraw.Draw(emo_shadow)
+    sd.text((emo_x + 4, emo_y + 6), emo_txt, font=f_emo, fill=(0, 0, 0, 200))
+    emo_shadow = emo_shadow.filter(ImageFilter.GaussianBlur(10))
+    img = Image.alpha_composite(img, emo_shadow)
     d = ImageDraw.Draw(img)
-    d.text(((REEL_W - hw) / 2, REEL_H - 430), headline, font=f_word, fill=(255, 255, 255, 255))
+    d.text((emo_x, emo_y), emo_txt, font=f_emo, fill=(255, 255, 255, 255))
 
-    # Description (wraps under the headline).
+    # Tinted underline accent in the emotion's color, right-aligned under the title.
+    underline_y = emo_y + emo_h + 18
+    underline_w = min(220, max(120, int(emo_w * 0.35)))
+    d.rounded_rectangle(
+        (REEL_W - RIGHT_MARGIN - underline_w, underline_y, REEL_W - RIGHT_MARGIN, underline_y + 8),
+        radius=4, fill=(*rgb, 255),
+    )
+
+    # The "word" — slightly smaller, italic-feel via lighter weight, same anchor.
+    headline = (word or "").strip()
+    if headline:
+        word_len = len(headline)
+        if word_len >= 14:
+            word_size = 80
+        elif word_len >= 10:
+            word_size = 100
+        elif word_len >= 7:
+            word_size = 120
+        else:
+            word_size = 140
+        f_word = _load_font(_LIB_SANS_REG, word_size)
+        hw_bbox = d.textbbox((0, 0), headline, font=f_word)
+        hw = hw_bbox[2] - hw_bbox[0]
+        word_x = REEL_W - RIGHT_MARGIN - hw
+        word_y = underline_y + 26
+        # Subtle drop shadow.
+        wsh = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        wsd = ImageDraw.Draw(wsh)
+        wsd.text((word_x + 3, word_y + 4), headline, font=f_word, fill=(0, 0, 0, 170))
+        wsh = wsh.filter(ImageFilter.GaussianBlur(6))
+        img = Image.alpha_composite(img, wsh)
+        d = ImageDraw.Draw(img)
+        d.text((word_x, word_y), headline, font=f_word, fill=(255, 255, 255, 235))
+
+    # Description / note (kept exactly as before — wraps under, near the bottom).
     if description:
         f_desc = _load_font(_LIB_SANS_REG, 40)
         # Simple word wrap at ~28 chars per line, max 3 lines.
@@ -390,7 +430,7 @@ async def build_reel(mood_id: str, user: dict = Depends(get_current_user)):
     # ──────────────────────────────────────────────────────────────────────
     music = mood.get("music") or {}
     cache_payload = json.dumps({
-        "v": 3,  # bump when overlay/encoder logic changes to invalidate caches
+        "v": 4,  # bump when overlay/encoder logic changes to invalidate caches
         "emotion": emotion,
         "color": color_hex,
         "word": word,

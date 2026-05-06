@@ -80,13 +80,53 @@ const ShareCard = forwardRef((props: Props, ref: React.Ref<View>) => {
 
         {props.kind === "mood" ? (
           <>
-            <Text style={styles.kicker}>
-              {(props.userName || "Someone").toUpperCase()} FEELS
-            </Text>
-            <Text style={styles.hugeWord}>{props.word || "—"}</Text>
-            <View style={styles.emotionRow}>
+            {/* Right-aligned headline block:
+                  • "{USERNAME} FEELS" small kicker
+                  • EMOTION — biggest, boldest line (the title)
+                  • word — slightly smaller, same alignment
+                Sizes shrink with character length so long emotions like
+                "Overwhelmed" / "Unmotivated" still fit on a single line
+                inside the 920px usable canvas (1080 - 2×80 padding). */}
+            {(() => {
+              const emoTxt = (em.label || "").toUpperCase();
+              const wordTxt = props.word || "";
+              const emoLen = emoTxt.length;
+              // Calibrated against the worst case "OVERWHELMED" (11 chars).
+              const emoSize = emoLen >= 11 ? 150 : emoLen >= 9 ? 170 : emoLen >= 7 ? 200 : 220;
+              const wordLen = wordTxt.length;
+              const wordSize = wordLen >= 14 ? 80 : wordLen >= 10 ? 100 : wordLen >= 7 ? 120 : 140;
+              return (
+                <View style={styles.headlineRight}>
+                  <Text style={styles.kickerRight}>
+                    {(props.userName || "Someone").toUpperCase()} FEELS
+                  </Text>
+                  <Text
+                    style={[
+                      styles.emotionTitleRight,
+                      { fontSize: emoSize, lineHeight: Math.round(emoSize * 1.02) },
+                    ]}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                  >
+                    {emoTxt}
+                  </Text>
+                  {wordTxt ? (
+                    <Text
+                      style={[
+                        styles.wordRight,
+                        { fontSize: wordSize, lineHeight: Math.round(wordSize * 1.05) },
+                      ]}
+                      numberOfLines={2}
+                      adjustsFontSizeToFit
+                    >
+                      {wordTxt}
+                    </Text>
+                  ) : null}
+                </View>
+              );
+            })()}
+            <View style={[styles.emotionRow, { alignSelf: "flex-end" }]}>
               <View style={[styles.dot, { backgroundColor: em.hex }]} />
-              <Text style={styles.emotionLabel}>{em.label}</Text>
             </View>
             <View style={styles.intensityRow}>
               {Array.from({ length: maxIntensity }).map((_, i) => (
@@ -272,6 +312,41 @@ const styles = StyleSheet.create({
   blob: { position: "absolute", borderRadius: 9999 },
   content: { flex: 1, padding: 80, paddingTop: 100 },
   brand: { color: "#fff", fontSize: 28, fontWeight: "700", letterSpacing: 6, opacity: 0.85 },
+  // Right-aligned headline block (mood share card) — emotion is the bold
+  // title at top-right, word sits a bit smaller below at the same anchor.
+  headlineRight: {
+    alignSelf: "stretch",
+    marginTop: 60,
+    alignItems: "flex-end",
+  },
+  kickerRight: {
+    color: "rgba(255,255,255,0.55)",
+    fontSize: 22,
+    letterSpacing: 4,
+    fontWeight: "600",
+    textAlign: "right",
+    marginBottom: 14,
+  },
+  emotionTitleRight: {
+    color: "#fff",
+    fontWeight: "900",
+    letterSpacing: -3,
+    textAlign: "right",
+    textShadowColor: "rgba(0,0,0,0.35)",
+    textShadowOffset: { width: 0, height: 4 },
+    textShadowRadius: 14,
+    alignSelf: "stretch",
+  },
+  wordRight: {
+    color: "rgba(255,255,255,0.92)",
+    fontWeight: "700",
+    letterSpacing: -2,
+    textAlign: "right",
+    marginTop: 18,
+    fontStyle: "italic",
+    alignSelf: "stretch",
+  },
+  // Legacy fields kept for non-mood card kinds (stats / leaderboard).
   kicker: { color: "rgba(255,255,255,0.55)", fontSize: 22, letterSpacing: 4, marginTop: 60, fontWeight: "600" },
   hugeWord: { color: "#fff", fontSize: 180, fontWeight: "800", letterSpacing: -4, marginTop: 18, lineHeight: 190 },
   emotionRow: { flexDirection: "row", alignItems: "center", gap: 18, marginTop: 14 },
