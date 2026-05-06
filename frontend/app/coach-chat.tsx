@@ -6,14 +6,10 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import * as Speech from "expo-speech";
-import * as Linking from "expo-linking";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { api } from "../src/api";
 import { useAuth } from "../src/auth";
 import { COLORS } from "../src/theme";
-import { currentLocale } from "../src/i18n";
 
 /**
  * AI Wellness Coach chat — Claude Sonnet 4.5 via Emergent LLM Key.
@@ -76,11 +72,6 @@ export default function CoachScreen() {
   const [loading, setLoading] = useState(true);
   const [tier, setTier] = useState<"free" | "pro" | "zen">("free");
   const [quotaLeft, setQuotaLeft] = useState<number | null>(null);
-  // Track which assistant message is currently being read aloud via TTS,
-  // and whether the user has opted-in to auto-speak every new reply (handy
-  // for breathing/meditation prompts where reading is distracting).
-  const [speakingId, setSpeakingId] = useState<string | null>(null);
-  const [autoSpeak, setAutoSpeak] = useState(false);
   const listRef = useRef<FlatList<Turn>>(null);
 
   const scrollToEnd = useCallback(() => {
@@ -100,158 +91,6 @@ export default function CoachScreen() {
   }, [scrollToEnd]);
 
   useEffect(() => { refresh(); }, [refresh]);
-
-  // Stop any TTS playback when leaving the screen — otherwise the coach's
-  // voice keeps reading after the user navigates away (poor UX, drains
-  // battery, and weird if a different audio source kicks in).
-  useEffect(() => {
-    return () => {
-      Speech.stop().catch(() => {});
-    };
-  }, []);
-
-  // Map our app locale to BCP-47 codes for the TTS engine. iOS picks the best
-  // local voice (en-US, fr-FR, es-ES…) so the coach sounds native.
-  const ttsLanguage = (() => {
-    const lc = currentLocale();
-    const map: Record<string, string> = {
-      en: "en-US", fr: "fr-FR", es: "es-ES",
-      it: "it-IT", de: "de-DE", pt: "pt-PT", ar: "ar-SA",
-    };
-    return map[lc] || "en-US";
-  })();
-
-  // Pick the most natural-sounding voice available on the device.
-  // iOS ships several quality tiers — Premium (neural, ~80MB download) and
-  // Enhanced (mid-tier, ~30MB) sound dramatically more human than the default
-  // Compact voices. We resolve the best match for the current locale once on
-  // mount and cache it so every Speech.speak call reuses it.
-  //
-  // The user has to download the Premium voice manually in iOS Settings →
-  // Accessibility → Spoken Content → Voices. If they haven't, we silently
-  // fall back to whatever Enhanced/Compact voice is installed for that locale.
-  const [bestVoice, setBestVoice] = useState<string | undefined>(undefined);
-  useEffect(() => {
-    (async () => {
-      try {
-        const voices = await Speech.getAvailableVoicesAsync();
-        if (!voices?.length) return;
-        const lang = ttsLanguage;
-        const langPrefix = lang.split("-")[0];
-        // Quality ordering: Premium > Enhanced > Default.
-        const QUALITY_RANK: Record<string, number> = {
-          Premium: 3, Enhanced: 2, Default: 1,
-        };
-        // Prefer voices that match the EXACT BCP-47 locale, then language prefix.
-        const matchingExact = voices.filter((v) => v.language === lang);
-        const matchingPrefix = voices.filter((v) => (v.language || "").startsWith(langPrefix));
-        const candidates = matchingExact.length ? matchingExact : matchingPrefix;
-        if (!candidates.length) return;
-        // Sort by quality, then by name (stable)
-        candidates.sort((a, b) => {
-          const qa = QUALITY_RANK[(a as any).quality || "Default"] || 1;
-          const qb = QUALITY_RANK[(b as any).quality || "Default"] || 1;
-          if (qa !== qb) return qb - qa;
-          return (a.identifier || "").localeCompare(b.identifier || "");
-        });
-        // Hand-curated favorite voices that are known to sound especially
-        // warm/natural for a wellness app. If one of them is installed, prefer
-        // it over the alphabetical pick. Names follow the iOS voice catalogue.
-        const PREFERRED_BY_LANG: Record<string, string[]> = {
-          en: ["Ava", "Evan", "Zoe", "Allison", "Samantha", "Serena", "Karen", "Tessa"],
-          fr: ["Audrey", "Aurélie", "Marie", "Amélie", "Thomas"],
-          es: ["Mónica", "Marisol", "Paulina", "Diego"],
-          it: ["Alice", "Federica", "Luca"],
-          de: ["Anna", "Helena", "Markus", "Petra"],
-          pt: ["Joana", "Luciana", "Catarina"],
-          ar: ["Maged", "Tarik"],
-        };
-        const prefer = PREFERRED_BY_LANG[langPrefix] || [];
-        const preferred = candidates.find((v) =>
-          prefer.some((p) => (v.name || v.identifier || "").includes(p)),
-        );
-        const chosen = preferred || candidates[0];
-        if (chosen?.identifier) setBestVoice(chosen.identifier);
-      } catch {}
-    })();
-  }, [ttsLanguage]);
-
-  const speak = useCallback(async (turnId: string, text: string) => {
-    try {
-      // First-time-only nudge: when the user taps Listen for the very first
-      // time, surface the iOS Premium-voice upgrade tip. Stored in
-      // AsyncStorage so we never show it twice.
-      try {
-        const seen = await AsyncStorage.getItem("coach_voice_tip_seen");
-        if (!seen) {
-          await AsyncStorage.setItem("coach_voice_tip_seen", "1");
-          setTimeout(() => showVoiceUpgradeAlert(true), 50);
-        }
-      } catch {}
-      // If we're already speaking THIS turn, treat the tap as a "stop".
-      const isSpeaking = await Speech.isSpeakingAsync().catch(() => false);
-      if (isSpeaking) {
-        await Speech.stop();
-        if (speakingId === turnId) { setSpeakingId(null); return; }
-      }
-      setSpeakingId(turnId);
-      Speech.speak(text, {
-        language: ttsLanguage,
-        // If we discovered a Premium / Enhanced voice for this locale, use it.
-        // Falls back to the OS default voice when undefined.
-        voice: bestVoice,
-        // Slightly slower than default — this is a wellness coach, not a news
-        // anchor. Calm pace is part of the product.
-        rate: 0.96,
-        pitch: 1.0,
-        onDone: () => setSpeakingId((prev) => (prev === turnId ? null : prev)),
-        onStopped: () => setSpeakingId((prev) => (prev === turnId ? null : prev)),
-        onError: () => setSpeakingId((prev) => (prev === turnId ? null : prev)),
-      });
-    } catch {
-      setSpeakingId(null);
-    }
-  }, [speakingId, ttsLanguage, bestVoice]);
-
-  // Voice-quality help dialog — explains the iOS Premium-voice flow.
-  // Used both by the first-time tip on tap-Listen and by the (i) header button.
-  const showVoiceUpgradeAlert = useCallback((firstTime = false) => {
-    const lc = currentLocale();
-    const voiceName = (
-      lc === "fr" ? "Audrey ou Aurélie" :
-      lc === "es" ? "Mónica o Marisol" :
-      lc === "it" ? "Alice o Federica" :
-      lc === "de" ? "Anna oder Helena" :
-      lc === "pt" ? "Joana ou Luciana" :
-      lc === "ar" ? "Maged" :
-      "Ava or Evan"
-    );
-    const title = firstTime ? "Want a more natural voice? ✦" : "Upgrade your coach voice";
-    const message =
-      `iOS uses a robotic 'Compact' voice by default. For a much warmer, ` +
-      `natural reading voice (free, ~80 MB):\n\n` +
-      `1. Open iOS Settings\n` +
-      `2. Accessibility → Spoken Content\n` +
-      `3. Voices → ${lc === "fr" ? "Français" : lc === "es" ? "Español" : lc === "de" ? "Deutsch" : lc === "it" ? "Italiano" : lc === "pt" ? "Português" : lc === "ar" ? "العربية" : "English"}\n` +
-      `4. Tap "${voiceName} (Premium)" then ☁️ to download\n` +
-      `5. Come back here — the upgrade kicks in automatically.`;
-    Alert.alert(
-      title,
-      message,
-      [
-        { text: "Maybe later", style: "cancel" },
-        {
-          text: "Open Settings",
-          onPress: () => {
-            // `Linking.openSettings()` opens InnFeel's Settings page; the user
-            // still needs to navigate to Accessibility. Better than nothing
-            // and the only path that works inside Expo Go.
-            Linking.openSettings().catch(() => {});
-          },
-        },
-      ],
-    );
-  }, []);
 
   const send = async (text?: string) => {
     const body = (text ?? input).trim();
@@ -274,12 +113,6 @@ export default function CoachScreen() {
       setTier(r.tier || tier);
       setQuotaLeft(typeof r.quota_left === "number" ? r.quota_left : quotaLeft);
       scrollToEnd();
-      // Auto-speak the new reply if the user opted in via the speaker toggle.
-      // Wrapped in a tiny delay so React paints the bubble before the audio
-      // engine spins up (otherwise the first word can clip on iOS).
-      if (autoSpeak && r?.reply) {
-        setTimeout(() => speak(r.turn_id, r.reply), 120);
-      }
     } catch (e: any) {
       // Roll back the optimistic user turn so the user can resend without seeing
       // a duplicate. The error toast tells them what happened.
@@ -316,12 +149,8 @@ export default function CoachScreen() {
     );
   };
 
-  const renderItem = ({ item, index }: { item: Turn; index: number }) => {
+  const renderItem = ({ item }: { item: Turn }) => {
     const mine = item.role === "user";
-    // Stable id for TTS playback tracking — backend gives `id` for fresh turns,
-    // older history rows fall back to a position+timestamp composite.
-    const turnId = item.id || `${index}-${item.created_at}`;
-    const isPlaying = speakingId === turnId;
     return (
       <View style={[styles.row, mine ? styles.rowMine : styles.rowTheirs]}>
         {mine ? (
@@ -335,24 +164,6 @@ export default function CoachScreen() {
         ) : (
           <View style={[styles.bubble, styles.bubbleTheirs]}>
             <Text style={styles.bubbleTxtTheirs}>{item.text}</Text>
-            {/* Listen button — taps the on-device TTS engine. Tap again on the
-                same bubble to stop. iOS picks the locale-appropriate native
-                voice automatically (e.g. `Amélie` for fr-FR). */}
-            <TouchableOpacity
-              onPress={() => speak(turnId, item.text)}
-              style={styles.listenBtn}
-              hitSlop={6}
-              testID={`tts-${turnId}`}
-            >
-              <Ionicons
-                name={isPlaying ? "stop-circle" : "volume-high-outline"}
-                size={14}
-                color={isPlaying ? "#FACC15" : "rgba(255,255,255,0.55)"}
-              />
-              <Text style={[styles.listenTxt, isPlaying && { color: "#FACC15" }]}>
-                {isPlaying ? "Stop" : "Listen"}
-              </Text>
-            </TouchableOpacity>
           </View>
         )}
       </View>
@@ -378,35 +189,6 @@ export default function CoachScreen() {
           <Text style={styles.headerTitle}>Wellness Coach</Text>
           <Text style={styles.headerSub}>{headerHint}</Text>
         </View>
-        <TouchableOpacity
-          onPress={() => showVoiceUpgradeAlert(false)}
-          hitSlop={8}
-          style={styles.headerBtn}
-          testID="voice-help"
-        >
-          <Ionicons
-            name="information-circle-outline"
-            size={20}
-            color="rgba(255,255,255,0.55)"
-          />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => {
-            setAutoSpeak((v) => {
-              if (v) Speech.stop().catch(() => {});
-              return !v;
-            });
-          }}
-          hitSlop={8}
-          style={styles.headerBtn}
-          testID="toggle-autospeak"
-        >
-          <Ionicons
-            name={autoSpeak ? "volume-high" : "volume-mute-outline"}
-            size={20}
-            color={autoSpeak ? "#FACC15" : "rgba(255,255,255,0.55)"}
-          />
-        </TouchableOpacity>
         <TouchableOpacity onLongPress={onResetLongPress} hitSlop={8} style={styles.headerBtn}>
           <Ionicons name="trash-outline" size={20} color="rgba(255,255,255,0.55)" />
         </TouchableOpacity>
