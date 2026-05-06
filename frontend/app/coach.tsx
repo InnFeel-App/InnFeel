@@ -7,6 +7,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Speech from "expo-speech";
+import * as Linking from "expo-linking";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { api } from "../src/api";
 import { useAuth } from "../src/auth";
@@ -176,6 +178,16 @@ export default function CoachScreen() {
 
   const speak = useCallback(async (turnId: string, text: string) => {
     try {
+      // First-time-only nudge: when the user taps Listen for the very first
+      // time, surface the iOS Premium-voice upgrade tip. Stored in
+      // AsyncStorage so we never show it twice.
+      try {
+        const seen = await AsyncStorage.getItem("coach_voice_tip_seen");
+        if (!seen) {
+          await AsyncStorage.setItem("coach_voice_tip_seen", "1");
+          setTimeout(() => showVoiceUpgradeAlert(true), 50);
+        }
+      } catch {}
       // If we're already speaking THIS turn, treat the tap as a "stop".
       const isSpeaking = await Speech.isSpeakingAsync().catch(() => false);
       if (isSpeaking) {
@@ -199,7 +211,47 @@ export default function CoachScreen() {
     } catch {
       setSpeakingId(null);
     }
-  }, [speakingId, ttsLanguage]);
+  }, [speakingId, ttsLanguage, bestVoice]);
+
+  // Voice-quality help dialog — explains the iOS Premium-voice flow.
+  // Used both by the first-time tip on tap-Listen and by the (i) header button.
+  const showVoiceUpgradeAlert = useCallback((firstTime = false) => {
+    const lc = currentLocale();
+    const voiceName = (
+      lc === "fr" ? "Audrey ou Aurélie" :
+      lc === "es" ? "Mónica o Marisol" :
+      lc === "it" ? "Alice o Federica" :
+      lc === "de" ? "Anna oder Helena" :
+      lc === "pt" ? "Joana ou Luciana" :
+      lc === "ar" ? "Maged" :
+      "Ava or Evan"
+    );
+    const title = firstTime ? "Want a more natural voice? ✦" : "Upgrade your coach voice";
+    const message =
+      `iOS uses a robotic 'Compact' voice by default. For a much warmer, ` +
+      `natural reading voice (free, ~80 MB):\n\n` +
+      `1. Open iOS Settings\n` +
+      `2. Accessibility → Spoken Content\n` +
+      `3. Voices → ${lc === "fr" ? "Français" : lc === "es" ? "Español" : lc === "de" ? "Deutsch" : lc === "it" ? "Italiano" : lc === "pt" ? "Português" : lc === "ar" ? "العربية" : "English"}\n` +
+      `4. Tap "${voiceName} (Premium)" then ☁️ to download\n` +
+      `5. Come back here — the upgrade kicks in automatically.`;
+    Alert.alert(
+      title,
+      message,
+      [
+        { text: "Maybe later", style: "cancel" },
+        {
+          text: "Open Settings",
+          onPress: () => {
+            // `Linking.openSettings()` opens InnFeel's Settings page; the user
+            // still needs to navigate to Accessibility. Better than nothing
+            // and the only path that works inside Expo Go.
+            Linking.openSettings().catch(() => {});
+          },
+        },
+      ],
+    );
+  }, []);
 
   const send = async (text?: string) => {
     const body = (text ?? input).trim();
@@ -326,6 +378,18 @@ export default function CoachScreen() {
           <Text style={styles.headerTitle}>Wellness Coach</Text>
           <Text style={styles.headerSub}>{headerHint}</Text>
         </View>
+        <TouchableOpacity
+          onPress={() => showVoiceUpgradeAlert(false)}
+          hitSlop={8}
+          style={styles.headerBtn}
+          testID="voice-help"
+        >
+          <Ionicons
+            name="information-circle-outline"
+            size={20}
+            color="rgba(255,255,255,0.55)"
+          />
+        </TouchableOpacity>
         <TouchableOpacity
           onPress={() => {
             setAutoSpeak((v) => {
