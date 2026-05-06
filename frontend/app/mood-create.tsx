@@ -64,6 +64,11 @@ export default function MoodCreate() {
 
   // Wellness sheet shown after successful drop
   const [wellness, setWellness] = useState<any>(null);
+  // Captured from POST /moods response — needed so the Share button (inside
+  // the wellness sheet) can ask the backend to compose the IG Reel for THIS
+  // specific mood. Without this, share() falls back to the static PNG path
+  // and the user loses their voice memo / music / video in the reel.
+  const [savedMoodId, setSavedMoodId] = useState<string | null>(null);
   const { share, Renderer: ShareRenderer } = useShareToStories();
 
   const runMusicSearch = async (q: string) => {
@@ -123,6 +128,7 @@ export default function MoodCreate() {
         const r = await api<{ mood: any }>("/moods/today");
         const m = r?.mood;
         if (!m) return;
+        if (m.mood_id) setSavedMoodId(m.mood_id);
         if (m.emotion) setEmotion(m.emotion);
         if (typeof m.intensity === "number") setIntensity(m.intensity);
         if (m.word) setWord(m.word);
@@ -396,7 +402,11 @@ export default function MoodCreate() {
     // word is optional — emotion selection is enough
     setLoading(true);
     try {
-      await api("/moods", {
+      // Capture the response so we can grab `mood_id` — required to compose
+      // the IG Reel for THIS specific aura. If the response is missing it
+      // (legacy server, network proxy stripping body, etc.), fall back to
+      // GET /moods/today which always returns the latest doc.
+      const created = await api<{ mood?: { mood_id?: string } }>("/moods", {
         method: "POST",
         body: {
           word: word.trim() || null, emotion,
@@ -421,6 +431,14 @@ export default function MoodCreate() {
           local_hour: new Date().getHours(),
         },
       });
+      let newMoodId: string | null = created?.mood?.mood_id || null;
+      if (!newMoodId) {
+        try {
+          const today = await api<{ mood?: { mood_id?: string } }>("/moods/today");
+          newMoodId = today?.mood?.mood_id || null;
+        } catch {}
+      }
+      if (newMoodId) setSavedMoodId(newMoodId);
       await refresh();
       // User posted — no need for the evening safety-net reminder today.
       try { const n = await import("../src/notifications"); await n.cancelEveningReminder(); } catch {}
@@ -759,7 +777,21 @@ export default function MoodCreate() {
         data={wellness}
         userName={user?.name}
         onClose={() => { setWellness(null); router.replace("/(tabs)/home"); }}
-        onShare={() => share({ kind: "mood", word: word.trim(), emotion, intensity, userName: user?.name })}
+        onShare={() => share({
+          kind: "mood",
+          // Required so the backend can build the IG Reel for THIS aura
+          // (with the user's voice memo, music, photo/video). Without it,
+          // the share sheet falls back to a static PNG and the user loses
+          // the voice memo / music.
+          mood_id: savedMoodId || undefined,
+          word: word.trim(),
+          emotion,
+          intensity,
+          userName: user?.name,
+          // The reel composer reads from the saved mood doc, but we still
+          // pass the music here so the share-sheet copy mentions the track.
+          music: selectedMusic ? { title: selectedMusic.name, artist: selectedMusic.artist } : null,
+        })}
       />
       <ShareRenderer />
     </View>
