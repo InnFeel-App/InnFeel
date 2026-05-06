@@ -155,12 +155,30 @@ def _render_overlay_png(
             d.text(((REEL_W - lw) / 2, y0), ln, font=f_desc, fill=(255, 255, 255, 230))
             y0 += 52
 
-    # Bottom CTA.
-    f_cta = _load_font(_LIB_SANS, 32)
-    cta = "innfeel.app"
-    cb = d.textbbox((0, 0), cta, font=f_cta)
-    cw = cb[2] - cb[0]
-    d.text(((REEL_W - cw) / 2, REEL_H - 72), cta, font=f_cta, fill=(255, 255, 255, 190))
+    # Bottom brand mark — pastes the InnFeel logo (RGBA) instead of plain text.
+    # Size ≈ 130x130 looks balanced on a 1080x1920 reel: visible but not dominant.
+    LOGO_SIZE = 130
+    try:
+        logo_path = os.path.join(os.path.dirname(__file__), "..", "assets", "logo-email.png")
+        logo = Image.open(logo_path).convert("RGBA")
+        logo = logo.resize((LOGO_SIZE, LOGO_SIZE), Image.LANCZOS)
+        # Slight transparency so it doesn't fight with the photo/video underneath.
+        if logo.mode == "RGBA":
+            alpha = logo.getchannel("A")
+            alpha = alpha.point(lambda p: int(p * 0.95))  # ~95% opacity
+            logo.putalpha(alpha)
+        logo_x = (REEL_W - LOGO_SIZE) // 2
+        logo_y = REEL_H - LOGO_SIZE - 60  # 60px from bottom
+        img.alpha_composite(logo, (logo_x, logo_y))
+    except Exception as e:
+        # Logo missing or corrupt — fall back silently to the text mark so we
+        # never break a reel build for a cosmetic asset issue.
+        logger.warning("logo overlay skipped: %s", e)
+        f_cta = _load_font(_LIB_SANS, 32)
+        cta = "innfeel.app"
+        cb = d.textbbox((0, 0), cta, font=f_cta)
+        cw = cb[2] - cb[0]
+        d.text(((REEL_W - cw) / 2, REEL_H - 72), cta, font=f_cta, fill=(255, 255, 255, 190))
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
