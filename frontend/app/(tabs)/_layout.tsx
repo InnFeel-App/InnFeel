@@ -64,7 +64,7 @@ export default function TabsLayout() {
           const names: Record<string, any> = {
             home: focused ? "radio-button-on" : "radio-button-off",
             create: "add-circle",
-            friends: focused ? "people" : "people-outline",
+            coach: focused ? "sparkles" : "sparkles-outline",
             messages: focused ? "chatbubbles" : "chatbubbles-outline",
             profile: focused ? "person" : "person-outline",
           };
@@ -81,8 +81,12 @@ export default function TabsLayout() {
       <Tabs.Screen name="home" options={{ title: "Home" }} />
       <Tabs.Screen name="create" options={{ title: "Aura" }} />
       <Tabs.Screen name="messages" options={{ title: "Inbox" }} />
-      <Tabs.Screen name="friends" options={{ title: "Friends" }} />
+      <Tabs.Screen name="coach" options={{ title: "Coach" }} />
       <Tabs.Screen name="profile" options={{ title: "Me" }} />
+      {/* Friends still routable via /(tabs)/friends but no longer in the
+          tab bar — moved to the Profile menu since invites + close-friends
+          management felt more like account-settings than primary navigation. */}
+      <Tabs.Screen name="friends" options={{ href: null }} />
       <Tabs.Screen name="stats" options={{ href: null }} />
     </Tabs>
   );

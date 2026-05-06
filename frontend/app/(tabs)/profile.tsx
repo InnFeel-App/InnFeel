@@ -79,15 +79,12 @@ export default function Profile() {
             </View>
           </View>
 
-          <TouchableOpacity testID="go-coach" style={styles.link} onPress={() => router.push("/coach")}>
-            <Ionicons name="sparkles-outline" size={20} color="#A78BFA" />
-            <Text style={styles.linkTxt}>Wellness Coach ✦</Text>
-            <Ionicons name="chevron-forward" size={18} color={COLORS.textTertiary} />
-          </TouchableOpacity>
+          {/* Wellness Coach + Journal links removed from here — they're now
+              dedicated tab destinations under the Coach hub (/coach). */}
 
-          <TouchableOpacity testID="go-journal" style={styles.link} onPress={() => router.push("/journal")}>
-            <Ionicons name="book-outline" size={20} color="#FACC15" />
-            <Text style={styles.linkTxt}>Journal · Morning & Evening</Text>
+          <TouchableOpacity testID="go-friends" style={styles.link} onPress={() => router.push("/(tabs)/friends")}>
+            <Ionicons name="people-outline" size={20} color="#34D399" />
+            <Text style={styles.linkTxt}>Friends · Invite</Text>
             <Ionicons name="chevron-forward" size={18} color={COLORS.textTertiary} />
           </TouchableOpacity>
 
