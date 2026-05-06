@@ -47,7 +47,10 @@ logger = logging.getLogger("innfeel.share")
 _FFMPEG_BIN = imageio_ffmpeg.get_ffmpeg_exe()
 
 REEL_W, REEL_H = 1080, 1920
-REEL_DURATION_SEC = 15
+# 10s reels (was 15s) — Instagram Stories caps at 60s but most users swipe past at
+# 8-12s anyway. Going from 15s → 10s shaves ~33% off both encode time AND file size,
+# bringing fresh first-share time well under 10s on a real device.
+REEL_DURATION_SEC = 10
 
 _LIB_SANS = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
 _LIB_SANS_REG = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
@@ -58,6 +61,29 @@ def _hex_to_rgb(hx: str) -> tuple[int, int, int]:
     if len(hx) != 6:
         return (167, 139, 250)
     return tuple(int(hx[i : i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
+
+
+async def prewarm_reel_for_mood(mood_id: str) -> None:
+    """Background-build the reel for a freshly-created/edited aura so that the
+    first user-initiated share returns instantly via cache.
+
+    Designed to be fired from `routes/moods.py` via `asyncio.create_task(...)`.
+    Failures are swallowed — this is an opportunistic optimization, never a
+    blocker for the mood-create flow.
+    """
+    try:
+        mood = await db.moods.find_one({"mood_id": mood_id}, {"_id": 0})
+        if not mood:
+            return
+        # Reuse the same code path the public endpoint uses by calling our own
+        # internal function with a synthesized "user" dict (we already verified
+        # ownership upstream via the moods.py endpoint).
+        synth_user = {"user_id": mood["user_id"]}
+        await build_reel(mood_id, synth_user)
+        logger.info(f"[share] prewarmed reel for mood={mood_id}")
+    except Exception as e:
+        # Don't crash on prewarm — user can still trigger manually.
+        logger.warning(f"[share] prewarm failed for mood={mood_id}: {e}")
 
 
 def _load_font(path: str, size: int) -> ImageFont.FreeTypeFont:
