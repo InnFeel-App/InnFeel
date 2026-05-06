@@ -247,11 +247,17 @@ def _ffmpeg_compose(
         )
 
     if has_audio and audio_path:
-        inputs += ["-i", audio_path]
-        af = f"[2:a]afade=t=in:st=0:d=0.3,afade=t=out:st={REEL_DURATION_SEC - 0.5}:d=0.5[aout]"
+        # `-stream_loop -1` on the audio input lets short voice memos (e.g. 3s)
+        # AND short music previews loop to fill the full reel duration. The
+        # output `-t REEL_DURATION_SEC` cuts the final length cleanly. Without
+        # this, `-shortest` would cap the video at the audio length (we removed
+        # `-shortest` on purpose — keeping it would truncate the video to 3s
+        # for a 3s voice memo).
+        inputs += ["-stream_loop", "-1", "-i", audio_path]
+        af = f"[2:a]afade=t=in:st=0:d=0.3,afade=t=out:st={REEL_DURATION_SEC - 0.5}:d=0.5,atrim=duration={REEL_DURATION_SEC}[aout]"
         full_filter = f"{vf};{af}"
         map_args = ["-map", "[vout]", "-map", "[aout]"]
-        audio_args = ["-c:a", "aac", "-b:a", "160k", "-shortest"]
+        audio_args = ["-c:a", "aac", "-b:a", "160k"]
     else:
         inputs += ["-f", "lavfi", "-t", str(REEL_DURATION_SEC), "-i", "anullsrc=r=44100:cl=stereo"]
         full_filter = vf
@@ -335,6 +341,14 @@ async def build_reel(mood_id: str, user: dict = Depends(get_current_user)):
         preview_url = music.get("preview_url")
         if preview_url and await _download(preview_url, audio_path):
             has_audio = True
+        # Fallback: if no music track was picked, use the user's own voice memo
+        # (audio_key in R2). This ensures every aura with sound gets sound in
+        # the reel — without a voice memo OR a music track, the reel is silent
+        # which is fine (gradient + text only).
+        if not has_audio and mood.get("audio_key"):
+            audio_url = _r2.generate_get_url(mood["audio_key"], expires=600)
+            if audio_url and await _download(audio_url, audio_path):
+                has_audio = True
 
         # Pillow overlay rendering is CPU-bound — offload to a thread.
         overlay_bytes = await asyncio.to_thread(
