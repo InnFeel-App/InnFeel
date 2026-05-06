@@ -60,10 +60,10 @@ const CATEGORIES: Category[] = [
   {
     key: "meditation",
     title: "Meditation",
-    subtitle: "Short, AI-generated meditations matched to your aura of the day.",
+    subtitle: "Themed sessions — Sleep, Anxiety, Gratitude, Focus. Soft female voice.",
     icon: "moon",
     colors: ["#1E1B4B", "#4C1D95"],
-    badge: "Soon",
+    route: "/meditation",
   },
 ];
 

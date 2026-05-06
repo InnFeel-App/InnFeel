@@ -3205,3 +3205,83 @@ agent_communication:
                   setTimeout(() => start("coherent"), 50)
             • Coach Hub already routes here. Backend untouched.
             User asked to test on their device next.
+
+  - task: "Guided Meditation — /meditation route (4 themed sessions)"
+    implemented: true
+    working: "NA"  # awaiting user device test
+    file: "frontend/app/meditation.tsx, frontend/app/(tabs)/coach.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Built the guided meditation screen end-to-end, mirroring the
+            structural patterns of /breath while diverging where the use
+            case demands.
+
+            Sessions (4 themed):
+              • Sleep      ~5 min — body scan + drift-off cues
+              • Anxiety    ~4 min — 5-4-3-2-1 grounding
+              • Gratitude  ~3 min — three-thing reflection
+              • Focus      ~4 min — pre-task presence
+            Each session is an array of { cueId, pauseAfter } where the
+            cue text is looked up in a 7-locale STR table (en/fr/es/it/de/
+            pt/ar). Cue text was kept short (≤1 sentence each) so TTS
+            lands cleanly within the scheduled pauses.
+
+            Animation strategy — different from /breath:
+              • Continuous Animated.loop (4s in / 6s out) running the same
+                breath-logo.png asset that /breath uses. This decouples
+                the orb from the narration: even if TTS stalls, the user
+                still sees a calm pulse. Single Animated.Value drives
+                scale + opacity + rotation interpolations.
+
+            Narration scheduler:
+              • Speech.speak's onDone callback chains the next cue, so we
+                never estimate spoken duration (which would break across
+                locales / voices). Pauses are waited *after* each cue.
+              • onError soft-fallback advances the script after 800ms so
+                a missing voice doesn't freeze the session.
+              • Final closing line ("Take this calm with you.") + Success
+                haptic when the script ends.
+
+            Voice picker:
+              • Reuses the same FEMALE_HINTS + MALE_BLOCKLIST + Premium >
+                Enhanced > Default ranking from /breath. Speech rate 0.42
+                iOS / 0.85 Android — slower than breath for meditative
+                pacing.
+
+            UI extras:
+              • Live phrase subtitle below the orb (accessibility +
+                read-along while sound is off).
+              • Thin progress bar synced to cue index.
+              • Coach Hub card updated: removed "Soon" badge, route → /meditation.
+            User asked to test on device; backend untouched.
+
+  - task: "Phase A — Rate limiting & Paywall (Coach + Journal)"
+    implemented: true
+    working: true
+    file: "backend/routes/coach.py, backend/routes/journal.py, frontend/app/coach-chat.tsx, frontend/app/journal.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: |
+            Verified Phase A is already fully wired. No new code needed:
+            • Backend (routes/coach.py): _check_and_consume_quota enforces
+              Free → 1 lifetime trial, Pro → 10/day, Zen → 30/day. Refund
+              on LLM error so users aren't penalised for upstream issues.
+            • Backend (routes/journal.py): /reflect requires Pro/Zen, then
+              consumes a coach quota credit through the same plumbing.
+            • Frontend (coach-chat.tsx): tier badge in header
+              ("Free trial — 1 message" / "X/10 left today · Pro" / "X/30
+              left today · Zen"). On 402 → Alert with "Upgrade" CTA →
+              /paywall.
+            • Frontend (journal.tsx): /reflect button. Free users get
+              "Pro feature" alert. 402 → "Coach quota reached" + Upgrade.
+            All exit ramps wired to /paywall. No additional changes to
+            this surface in tonight's work.
