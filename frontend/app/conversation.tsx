@@ -509,16 +509,6 @@ export default function Conversation() {
                     {!!item.text && <Text style={[styles.msg, mine && { color: "#000" }]}>{item.text}</Text>}
                   </Pressable>
                 );
-                const reactBtnNode = (
-                  <TouchableOpacity
-                    testID={`react-btn-${item.message_id}`}
-                    onPress={() => setPickerFor(pickerFor === item.message_id ? null : item.message_id)}
-                    style={styles.reactBtn}
-                    hitSlop={8}
-                  >
-                    <Ionicons name="happy-outline" size={14} color="#fff" />
-                  </TouchableOpacity>
-                );
                 return (
                   <Swipeable
                     ref={(ref) => { swipeableRefs.current[item.message_id] = ref; }}
@@ -533,18 +523,12 @@ export default function Conversation() {
                   >
                     <View style={[styles.rowContainer, mine ? styles.rowContainerMine : styles.rowContainerTheirs]}>
                       <View style={styles.msgCol}>
+                        {/* Bubble alone — no inline smiley button. To react, users
+                            either double-tap the bubble (quick ❤️) or long-press it
+                            (full picker). The redundant smiley icon was removed
+                            because it cluttered the chat visually. */}
                         <View style={[styles.bubbleLine, mine ? { justifyContent: "flex-end" } : { justifyContent: "flex-start" }]}>
-                          {mine ? (
-                            <>
-                              {reactBtnNode}
-                              {bubbleNode}
-                            </>
-                          ) : (
-                            <>
-                              {bubbleNode}
-                              {reactBtnNode}
-                            </>
-                          )}
+                          {bubbleNode}
                         </View>
                         {renderReactions(item, mine)}
                       </View>
