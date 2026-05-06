@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -438,186 +438,71 @@ async function pickFemaleVoiceId(language: string): Promise<string | undefined> 
 // ──────────────────────────────────────────────────────────────────────────
 
 /**
- * The breathing orb: app logo at the centre, surrounded by 3 soft halos
- * that scale together. Halos use semi-transparent overlapping circles to
- * fake a radial glow (no SVG needed). The tint shifts per phase to give
- * a subliminal cue: cyan-violet on inhale, amber on exhale, emerald on
- * hold — matches the rest of InnFeel's emotional palette.
+ * The breathing orb — V2.
+ *
+ * Design choice (after user feedback): no purple halo bubble, no synthetic
+ * petal mark. The shipped seed-of-life logo (breath-logo.png) IS the orb.
+ * It already carries its own soft white halo and saturated rainbow petals,
+ * so wrapping it in another container would only mute the asset.
+ *
+ * What we *do* animate:
+ *   • scale  — drives the breath cadence (Inhale grows, Exhale shrinks).
+ *               This single value also drives the inhale-paced rotate so
+ *               the petals slowly turn while the user breathes in.
+ *   • opacity — soft pulse: 1.0 at peak inhale, ~0.78 at end of exhale.
+ *               Makes the logo "breathe" with light as well as size.
+ *
+ * Rotation is intentional: the seed-of-life pattern's white outline strokes
+ * cross at clean angles, so a slow rotation is mesmerising rather than
+ * distracting (about 60° over a full inhale on 4-7-8). It also reinforces
+ * the felt difference between inhale (motion forward) and exhale (motion
+ * settling). We derive the rotation from the same scale Animated.Value via
+ * interpolation — no second tween, so they can never drift out of sync.
  */
 function BreathOrb({
   scale,
-  phaseKey,
 }: {
   scale: Animated.Value;
-  phaseKey: "inhale" | "hold" | "exhale" | "idle";
 }) {
-  const tint = useMemo(() => {
-    if (phaseKey === "inhale") return { c1: "#A78BFA", c2: "#22D3EE", glow: "rgba(167,139,250,0.55)" };
-    if (phaseKey === "exhale") return { c1: "#FBBF24", c2: "#F59E0B", glow: "rgba(251,191,36,0.45)" };
-    if (phaseKey === "hold")   return { c1: "#34D399", c2: "#10B981", glow: "rgba(52,211,153,0.45)" };
-    return { c1: "#4C1D95", c2: "#1E1B4B", glow: "rgba(167,139,250,0.30)" };
-  }, [phaseKey]);
-
-  // Halo rings — each one tracks the same scale value but with extra padding.
-  // The outermost ring is the largest & faintest, the inner ring is brighter.
+  // Scale travels 0.55 → 1.0. Interpolate to:
+  //   • a 0.78 → 1.0 opacity   (subtle luminance breath)
+  //   • a "0deg" → "60deg" spin (gentle inhale rotation)
+  const opacity = scale.interpolate({
+    inputRange: [0.55, 1.0],
+    outputRange: [0.78, 1.0],
+    extrapolate: "clamp",
+  });
+  const rotate = scale.interpolate({
+    inputRange: [0.55, 1.0],
+    outputRange: ["0deg", "60deg"],
+    extrapolate: "clamp",
+  });
   return (
     <View style={orbStyles.wrap} pointerEvents="none">
-      {/* Outer halo — softest, biggest */}
-      <Animated.View
+      <Animated.Image
+        source={require("../assets/images/breath-logo.png")}
         style={[
-          orbStyles.halo,
-          { width: 320, height: 320, borderRadius: 160, backgroundColor: tint.glow, opacity: 0.35,
-            transform: [{ scale }] },
+          orbStyles.logo,
+          { opacity, transform: [{ scale }, { rotate }] },
         ]}
+        resizeMode="contain"
       />
-      {/* Mid halo */}
-      <Animated.View
-        style={[
-          orbStyles.halo,
-          { width: 270, height: 270, borderRadius: 135, backgroundColor: tint.glow, opacity: 0.55,
-            transform: [{ scale }] },
-        ]}
-      />
-      {/* Core gradient orb */}
-      <Animated.View
-        style={[
-          orbStyles.core,
-          { transform: [{ scale }] },
-        ]}
-      >
-        <LinearGradient
-          colors={[tint.c1, tint.c2]}
-          start={{ x: 0.15, y: 0.15 }}
-          end={{ x: 0.85, y: 0.85 }}
-          style={StyleSheet.absoluteFill}
-        />
-        {/* Soft inner highlight to give the orb depth */}
-        <View style={orbStyles.highlight} />
-        {/* InnFeel petal mark — built from primitives so we never have to
-            fight a wordmark crop. Six soft, overlapping circles in the app's
-            emotional palette form the signature aura bloom. */}
-        <PetalMark />
-      </Animated.View>
     </View>
   );
 }
-
-/**
- * The InnFeel mark, drawn from React Native primitives.
- *
- * Why not the icon.png?  The shipped raster includes the "InnFeel" wordmark
- * baked into the lower half. Cropping reliably across iOS, Android and web
- * is messy. Composing the mark from 6 soft circles gives us:
- *   • crisp edges at every DPR
- *   • the same bloom shape the splash & adaptive icons use
- *   • zero asset dependency (works offline, never cached wrong)
- * The hex values come straight from theme.ts EMOTION_COLORS.
- */
-function PetalMark() {
-  // 6 petals positioned around the centre on a small circle. Indexes:
-  //   0=top, 1=top-right, 2=bottom-right, 3=bottom, 4=bottom-left, 5=top-left
-  const PETALS: { color: string; angle: number }[] = [
-    { color: "#FACC15", angle: -90  }, // joy / yellow
-    { color: "#EC4899", angle: -30  }, // love / pink
-    { color: "#22D3EE", angle:  30  }, // motivated / cyan
-    { color: "#10B981", angle:  90  }, // peace / green
-    { color: "#FF7A00", angle:  150 }, // excitement / orange
-    { color: "#A855F7", angle:  210 }, // inspired / purple
-  ];
-  const RADIUS = 22;        // distance from centre to petal centre
-  const PETAL_SIZE = 48;    // each soft circle's diameter
-  return (
-    <View style={petalStyles.wrap}>
-      {PETALS.map((p, i) => {
-        const rad = (p.angle * Math.PI) / 180;
-        const dx = Math.cos(rad) * RADIUS;
-        const dy = Math.sin(rad) * RADIUS;
-        return (
-          <View
-            key={i}
-            style={[
-              petalStyles.petal,
-              {
-                width: PETAL_SIZE,
-                height: PETAL_SIZE,
-                borderRadius: PETAL_SIZE / 2,
-                backgroundColor: p.color,
-                transform: [{ translateX: dx }, { translateY: dy }],
-              },
-            ]}
-          />
-        );
-      })}
-      {/* Inner highlight — a small luminous core that ties the petals
-          together and sells the "aura" feeling. */}
-      <View style={petalStyles.core} />
-    </View>
-  );
-}
-
-const petalStyles = StyleSheet.create({
-  wrap: {
-    width: 130,
-    height: 130,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  petal: {
-    position: "absolute",
-    opacity: 0.85,
-    // Subtle bloom: a wide soft shadow makes neighbouring petals melt into
-    // each other (tested on iOS/Android — Android falls back gracefully via
-    // elevation). On web the box-shadow polyfill takes over.
-    shadowColor: "#fff",
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 0 },
-  },
-  core: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: "#fff",
-    opacity: 0.95,
-    shadowColor: "#fff",
-    shadowOpacity: 0.95,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 0 },
-  },
-});
 
 const orbStyles = StyleSheet.create({
   wrap: {
-    width: 340,
-    height: 340,
+    // Big enough to let the logo's built-in white halo bleed without being
+    // clipped at the edges of the viewport.
+    width: 360,
+    height: 360,
     alignItems: "center",
     justifyContent: "center",
   },
-  halo: {
-    position: "absolute",
-  },
-  core: {
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    overflow: "hidden",
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#A78BFA",
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 28,
-    elevation: 12,
-  },
-  highlight: {
-    position: "absolute",
-    top: 18,
-    left: 30,
-    width: 80,
-    height: 60,
-    borderRadius: 40,
-    backgroundColor: "rgba(255,255,255,0.18)",
-    transform: [{ rotate: "-20deg" }],
+  logo: {
+    width: 320,
+    height: 320,
   },
 });
 
@@ -778,8 +663,12 @@ export default function BreathScreen() {
     return T("cueHold");
   };
 
-  const start = () => {
-    const p = PATTERNS[patternKey];
+  // Accepts an explicit `pk` so callers from the picker (which freshly set
+  // patternKey via setState) don't race against React's batched render —
+  // we always run the *intended* pattern, never a stale closure value.
+  const start = (pk?: Pattern["key"]) => {
+    const key = pk || patternKey;
+    const p = PATTERNS[key];
     if (!p) return;
     stopAll();
     setRunning(true);
@@ -862,21 +751,21 @@ export default function BreathScreen() {
               lc={lc}
               gradient={["#7C3AED", "#4338CA"]}
               icon="moon"
-              onPick={() => { setPatternKey("478"); setStage("play"); setTimeout(start, 50); }}
+              onPick={() => { setPatternKey("478"); setStage("play"); setTimeout(() => start("478"), 50); }}
             />
             <PatternCard
               patternKey="box"
               lc={lc}
               gradient={["#06B6D4", "#0EA5E9"]}
               icon="square-outline"
-              onPick={() => { setPatternKey("box"); setStage("play"); setTimeout(start, 50); }}
+              onPick={() => { setPatternKey("box"); setStage("play"); setTimeout(() => start("box"), 50); }}
             />
             <PatternCard
               patternKey="coherent"
               lc={lc}
               gradient={["#10B981", "#059669"]}
               icon="heart"
-              onPick={() => { setPatternKey("coherent"); setStage("play"); setTimeout(start, 50); }}
+              onPick={() => { setPatternKey("coherent"); setStage("play"); setTimeout(() => start("coherent"), 50); }}
             />
           </View>
 
@@ -918,7 +807,7 @@ export default function BreathScreen() {
 
       {/* Orb */}
       <View style={styles.orbWrap}>
-        <BreathOrb scale={scale} phaseKey={phaseKey} />
+        <BreathOrb scale={scale} />
       </View>
 
       {/* Phase label + countdown — placed *below* the orb so the petal

@@ -3159,3 +3159,49 @@ agent_communication:
             • Verified visually on web preview (login → /breath → pick a
               pattern → orb breathes + petals visible + label below).
             User asked to test on device first before we build Meditation.
+
+  - task: "Breathing — V2: real InnFeel logo + pulse + closure-bug fix"
+    implemented: true
+    working: "NA"  # awaiting user device test
+    file: "frontend/app/breath.tsx, frontend/assets/images/breath-logo.png"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Visual overhaul + bug fix following user feedback ("retire le logo
+            précédent et la bulle, utilise le vrai logo en pulse").
+
+            What changed:
+            • Removed the synthetic PetalMark, the LinearGradient core orb,
+              and the 3 concentric purple halo bubbles. The visual is now a
+              single hero element: the official InnFeel seed-of-life logo.
+            • New asset: assets/images/breath-logo.png — generated from the
+              user-uploaded JPEG via /tmp/conv_breath_logo.py. The script
+              applies a smart radial alpha mask:
+                – inner zone (≤30% radius) keeps the central white burst;
+                – mid zone (30–55%) graded ease-out fade for whitish pixels
+                  while saturated petal colours stay 255;
+                – outer zone (>55%) kills near-whites cleanly;
+                – final radial mask multiplier (62→85% smoothstep) erases
+                  JPEG-noise artefacts that would otherwise show as wisps
+                  on the dark UI.
+            • The logo *is* the breathing animation:
+                – `scale` Animated.Value drives size cadence
+                  (Inhale → 1.0, Exhale → 0.55).
+                – Same scale interpolated to opacity (0.78–1.0) and rotate
+                  (0–60deg) so the petals glow brighter and slowly turn
+                  during inhale, dim and settle on exhale. One source of
+                  truth → audio + visual + rotation cannot drift apart.
+            • Fixed a stale-closure bug: clicking a pattern card called
+              setTimeout(start, 50), but `start` was bound to whatever
+              patternKey existed in the previous render. After clicking
+              "Coherence" right after "478", the run still played 4-7-8
+              (visible as "Hold" labels appearing in a Coherence run).
+              start() now accepts an explicit `pk` parameter — every
+              picker callback passes its key directly:
+                  setTimeout(() => start("coherent"), 50)
+            • Coach Hub already routes here. Backend untouched.
+            User asked to test on their device next.
