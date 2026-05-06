@@ -52,10 +52,10 @@ const CATEGORIES: Category[] = [
   {
     key: "breath",
     title: "Breathing",
-    subtitle: "60-second guided breath cycles. Land yourself before the noise.",
+    subtitle: "Guided breath cycles with a soft voice. Land yourself before the noise.",
     icon: "leaf",
     colors: ["#34D399", "#10B981"],
-    badge: "Soon",
+    route: "/breath",
   },
   {
     key: "meditation",

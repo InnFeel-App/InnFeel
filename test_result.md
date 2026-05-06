@@ -3122,3 +3122,40 @@ agent_communication:
         Timing summary: checkin 80ms / reflect (real LLM) 5.68s / reflect (fallback) 230ms.
 
         No backend code was modified by the testing agent.
+
+  - task: "Guided Breathing Exercise — /breath route"
+    implemented: true
+    working: "NA"  # awaiting user device test
+    file: "frontend/app/breath.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Built the rhythmic guided-breath screen end-to-end:
+            • Stage 1 ("pick"): 3 benefit cards — 4-7-8 Relax (sleep/anxiety),
+              Box 4-4-4-4 (focus/SEALs), Coherence 5-5 (heart-mind sync).
+              Each card lists 3 concrete benefits + total minutes.
+            • Stage 2 ("play"): three concentric halos + a programmatic
+              PetalMark (6 colored circles around a luminous core, drawn
+              from theme.ts emotional palette). The whole orb scales with
+              the breath via Animated.timing(easeInOut). The phase label
+              ("Inhale / Hold / Exhale") sits *below* the orb so the mark
+              stays visible.
+            • TTS cadence-locked: setTimeout schedule per phase, each cue
+              spoken at phase boundary. Soft female voice picked via
+              `pickFemaleVoiceId()` — ranks known female voices per locale
+              (Samantha, Audrey, Monica, Alice, Anna, Joana, Maha …) with
+              Premium > Enhanced > Default and a male-name blocklist.
+              Speech rate 0.46 on iOS / 0.88 on Android for calm pacing.
+            • Haptics: Haptics.selectionAsync() at each phase change,
+              Haptics.notificationAsync(Success) at end-of-session.
+            • i18n: inline 7-locale strings (en/fr/es/it/de/pt/ar) — labels,
+              cues, benefits all translated; the screen subscribes to
+              useI18n() so it re-renders on locale change.
+            • Coach Hub card updated: removed "Soon" badge, route → /breath.
+            • Verified visually on web preview (login → /breath → pick a
+              pattern → orb breathes + petals visible + label below).
+            User asked to test on device first before we build Meditation.
