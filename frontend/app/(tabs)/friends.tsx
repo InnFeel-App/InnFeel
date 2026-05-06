@@ -50,8 +50,8 @@ export default function Friends() {
   useEffect(() => {
     Animated.loop(
       Animated.sequence([
-        Animated.timing(glowPulse, { toValue: 1, duration: 1600, easing: Easing.inOut(Easing.quad), useNativeDriver: false }),
-        Animated.timing(glowPulse, { toValue: 0, duration: 1600, easing: Easing.inOut(Easing.quad), useNativeDriver: false }),
+        Animated.timing(glowPulse, { toValue: 1, duration: 1600, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(glowPulse, { toValue: 0, duration: 1600, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
       ]),
     ).start();
     Animated.loop(
