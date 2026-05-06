@@ -118,86 +118,92 @@ def _render_overlay_png(
 
     d = ImageDraw.Draw(img)
 
-    # Top tag: InnFeel logo-style label with color chip.
+    # Top-LEFT: brand chip (unchanged).
     f_brand = _load_font(_LIB_SANS, 42)
     chip_r = 22
     cx, cy = 72, 100
     d.ellipse((cx - chip_r, cy - chip_r, cx + chip_r, cy + chip_r), fill=(*rgb, 255))
     d.text((cx + chip_r + 18, cy - 26), "InnFeel ✦", font=f_brand, fill=(255, 255, 255, 255))
 
-    # User name (small) at top-left.
+    # Top-LEFT: user name (unchanged).
     if user_name:
         f_user = _load_font(_LIB_SANS_REG, 34)
         d.text((72, 160), user_name, font=f_user, fill=(255, 255, 255, 210))
 
     # ──────────────────────────────────────────────────────────────────────
-    # TOP-RIGHT HEADLINE BLOCK (right-aligned)
-    #   • EMOTION — big bold uppercase title (the dominant visual)
-    #   • word    — smaller line directly under, same right anchor
-    # Sizes shrink with character length so long emotions ("OVERWHELMED",
-    # "UNMOTIVATED") still fit on a single line within 1080 - 2×60 = 960 px.
+    # TOP-RIGHT: EMOTION — big bold uppercase title, in the emotion's OWN
+    # color (e.g. orange for "Overwhelmed", yellow for "Joyful"). This is the
+    # only element that moved; everything else (word, description) stays at
+    # its original location.
+    # Size shrinks with length so it always fits inside 1080 - 2×60 = 960 px.
     # ──────────────────────────────────────────────────────────────────────
     RIGHT_MARGIN = 60
     emo_txt = (emotion or "").upper()
     emo_len = len(emo_txt)
+    # Character width for Liberation Sans Bold ≈ fontSize × 0.72.
+    # Available width = 1080 - 2 × 60 = 960 px. Sizes are calibrated so the
+    # widest realistic emotion ("OVERWHELMED" = 11 chars) still fits with a
+    # safety margin even when measured by Pillow's textbbox.
     if emo_len >= 11:
-        emo_size = 140
+        emo_size = 110
+    elif emo_len >= 10:
+        emo_size = 120
     elif emo_len >= 9:
-        emo_size = 170
+        emo_size = 135
+    elif emo_len >= 8:
+        emo_size = 150
     elif emo_len >= 7:
-        emo_size = 200
+        emo_size = 165
+    elif emo_len >= 6:
+        emo_size = 185
     else:
-        emo_size = 230
+        emo_size = 210
     f_emo = _load_font(_LIB_SANS, emo_size)
     emo_bbox = d.textbbox((0, 0), emo_txt, font=f_emo)
     emo_w = emo_bbox[2] - emo_bbox[0]
     emo_h = emo_bbox[3] - emo_bbox[1]
+    # Defensive auto-shrink loop in case textbbox still overflows (different
+    # Pillow / FreeType versions can measure 5-10% wider). Halts the moment
+    # the rendered width fits inside the safe zone.
+    while emo_w > REEL_W - 2 * RIGHT_MARGIN and emo_size > 60:
+        emo_size -= 10
+        f_emo = _load_font(_LIB_SANS, emo_size)
+        emo_bbox = d.textbbox((0, 0), emo_txt, font=f_emo)
+        emo_w = emo_bbox[2] - emo_bbox[0]
+        emo_h = emo_bbox[3] - emo_bbox[1]
     emo_x = REEL_W - RIGHT_MARGIN - emo_w
-    emo_y = 150  # leaves room for the InnFeel ✦ + user name on the left
+    emo_y = 150
     # Drop shadow for legibility on photo backgrounds.
     emo_shadow = Image.new("RGBA", img.size, (0, 0, 0, 0))
     sd = ImageDraw.Draw(emo_shadow)
-    sd.text((emo_x + 4, emo_y + 6), emo_txt, font=f_emo, fill=(0, 0, 0, 200))
-    emo_shadow = emo_shadow.filter(ImageFilter.GaussianBlur(10))
+    sd.text((emo_x + 4, emo_y + 6), emo_txt, font=f_emo, fill=(0, 0, 0, 220))
+    emo_shadow = emo_shadow.filter(ImageFilter.GaussianBlur(12))
     img = Image.alpha_composite(img, emo_shadow)
     d = ImageDraw.Draw(img)
-    d.text((emo_x, emo_y), emo_txt, font=f_emo, fill=(255, 255, 255, 255))
+    # The emotion is rendered IN ITS OWN HEX COLOR (rgb tuple from EMOTIONS
+    # palette) so it visually anchors the brand color of this aura.
+    d.text((emo_x, emo_y), emo_txt, font=f_emo, fill=(*rgb, 255))
 
-    # Tinted underline accent in the emotion's color, right-aligned under the title.
-    underline_y = emo_y + emo_h + 18
-    underline_w = min(220, max(120, int(emo_w * 0.35)))
-    d.rounded_rectangle(
-        (REEL_W - RIGHT_MARGIN - underline_w, underline_y, REEL_W - RIGHT_MARGIN, underline_y + 8),
-        radius=4, fill=(*rgb, 255),
-    )
+    # Headline word (unchanged from previous design — centered, big, white,
+    # near the bottom of the canvas). Keeps the original visual rhythm.
+    headline = word or emotion or "Today"
+    base_size = 180
+    if len(headline) > 12:
+        base_size = 130
+    if len(headline) > 20:
+        base_size = 96
+    f_word = _load_font(_LIB_SANS, base_size)
+    hw_bbox = d.textbbox((0, 0), headline, font=f_word)
+    hw = hw_bbox[2] - hw_bbox[0]
+    shadow = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow)
+    sd.text(((REEL_W - hw) / 2 + 4, REEL_H - 430 + 4), headline, font=f_word, fill=(0, 0, 0, 180))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(8))
+    img = Image.alpha_composite(img, shadow)
+    d = ImageDraw.Draw(img)
+    d.text(((REEL_W - hw) / 2, REEL_H - 430), headline, font=f_word, fill=(255, 255, 255, 255))
 
-    # The "word" — slightly smaller, italic-feel via lighter weight, same anchor.
-    headline = (word or "").strip()
-    if headline:
-        word_len = len(headline)
-        if word_len >= 14:
-            word_size = 80
-        elif word_len >= 10:
-            word_size = 100
-        elif word_len >= 7:
-            word_size = 120
-        else:
-            word_size = 140
-        f_word = _load_font(_LIB_SANS_REG, word_size)
-        hw_bbox = d.textbbox((0, 0), headline, font=f_word)
-        hw = hw_bbox[2] - hw_bbox[0]
-        word_x = REEL_W - RIGHT_MARGIN - hw
-        word_y = underline_y + 26
-        # Subtle drop shadow.
-        wsh = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        wsd = ImageDraw.Draw(wsh)
-        wsd.text((word_x + 3, word_y + 4), headline, font=f_word, fill=(0, 0, 0, 170))
-        wsh = wsh.filter(ImageFilter.GaussianBlur(6))
-        img = Image.alpha_composite(img, wsh)
-        d = ImageDraw.Draw(img)
-        d.text((word_x, word_y), headline, font=f_word, fill=(255, 255, 255, 235))
-
-    # Description / note (kept exactly as before — wraps under, near the bottom).
+    # Description / note — unchanged, wraps under the headline at the bottom.
     if description:
         f_desc = _load_font(_LIB_SANS_REG, 40)
         # Simple word wrap at ~28 chars per line, max 3 lines.
@@ -430,7 +436,7 @@ async def build_reel(mood_id: str, user: dict = Depends(get_current_user)):
     # ──────────────────────────────────────────────────────────────────────
     music = mood.get("music") or {}
     cache_payload = json.dumps({
-        "v": 4,  # bump when overlay/encoder logic changes to invalidate caches
+        "v": 6,  # bump when overlay/encoder logic changes to invalidate caches
         "emotion": emotion,
         "color": color_hex,
         "word": word,

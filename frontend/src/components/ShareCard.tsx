@@ -80,52 +80,40 @@ const ShareCard = forwardRef((props: Props, ref: React.Ref<View>) => {
 
         {props.kind === "mood" ? (
           <>
-            {/* Right-aligned headline block:
-                  • "{USERNAME} FEELS" small kicker
-                  • EMOTION — biggest, boldest line (the title)
-                  • word — slightly smaller, same alignment
-                Sizes shrink with character length so long emotions like
-                "Overwhelmed" / "Unmotivated" still fit on a single line
-                inside the 920px usable canvas (1080 - 2×80 padding). */}
+            {/* Top-right: EMOTION as the bold colored title (in its OWN
+                emotion-color from the palette). Sized dynamically so long
+                emotions like "Overwhelmed" / "Unmotivated" still fit on a
+                single line within 1080 - 2×80 = 920px usable width. */}
             {(() => {
               const emoTxt = (em.label || "").toUpperCase();
-              const wordTxt = props.word || "";
               const emoLen = emoTxt.length;
-              // Calibrated against the worst case "OVERWHELMED" (11 chars).
-              const emoSize = emoLen >= 11 ? 150 : emoLen >= 9 ? 170 : emoLen >= 7 ? 200 : 220;
-              const wordLen = wordTxt.length;
-              const wordSize = wordLen >= 14 ? 80 : wordLen >= 10 ? 100 : wordLen >= 7 ? 120 : 140;
+              const emoSize = emoLen >= 11 ? 150 : emoLen >= 9 ? 175 : emoLen >= 7 ? 200 : 220;
               return (
                 <View style={styles.headlineRight}>
-                  <Text style={styles.kickerRight}>
-                    {(props.userName || "Someone").toUpperCase()} FEELS
-                  </Text>
                   <Text
                     style={[
                       styles.emotionTitleRight,
-                      { fontSize: emoSize, lineHeight: Math.round(emoSize * 1.02) },
+                      {
+                        fontSize: emoSize,
+                        lineHeight: Math.round(emoSize * 1.02),
+                        color: em.hex,
+                      },
                     ]}
                     numberOfLines={1}
                     adjustsFontSizeToFit
                   >
                     {emoTxt}
                   </Text>
-                  {wordTxt ? (
-                    <Text
-                      style={[
-                        styles.wordRight,
-                        { fontSize: wordSize, lineHeight: Math.round(wordSize * 1.05) },
-                      ]}
-                      numberOfLines={2}
-                      adjustsFontSizeToFit
-                    >
-                      {wordTxt}
-                    </Text>
-                  ) : null}
                 </View>
               );
             })()}
-            <View style={[styles.emotionRow, { alignSelf: "flex-end" }]}>
+            {/* Word — kept at the ORIGINAL location (under the kicker, big
+                white headline). Only the emotion moved to top-right. */}
+            <Text style={styles.kicker}>
+              {(props.userName || "Someone").toUpperCase()} FEELS
+            </Text>
+            <Text style={styles.hugeWord}>{props.word || "—"}</Text>
+            <View style={styles.emotionRow}>
               <View style={[styles.dot, { backgroundColor: em.hex }]} />
             </View>
             <View style={styles.intensityRow}>
@@ -312,42 +300,28 @@ const styles = StyleSheet.create({
   blob: { position: "absolute", borderRadius: 9999 },
   content: { flex: 1, padding: 80, paddingTop: 100 },
   brand: { color: "#fff", fontSize: 28, fontWeight: "700", letterSpacing: 6, opacity: 0.85 },
-  // Right-aligned headline block (mood share card) — emotion is the bold
-  // title at top-right, word sits a bit smaller below at the same anchor.
+  // Emotion title — anchored top-right via absolute positioning so the
+  // existing layout (kicker → word → intensity → music) keeps its original
+  // vertical rhythm. Color is set inline from the emotion palette so each
+  // aura wears its own brand color.
   headlineRight: {
-    alignSelf: "stretch",
-    marginTop: 60,
+    position: "absolute",
+    top: 100,
+    right: 80,
+    maxWidth: 720,
     alignItems: "flex-end",
   },
-  kickerRight: {
-    color: "rgba(255,255,255,0.55)",
-    fontSize: 22,
-    letterSpacing: 4,
-    fontWeight: "600",
-    textAlign: "right",
-    marginBottom: 14,
-  },
   emotionTitleRight: {
-    color: "#fff",
     fontWeight: "900",
     letterSpacing: -3,
     textAlign: "right",
-    textShadowColor: "rgba(0,0,0,0.35)",
+    textShadowColor: "rgba(0,0,0,0.45)",
     textShadowOffset: { width: 0, height: 4 },
-    textShadowRadius: 14,
-    alignSelf: "stretch",
+    textShadowRadius: 16,
   },
-  wordRight: {
-    color: "rgba(255,255,255,0.92)",
-    fontWeight: "700",
-    letterSpacing: -2,
-    textAlign: "right",
-    marginTop: 18,
-    fontStyle: "italic",
-    alignSelf: "stretch",
-  },
-  // Legacy fields kept for non-mood card kinds (stats / leaderboard).
-  kicker: { color: "rgba(255,255,255,0.55)", fontSize: 22, letterSpacing: 4, marginTop: 60, fontWeight: "600" },
+  // Original styles preserved (kicker / word stay at original location,
+  // unchanged from the pre-edit layout).
+  kicker: { color: "rgba(255,255,255,0.55)", fontSize: 22, letterSpacing: 4, marginTop: 260, fontWeight: "600" },
   hugeWord: { color: "#fff", fontSize: 180, fontWeight: "800", letterSpacing: -4, marginTop: 18, lineHeight: 190 },
   emotionRow: { flexDirection: "row", alignItems: "center", gap: 18, marginTop: 14 },
   dot: { width: 42, height: 42, borderRadius: 21 },
