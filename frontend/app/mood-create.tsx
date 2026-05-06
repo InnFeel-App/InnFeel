@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Image, Alert, KeyboardAvoidingView, Platform } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Image, Alert, KeyboardAvoidingView, Platform, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
@@ -35,6 +35,13 @@ export default function MoodCreate() {
   const [video, setVideo] = useState<{ uri: string; key?: string; seconds: number } | null>(null);
   const [privacy, setPrivacy] = useState<"friends" | "close" | "private">("friends");
   const [loading, setLoading] = useState(false);
+  // Upload-in-progress flags — block submit and show progress UI until finished.
+  // Without these, the user could tap Save while a fresh video is still uploading,
+  // and we'd ship the OLD R2 key from `video.key` (the previous aura's media) — that
+  // bug was reported by users seeing old videos persist after editing.
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [uploadingVideo, setUploadingVideo] = useState(false);
+  const [uploadingAudio, setUploadingAudio] = useState(false);
 
   // Audio recording state (Pro) — local URI of the recording
   const [audioUri, setAudioUri] = useState<string | null>(null);
@@ -167,14 +174,21 @@ export default function MoodCreate() {
       await rec.stopAndUnloadAsync();
       const uri = rec.getURI();
       if (uri) {
+        // Local URI now available — but the R2 key isn't ready yet. Show the local
+        // playback control immediately and flag the upload as in-progress so the
+        // Save button is disabled until we have the new key (otherwise we'd ship
+        // the previous aura's audio_key on a quick Save).
         setAudioUri(uri);
-        // Upload to R2 immediately
+        setAudioKey(null);
+        setUploadingAudio(true);
         try {
           const key = await uploadMedia("mood_audio", uri, "audio/m4a", { compress: false });
           setAudioKey(key);
         } catch (e: any) {
           // Fallback: keep URI for local playback but flag audioKey as null so submit sends b64
           console.warn("Audio upload failed, will fallback to base64", e?.message);
+        } finally {
+          setUploadingAudio(false);
         }
       }
       // Reset audio mode so subsequent playback routes to speaker (not earpiece) on iOS
@@ -225,11 +239,22 @@ export default function MoodCreate() {
     if (!perm.granted) { Alert.alert("Permission needed", "We need photo access to attach images."); return; }
     const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.9 });
     if (!r.canceled && r.assets[0]?.uri) {
+      // CRITICAL: clear the previous photo/video keys IMMEDIATELY so that if the user
+      // taps Save before the upload finishes, we don't ship the stale R2 key.
+      // We keep the local URI for preview but null out the key while uploading.
+      const localUri = r.assets[0].uri;
+      setPhoto({ uri: localUri, key: undefined });
+      setVideo(null);
+      setUploadingPhoto(true);
       try {
-        const key = await uploadMedia("mood_photo", r.assets[0].uri, "image/jpeg");
-        setPhoto({ uri: r.assets[0].uri, key });
-        setVideo(null);
-      } catch (e: any) { Alert.alert("Upload failed", e?.message || "Try again."); }
+        const key = await uploadMedia("mood_photo", localUri, "image/jpeg");
+        setPhoto({ uri: localUri, key });
+      } catch (e: any) {
+        Alert.alert("Upload failed", e?.message || "Try again.");
+        setPhoto(null);
+      } finally {
+        setUploadingPhoto(false);
+      }
     }
   };
 
@@ -238,11 +263,19 @@ export default function MoodCreate() {
     if (!perm.granted) { Alert.alert("Permission needed", "We need camera access to take photos."); return; }
     const r = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.9 });
     if (!r.canceled && r.assets[0]?.uri) {
+      const localUri = r.assets[0].uri;
+      setPhoto({ uri: localUri, key: undefined });
+      setVideo(null);
+      setUploadingPhoto(true);
       try {
-        const key = await uploadMedia("mood_photo", r.assets[0].uri, "image/jpeg");
-        setPhoto({ uri: r.assets[0].uri, key });
-        setVideo(null);
-      } catch (e: any) { Alert.alert("Upload failed", e?.message || "Try again."); }
+        const key = await uploadMedia("mood_photo", localUri, "image/jpeg");
+        setPhoto({ uri: localUri, key });
+      } catch (e: any) {
+        Alert.alert("Upload failed", e?.message || "Try again.");
+        setPhoto(null);
+      } finally {
+        setUploadingPhoto(false);
+      }
     }
   };
 
@@ -259,11 +292,21 @@ export default function MoodCreate() {
     if (r.canceled || !r.assets[0]?.uri) return;
     const a = r.assets[0];
     const dur = Math.min(10, Math.max(1, Math.round((a.duration || 10000) / 1000)));
+    // Same race-condition fix as photo: drop old key & old photo immediately so a Save
+    // mid-upload doesn't reuse the previous aura's video. Visual placeholder shows the
+    // upload progress until the new R2 key is in state.
+    setVideo({ uri: a.uri, key: undefined, seconds: dur });
+    setPhoto(null);
+    setUploadingVideo(true);
     try {
       const key = await uploadMedia("mood_video", a.uri, "video/mp4", { compress: false, ext: "mp4" });
       setVideo({ uri: a.uri, key, seconds: dur });
-      setPhoto(null);
-    } catch (e: any) { Alert.alert("Upload failed", e?.message || "Try again."); }
+    } catch (e: any) {
+      Alert.alert("Upload failed", e?.message || "Try again.");
+      setVideo(null);
+    } finally {
+      setUploadingVideo(false);
+    }
   };
 
   const recordVideo = async () => {
@@ -278,11 +321,18 @@ export default function MoodCreate() {
     if (r.canceled || !r.assets[0]?.uri) return;
     const a = r.assets[0];
     const dur = Math.min(10, Math.max(1, Math.round((a.duration || 10000) / 1000)));
+    setVideo({ uri: a.uri, key: undefined, seconds: dur });
+    setPhoto(null);
+    setUploadingVideo(true);
     try {
       const key = await uploadMedia("mood_video", a.uri, "video/mp4", { compress: false, ext: "mp4" });
       setVideo({ uri: a.uri, key, seconds: dur });
-      setPhoto(null);
-    } catch (e: any) { Alert.alert("Upload failed", e?.message || "Try again."); }
+    } catch (e: any) {
+      Alert.alert("Upload failed", e?.message || "Try again.");
+      setVideo(null);
+    } finally {
+      setUploadingVideo(false);
+    }
   };
 
   const pick = () => {
@@ -324,6 +374,25 @@ export default function MoodCreate() {
   };
 
   const submit = async () => {
+    // Block submit if any media upload is still in progress — otherwise we'd ship
+    // the previous aura's R2 keys (the reported "old video stays after edit" bug).
+    if (uploadingPhoto || uploadingVideo || uploadingAudio) {
+      Alert.alert(
+        "Upload in progress",
+        "Your media is still uploading. Wait a moment and try again.",
+      );
+      return;
+    }
+    // Defensive: if the user picked a video/photo/audio but the key never landed
+    // (e.g. silent upload error), don't ship a half-baked payload.
+    if (video && !video.key) {
+      Alert.alert("Video not ready", "Please re-pick the video.");
+      return;
+    }
+    if (photo && !photo.key) {
+      Alert.alert("Photo not ready", "Please re-pick the photo.");
+      return;
+    }
     // word is optional — emotion selection is enough
     setLoading(true);
     try {
@@ -431,14 +500,32 @@ export default function MoodCreate() {
                 <Text style={styles.proInlineTxt}>Video is Pro</Text>
               </View>
             </View>
-            <TouchableOpacity testID="mood-add-photo" onPress={pick} style={styles.photoBox}>
+            <TouchableOpacity testID="mood-add-photo" onPress={pick} style={styles.photoBox} disabled={uploadingPhoto || uploadingVideo}>
               {photo ? (
-                <Image source={{ uri: photo.uri }} style={styles.photoPrev} />
+                <View>
+                  <Image source={{ uri: photo.uri }} style={styles.photoPrev} />
+                  {uploadingPhoto ? (
+                    <View style={styles.uploadOverlay}>
+                      <ActivityIndicator color="#fff" size="small" />
+                      <Text style={styles.uploadOverlayTxt}>Uploading photo…</Text>
+                    </View>
+                  ) : null}
+                </View>
               ) : video ? (
                 <View style={[styles.photoPrev, { backgroundColor: "#111", alignItems: "center", justifyContent: "center", gap: 8 }]}>
-                  <Ionicons name="videocam" size={28} color="#fff" />
-                  <Text style={{ color: "#fff", fontWeight: "600" }}>Video · {video.seconds}s · loops</Text>
-                  <Text style={{ color: COLORS.textSecondary, fontSize: 11 }}>Tap to change</Text>
+                  {uploadingVideo ? (
+                    <>
+                      <ActivityIndicator color="#fff" size="small" />
+                      <Text style={{ color: "#fff", fontWeight: "600" }}>Uploading video…</Text>
+                      <Text style={{ color: COLORS.textSecondary, fontSize: 11 }}>Don't tap Save just yet ✦</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Ionicons name="videocam" size={28} color="#fff" />
+                      <Text style={{ color: "#fff", fontWeight: "600" }}>Video · {video.seconds}s · loops</Text>
+                      <Text style={{ color: COLORS.textSecondary, fontSize: 11 }}>Tap to change</Text>
+                    </>
+                  )}
                 </View>
               ) : (
                 <View style={styles.photoEmpty}>
@@ -501,7 +588,14 @@ export default function MoodCreate() {
                           />
                         ))}
                       </View>
-                      <Text style={styles.audioDur}>{recSeconds || MAX_AUDIO_SECONDS}s</Text>
+                      {uploadingAudio ? (
+                        <View style={styles.audioUploadInline}>
+                          <ActivityIndicator color={auraColor} size="small" />
+                          <Text style={styles.audioUploadTxt}>Uploading…</Text>
+                        </View>
+                      ) : (
+                        <Text style={styles.audioDur}>{recSeconds || MAX_AUDIO_SECONDS}s</Text>
+                      )}
                       <TouchableOpacity testID="mood-clear-audio" onPress={clearAudio} style={styles.clearBtn}>
                         <Ionicons name="close" size={16} color={COLORS.textSecondary} />
                       </TouchableOpacity>
@@ -638,7 +732,23 @@ export default function MoodCreate() {
             </View>
 
             <View style={{ marginTop: 22 }}>
-              <Button testID="mood-submit" label={t("create.post")} onPress={submit} loading={loading} />
+              {(uploadingPhoto || uploadingVideo || uploadingAudio) ? (
+                <View style={styles.uploadingBanner}>
+                  <ActivityIndicator color="#FACC15" size="small" />
+                  <Text style={styles.uploadingBannerTxt}>
+                    {uploadingVideo ? "Uploading video — wait a sec ✦" :
+                     uploadingPhoto ? "Uploading photo — wait a sec ✦" :
+                     "Uploading audio — wait a sec ✦"}
+                  </Text>
+                </View>
+              ) : null}
+              <Button
+                testID="mood-submit"
+                label={t("create.post")}
+                onPress={submit}
+                loading={loading}
+                disabled={uploadingPhoto || uploadingVideo || uploadingAudio}
+              />
             </View>
             <View style={{ height: 40 }} />
           </ScrollView>
@@ -712,4 +822,22 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: "rgba(253,224,71,0.35)",
   },
   proInlineTxt: { color: "#FDE047", fontSize: 10, fontWeight: "800", letterSpacing: 0.4, textTransform: "uppercase" },
+  // Upload progress visuals — used to give users clear feedback that an
+  // upload is mid-flight so they don't tap Save with the previous aura's
+  // R2 key still in state.
+  uploadOverlay: {
+    position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+    alignItems: "center", justifyContent: "center", gap: 8,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  uploadOverlayTxt: { color: "#fff", fontWeight: "600", fontSize: 13 },
+  audioUploadInline: { flexDirection: "row", alignItems: "center", gap: 6 },
+  audioUploadTxt: { color: COLORS.textSecondary, fontSize: 11, fontWeight: "600" },
+  uploadingBanner: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+    padding: 10, marginBottom: 10, borderRadius: 14,
+    backgroundColor: "rgba(250,204,21,0.10)",
+    borderWidth: 1, borderColor: "rgba(250,204,21,0.35)",
+  },
+  uploadingBannerTxt: { color: "#FACC15", fontSize: 12, fontWeight: "600" },
 });
