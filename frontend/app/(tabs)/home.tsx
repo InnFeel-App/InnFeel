@@ -227,7 +227,7 @@ export default function Home() {
               <Ionicons name="people" size={24} color="#fff" />
               <Text style={styles.lockedTxt}>{t("home.noFriendsYet")}</Text>
               <Text style={[styles.lockedTxt, { fontSize: 12, marginTop: 6, opacity: 0.7 }]}>
-                Friends need to add you back with your email: {user?.email}
+                Share your invite link from the Friends tab — they'll be added with one tap.
               </Text>
               <View style={{ marginTop: 12 }}>
                 <Button testID="add-friend-cta" variant="secondary" label={t("friends.add")} onPress={() => router.push("/(tabs)/friends")} />

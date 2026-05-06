@@ -784,6 +784,151 @@ agent_communication:
 
         No backend code was modified by the testing agent.
 
+backend_session24:
+  - task: "Privacy-safe friend invite-code endpoints — GET /api/friends/my-code + POST /api/friends/add-by-code"
+    implemented: true
+    working: true
+    file: "/app/backend/routes/friends.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Session 24 invite-code endpoints backend test COMPLETE — 43/43 PASS (100%).
+            Harness: /app/backend_test.py vs https://charming-wescoff-8.preview.emergentagent.com/api.
+            Creds: luna@innfeel.app / demo1234, rio@innfeel.app / demo1234.
+
+            1) GET /api/friends/my-code IDEMPOTENCY — 9/9 PASS:
+              · No-auth (fresh httpx client, no cookies) → 401 {"detail":"Not authenticated"} in 97ms.
+              · luna 1st call → 200 in 50ms with body {"code":"82AC5D9C"}.
+                · code is a string ✓, length == 8 ✓, matches /^[A-HJ-NP-Z2-9]{8}$/ ✓
+                  (upper-case base32 minus O/0/I/1).
+              · luna 2nd call → 200 in 75ms, returns SAME code "82AC5D9C" (no regeneration) ✓.
+              · Direct Mongo read (motor + MONGO_URL): db.users.invite_code for luna == "82AC5D9C"
+                ✓ — code is persisted on the user document.
+
+            2) POST /api/friends/add-by-code HAPPY PATH — 12/12 PASS:
+              · rio GET /friends/my-code → 200 with code "WEDT8YNM" (valid shape).
+              · Pre-clean removed any pre-existing luna↔rio friendship rows.
+              · luna POST /friends/add-by-code {"code":"WEDT8YNM"} → 200 in 69ms with body
+                {"ok":true,"already_friends":false,
+                 "friend":{"user_id":"user_df9e6fd5b7b5","name":"Rio","avatar_color":"#2DD4BF"}}.
+                · ok:true ✓, already_friends:false ✓, friend.user_id==rio_id ✓,
+                  friend.name=="Rio" ✓, friend.avatar_color present ✓.
+                · friend.email NOT present in response ✓ (privacy preserved).
+              · DB verification: db.friendships count for (luna→rio)==1 AND (rio→luna)==1
+                — both directions inserted ✓.
+              · Re-call same endpoint with same code (idempotent) → 200 with
+                {"ok":true,"already_friends":true,...} ✓.
+              · DB count_documents unchanged at 1/1 in both directions — no duplicate rows ✓.
+
+            3) POST /api/friends/add-by-code ERROR PATHS — 11/11 PASS:
+              · Invalid code "ZZZZZZZZ" (no matching user) → 404
+                {"detail":"Invalid invite code"} ✓.
+              · Own code (luna calling with luna's own code "82AC5D9C") → 400
+                {"detail":"That's your own code"} ✓.
+              · Length 3 ("ABC") → 422 (Pydantic Field min_length=4 rejection,
+                detail.type=="string_too_short", ctx.min_length==4) ✓.
+              · Length 17 ("A"*17) → 422 (Pydantic Field max_length=16 rejection,
+                detail.type=="string_too_long", ctx.max_length==16) ✓.
+              · Lowercase code (rio_code.lower() == "wedt8ynm") → 200 with
+                already_friends:true ✓ — confirms server-side `.upper()` in
+                add_friend_by_code (line 70 of routes/friends.py) handles lowercase input.
+                Codes are stored uppercase AND matched case-insensitively after upper-casing.
+              · No-auth POST (fresh httpx client) → 401 {"detail":"Not authenticated"} ✓.
+
+            4) PRIVACY REGRESSION on GET /api/friends — 5/5 PASS:
+              · luna GET /friends → 200 with 3 friend objects
+                (user_65e31a723c50, user_ac327dad7eee, user_df9e6fd5b7b5).
+              · NO friend row contains an `email` field ✓ — the projection in
+                routes/friends.py:list_friends only returns
+                {user_id, name, avatar_color, avatar_b64, avatar_key, streak,
+                 dropped_today, is_close} as required.
+              · Each friend row has user_id ✓.
+
+            5) LEGACY /api/friends/add (email flow) NO-REGRESSION — 5/5 PASS:
+              · Pre-clean removed both directions of luna↔rio friendship (2 rows).
+              · luna POST /friends/add {"email":"rio@innfeel.app"} → 200 in 59ms with
+                {"ok":true,"friend":{"user_id":"user_df9e6fd5b7b5","name":"Rio",
+                 "email":"rio@innfeel.app","avatar_color":"#2DD4BF"}}.
+                · ok:true ✓, friend.user_id==rio_id ✓, friend.email present (documented
+                  contract of /api/friends/add — different from the privacy-safe
+                  /add-by-code) ✓.
+              · DB verification: both directions (luna→rio, rio→luna) created ✓.
+
+            BACKEND HEALTH:
+              · /var/log/supervisor/backend.err.log line count UNCHANGED across the
+                run (2547 → 2547). Zero Tracebacks, zero 500s, zero unhandled exceptions
+                during the 23 endpoint calls.
+              · backend.out.log shows the exact expected status codes per call:
+                401, 200, 200, 200 (rio my-code), 200 add-by-code, 200 re-call,
+                404, 400, 422, 422, 200 (lowercase), 401 (no-auth),
+                200 (/friends), 200 (/friends/add).
+
+            HARNESS NOTES (no backend code modified):
+              · httpx persists Set-Cookie across calls. Since the backend appears to
+                prefer cookie auth over Authorization Bearer when both are present
+                on a request, the harness uses TWO separate httpx.Client instances
+                (one per identity: luna, rio) to avoid cross-identity bleed. Without
+                this, rio's login cookie (set last on a shared client) would route
+                luna's Bearer-authenticated calls to rio. Backend behaviour was
+                always correct; this is purely a test-client hygiene concern.
+              · No-auth checks also use a fresh client to ensure no leftover
+                session cookie carries over.
+
+            CONCLUSION: Both new endpoints work exactly as specified.
+              · GET /api/friends/my-code lazily generates, persists, and idempotently
+                returns an 8-char base32 (no O/0/I/1) invite code per user.
+              · POST /api/friends/add-by-code resolves the code to the target user,
+                inserts both friendship directions, is idempotent on re-call,
+                accepts lowercase input (server-side upper-cases), enforces
+                Pydantic length bounds (4-16), rejects own-code and unknown codes
+                with the documented messages, and never leaks the friend's email
+                in the response (only user_id, name, avatar_color).
+              · Privacy regression on GET /api/friends holds — no email leakage.
+              · Legacy /api/friends/add (email flow) still works — full back-compat.
+              · No regressions, no exceptions in backend.err.log. No code fixes
+                were applied by the testing agent.
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Session 24 privacy-safe friend invite-code endpoints backend test COMPLETE — 43/43 PASS.
+
+        ✅ GET /api/friends/my-code (9/9): 401 unauth, 200 first call returns 8-char
+           base32 code matching /^[A-HJ-NP-Z2-9]{8}$/, 200 second call returns SAME
+           code (idempotent), users.invite_code persisted in MongoDB.
+
+        ✅ POST /api/friends/add-by-code happy path (12/12): 200 with
+           {ok, already_friends:false, friend:{user_id, name, avatar_color}} —
+           NO email in friend object. Both friendship directions inserted in DB.
+           Re-call returns already_friends:true with no duplicate rows.
+
+        ✅ Error paths (11/11): invalid code → 404 "Invalid invite code", own code →
+           400 "That's your own code", length 3 → 422 (Pydantic min_length=4),
+           length 17 → 422 (Pydantic max_length=16), lowercase code → 200
+           (server upper-cases input), no-auth → 401.
+
+        ✅ Privacy regression on GET /api/friends (5/5): no `email` field on any
+           friend row. Projection sticks to {user_id, name, avatar_*, streak,
+           dropped_today, is_close}.
+
+        ✅ Legacy POST /api/friends/add (5/5): still 200 with email-bearing friend
+           object — full backward compatibility.
+
+        BACKEND HEALTH: backend.err.log line count unchanged (2547→2547).
+        Zero Tracebacks, zero 500s during the test run.
+
+        HARNESS NOTE: Used two separate httpx.Client instances (one per identity)
+        to avoid Set-Cookie bleed between luna and rio. Backend prefers cookie over
+        Bearer when both are present, so a shared client mis-routes calls. Backend
+        behaviour itself was always correct — verified against direct Mongo reads.
+
+        No backend code was modified by the testing agent.
+
+
 backend_session22:
   - task: "Smart Reminders (B4) — GET /api/notifications/smart-hour + POST /api/moods local_hour push"
     implemented: true
@@ -2385,7 +2530,7 @@ metadata:
 
 test_plan:
   current_focus:
-    - "MP4 Reel Pre-warming — POST /api/moods triggers background reel build (Session 23)"
+    - "Friend invite codes — GET /api/friends/my-code + POST /api/friends/add-by-code (Session 23)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -2576,3 +2721,40 @@ agent_communication:
         NO frontend changes in this slice. Credentials in test_credentials.md:
           • Admin: hello@innfeel.app / admin123
           • Demo:  luna@innfeel.app / demo1234, rio@innfeel.app / demo1234
+
+
+agent_communication:
+    -agent: "main"
+    -message: |
+        Session 23 — Privacy-safe friend invites by code (replaces email-based flow).
+
+        BACKEND CHANGES (routes/friends.py):
+          • New GET /api/friends/my-code — lazily generates and returns the
+            caller's stable 8-char invite_code (alphabet A-Z2-9 minus O/0/I/1).
+          • New POST /api/friends/add-by-code {code} — adds a friend by their
+            code. Reuses Free-plan 25-friend cap. Idempotent.
+
+        TESTS NEEDED:
+          1) GET /api/friends/my-code
+             - 401 without auth.
+             - First call generates a code: 8 chars, uppercase, no O/0/I/1.
+             - Second call returns the SAME code.
+             - Verify users.invite_code is persisted.
+
+          2) POST /api/friends/add-by-code with valid code
+             - Auth as rio, fetch his code via /friends/my-code.
+             - Auth as luna and call /friends/add-by-code with rio's code.
+             - Returns {ok:true, already_friends:false, friend:{...}}.
+             - Both directions of friendship inserted.
+             - Re-call returns already_friends:true (idempotent).
+
+          3) Error paths:
+             - Invalid code → 404 "Invalid invite code".
+             - Own code → 400 "That's your own code".
+             - Too-short code → 422.
+
+          4) Privacy regression — GET /api/friends still does not include email.
+
+          5) No regression on POST /api/friends/add (legacy email flow).
+
+        Credentials: hello@innfeel.app/admin123, luna@innfeel.app/demo1234, rio@innfeel.app/demo1234

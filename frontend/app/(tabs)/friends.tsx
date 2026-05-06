@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Alert, RefreshControl, Linking, Share } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -19,10 +19,21 @@ export default function Friends() {
   const [err, setErr] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  // Stable, share-safe invite code per user. Replaces the previous practice
+  // of pasting the user's email into WhatsApp/SMS messages — protects user
+  // privacy (other people won't see the email) and lets the recipient be
+  // added with a single tap on the deep link.
+  const [myCode, setMyCode] = useState<string | null>(null);
 
   const closeCount = friends.filter((f) => f.is_close).length;
 
-  const inviteText = `Hey! I'm on InnFeel — we share our mood once a day in color. Join me: https://innfeel.app ✦${user?.email ? ` (add me: ${user.email})` : ""}`;
+  // Universal link → opens https://innfeel.app/add/{code} which redirects to
+  // the app via App/Universal Links (or innfeel://add/{code} if the user is
+  // already on a device with the app installed).
+  const inviteLink = myCode ? `https://innfeel.app/add/${myCode}` : "https://innfeel.app";
+  const inviteText = myCode
+    ? `Hey! I'm on InnFeel — we share our aura once a day in color. Tap to add me: ${inviteLink} ✦`
+    : `Hey! I'm on InnFeel — we share our aura once a day in color. Join me: https://innfeel.app ✦`;
 
   const inviteWhatsApp = async () => {
     const url = `whatsapp://send?text=${encodeURIComponent(inviteText)}`;
@@ -40,10 +51,30 @@ export default function Friends() {
   }, []);
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
+  // Lazily fetch the invite code once (the backend creates one on demand).
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api<{ code: string }>("/friends/my-code");
+        if (r?.code) setMyCode(r.code);
+      } catch {}
+    })();
+  }, []);
+
   const add = async () => {
     setErr(null);
+    const raw = email.trim();
+    if (!raw) return;
     try {
-      await api("/friends/add", { method: "POST", body: { email: email.trim() } });
+      // Smart input: if it doesn't look like an email it's almost certainly
+      // an invite code → call /friends/add-by-code instead. Codes are also
+      // upper-cased for the user since the backend stores them uppercase.
+      const looksLikeEmail = /@/.test(raw);
+      if (looksLikeEmail) {
+        await api("/friends/add", { method: "POST", body: { email: raw.toLowerCase() } });
+      } else {
+        await api("/friends/add-by-code", { method: "POST", body: { code: raw.toUpperCase() } });
+      }
       setEmail("");
       await load();
     } catch (e: any) { setErr(e.message); }
@@ -96,7 +127,7 @@ export default function Friends() {
               value={email}
               onChangeText={setEmail}
               style={styles.input}
-              placeholder={t("friends.addByEmail")}
+              placeholder="Add by code or email"
               placeholderTextColor="#555"
               autoCapitalize="none"
               keyboardType="email-address"
@@ -106,6 +137,17 @@ export default function Friends() {
             </TouchableOpacity>
           </View>
           {err ? <Text style={styles.err}>{err}</Text> : null}
+
+          {/* Share-safe invite identity. Tapping copies the link to the system
+              share sheet — never exposes the user's email to the recipient. */}
+          {myCode ? (
+            <TouchableOpacity onPress={inviteGeneric} style={styles.codePill} testID="my-invite-code">
+              <Ionicons name="ticket-outline" size={14} color="#FACC15" />
+              <Text style={styles.codePillLabel}>Your code</Text>
+              <Text style={styles.codePillValue}>{myCode}</Text>
+              <Ionicons name="share-outline" size={14} color={COLORS.textSecondary} />
+            </TouchableOpacity>
+          ) : null}
 
           <View style={styles.inviteRow}>
             <TouchableOpacity testID="invite-whatsapp" onPress={inviteWhatsApp} style={[styles.inviteBtn, { backgroundColor: "#25D366" }]}>
@@ -184,6 +226,14 @@ const styles = StyleSheet.create({
   err: { color: "#F87171", marginTop: 8 },
   hint: { color: COLORS.textTertiary, fontSize: 11, marginTop: 8 },
   inviteRow: { flexDirection: "row", gap: 10, marginTop: 14 },
+  codePill: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+    marginTop: 10, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999,
+    backgroundColor: "rgba(250,204,21,0.10)",
+    borderWidth: 1, borderColor: "rgba(250,204,21,0.35)",
+  },
+  codePillLabel: { color: COLORS.textSecondary, fontSize: 11, fontWeight: "600", letterSpacing: 0.5, textTransform: "uppercase" },
+  codePillValue: { color: "#FACC15", fontSize: 14, fontWeight: "800", letterSpacing: 2 },
   inviteBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14, borderRadius: 16 },
   inviteTxt: { color: "#fff", fontWeight: "700", fontSize: 13 },
   empty: { color: COLORS.textSecondary, textAlign: "center", marginTop: 40 },

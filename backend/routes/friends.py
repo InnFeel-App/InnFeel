@@ -2,7 +2,10 @@
 
 Extracted from server.py. All endpoints mounted under /api/.
 """
+import secrets
+
 from fastapi import APIRouter, HTTPException, Depends, Body
+from pydantic import BaseModel, Field
 
 from app_core.db import db
 from app_core.deps import now_utc, today_key, get_current_user, is_pro
@@ -10,6 +13,91 @@ from app_core.models import AddFriendIn
 from app_core.push import send_push
 
 router = APIRouter()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Invite code helpers — share-safe per-user identifier so the WhatsApp invite
+# text doesn't leak the user's email. Codes are short, all-uppercase,
+# unambiguous (no O/0/I/1) base32-style strings of fixed length 8.
+# ─────────────────────────────────────────────────────────────────────────────
+_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # 32 chars, no O/0/I/1
+
+
+def _generate_invite_code(length: int = 8) -> str:
+    return "".join(secrets.choice(_CODE_ALPHABET) for _ in range(length))
+
+
+async def _ensure_invite_code(user: dict) -> str:
+    """Return the user's invite code, lazily creating one if missing.
+    Retries on the (extremely unlikely) collision."""
+    code = (user or {}).get("invite_code")
+    if code:
+        return code
+    for _ in range(8):
+        candidate = _generate_invite_code()
+        # `update_one` is upsert-free — we add a uniqueness check at write time.
+        existing = await db.users.find_one({"invite_code": candidate}, {"_id": 1})
+        if existing:
+            continue
+        await db.users.update_one(
+            {"user_id": user["user_id"]},
+            {"$set": {"invite_code": candidate, "invite_code_at": now_utc()}},
+        )
+        return candidate
+    raise HTTPException(status_code=500, detail="Could not allocate an invite code")
+
+
+@router.get("/friends/my-code")
+async def get_my_invite_code(user: dict = Depends(get_current_user)):
+    """Return the caller's stable invite code. Used by the share-sheet to
+    build the deep link without exposing the user's email."""
+    code = await _ensure_invite_code(user)
+    return {"code": code}
+
+
+class AddByCodeIn(BaseModel):
+    code: str = Field(min_length=4, max_length=16)
+
+
+@router.post("/friends/add-by-code")
+async def add_friend_by_code(data: AddByCodeIn, user: dict = Depends(get_current_user)):
+    """Add a friend by their share-safe invite code (no email exchange)."""
+    pro = is_pro(user)
+    if not pro:
+        existing_count = await db.friendships.count_documents({"user_id": user["user_id"]})
+        if existing_count >= 25:
+            raise HTTPException(status_code=403, detail="Free plan caps at 25 friends. Upgrade to Pro.")
+    code = data.code.strip().upper()
+    target = await db.users.find_one({"invite_code": code})
+    if not target:
+        raise HTTPException(status_code=404, detail="Invalid invite code")
+    if target["user_id"] == user["user_id"]:
+        raise HTTPException(status_code=400, detail="That's your own code")
+    # Idempotent — already-friends just returns ok.
+    already = await db.friendships.find_one({"user_id": user["user_id"], "friend_id": target["user_id"]})
+    if not already:
+        for a, b in [(user["user_id"], target["user_id"]), (target["user_id"], user["user_id"])]:
+            try:
+                await db.friendships.insert_one({"user_id": a, "friend_id": b, "created_at": now_utc()})
+            except Exception:
+                pass
+        fc = await db.friendships.count_documents({"user_id": user["user_id"]})
+        await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"friend_count": fc}})
+        await send_push(
+            target["user_id"], "friend",
+            "New friend on InnFeel ✨",
+            f"{user.get('name', 'Someone')} added you as a friend",
+            {"route": "/(tabs)/friends", "from_user_id": user["user_id"], "kind": "friend"},
+        )
+    return {
+        "ok": True,
+        "already_friends": bool(already),
+        "friend": {
+            "user_id": target["user_id"],
+            "name": target.get("name", ""),
+            "avatar_color": target.get("avatar_color"),
+        },
+    }
 
 
 @router.get("/friends")
