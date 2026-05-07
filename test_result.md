@@ -3411,11 +3411,11 @@ agent_communication:
 
   - task: "Tier overhaul — Pro=5/day, Zen=20/day, Meditation gating, Paywall €€"
     implemented: true
-    working: "NA"
+    working: true
     file: "backend/routes/coach.py, backend/routes/meditation.py, backend/server.py, frontend/app/coach-chat.tsx, frontend/app/meditation.tsx, frontend/app/paywall.tsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false  # 39/40 PASS — only env quirk on luna being Pro
     status_history:
         - working: "NA"
           agent: "main"
