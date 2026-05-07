@@ -4002,3 +4002,217 @@ agent_communication:
 
         No backend code was modified by the testing agent.
 
+
+
+## OWNER ROLE + ADMIN PROMOTION/DEMOTION (Jun 2025)
+backend:
+  - task: "Owner protection and admin promote/demote"
+    implemented: true
+    working: true
+    file: "/app/backend/routes/admin.py + /app/backend/server.py + /app/backend/app_core/deps.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+            Implemented an OWNER role:
+            (1) Seed: hello@innfeel.app now has is_owner=True, is_admin=True,
+                pro=True, zen=True, pro_expires_at=+3650d (lifetime). The
+                idempotent re-startup update also forces these flags.
+            (2) sanitize_user (deps.py) now exposes is_owner and zen so
+                frontend can reason about the role.
+            (3) routes/admin.py:
+                · _public_user includes is_owner.
+                · _require_owner helper added.
+                · /admin/revoke-tier now refuses to act on is_owner=True
+                  (400 "The owner cannot be revoked.") AND refuses to act
+                  on any admin unless caller is_owner=True
+                  (403 "Only the owner can modify another admin's
+                  subscription.").
+                · NEW POST /admin/grant-admin (owner-only):
+                  - Accepts {email|user_id, note?}
+                  - Sets is_admin=True, pro=True, zen=True,
+                    pro_expires_at=+3650d, pro_source="admin_promotion"
+                  - Inserts a pro_grants audit row
+                  - Idempotent: returns {ok:true, already_admin:true} if
+                    the target is already an admin.
+                · NEW POST /admin/revoke-admin (owner-only):
+                  - 400 if target.is_owner
+                  - Idempotent: returns {ok:true, was_admin:false} if not
+                    an admin
+                  - Otherwise: clears is_admin, pro, zen, source flags;
+                    revokes outstanding pro_grants.
+
+            Test instructions:
+              · Owner login → /api/me must return {is_owner:true, is_admin:true,
+                zen:true, pro:true}.
+              · POST /admin/grant-admin {email:"luna@innfeel.app"} as owner →
+                200, then /me of luna → is_admin:true, zen:true, pro:true.
+              · POST /admin/grant-admin as a non-owner admin → 403 "Owner
+                access required".
+              · POST /admin/revoke-tier {user_id:owner} as anyone → 400 "The
+                owner cannot be revoked.".
+              · POST /admin/revoke-tier {user_id:other_admin} as non-owner
+                admin → 403 "Only the owner can modify another admin's
+                subscription.". Same as owner → still 400 because target
+                is admin? No — owner case: backend checks is_owner first
+                (only blocks owner target), then admin-on-admin (only
+                blocks non-owner caller). Owner CAN revoke another admin
+                via /admin/revoke-tier or /admin/revoke-admin.
+              · POST /admin/revoke-admin {user_id:owner} as owner →
+                400 "The owner cannot be demoted.".
+              · POST /admin/revoke-admin {user_id:luna} as owner → 200,
+                then luna.is_admin:false, pro:false, zen:false.
+        -working: true
+        -agent: "testing"
+        -comment: |
+            OWNER ROLE + ADMIN PROMOTION/DEMOTION backend test COMPLETE — 45/45 PASS (100%).
+            Harness: /app/backend_test.py vs https://charming-wescoff-8.preview.emergentagent.com/api.
+            Creds: hello@innfeel.app / admin123 (OWNER), luna@innfeel.app / demo1234.
+
+            1) OWNER /me SHAPE — 5/5 PASS:
+              · POST /auth/login hello@innfeel.app/admin123 → 200 with access_token.
+              · GET /auth/me → 200 with is_owner:true, is_admin:true, zen:true, pro:true.
+                (Endpoint is /api/auth/me — the spec said /api/me but only /auth/me exists;
+                this is what sanitize_user feeds the frontend.)
+
+            2) /admin/revoke-tier OWNER PROTECTION — 4/4 PASS:
+              · As owner, POST /admin/revoke-tier {email:"hello@innfeel.app"} → 400 with
+                detail exactly "The owner cannot be revoked." ✓
+              · As luna (after promotion to admin in step 3), POST /admin/revoke-tier
+                {email:"hello@innfeel.app"} → 400 with same exact detail (the is_owner check
+                fires before the cross-admin guard, as documented in routes/admin.py L412-418). ✓
+
+            3) /admin/grant-admin (owner-only) — 12/12 PASS:
+              · As owner, POST /admin/grant-admin {email:"luna@innfeel.app"} → 200 with
+                {ok:true, user_id, email:"luna@innfeel.app", is_admin:true}.
+              · GET /admin/users/{luna_id} → 200 confirms is_admin:true, zen:true, pro:true,
+                pro_source:"admin_promotion" (matches routes/admin.py L491). ✓
+              · As owner, POST /admin/grant-admin {email:"luna@innfeel.app"} again → 200 with
+                {ok:true, already_admin:true, user_id} (idempotent on already-admin). ✓
+              · Re-login luna and verify her sanitize_user output: is_admin:true,
+                is_owner:false. ✓
+              · As luna (now non-owner admin), POST /admin/grant-admin {email:"rio@innfeel.app"}
+                → 403 with detail exactly "Owner access required". ✓
+
+            4) CROSS-ADMIN GUARD on /admin/revoke-tier — 3/3 PASS:
+              · Setup: as owner, promoted rio to admin (200).
+              · As luna (non-owner admin), POST /admin/revoke-tier {email:"rio@innfeel.app"}
+                (target is another admin) → 403 with detail exactly
+                "Only the owner can modify another admin's subscription." ✓
+
+            5) /admin/revoke-admin (owner-only) — 11/11 PASS:
+              · As luna (non-owner admin), POST /admin/revoke-admin {email:"rio@innfeel.app"}
+                → 403 with detail exactly "Owner access required". ✓
+              · As owner, POST /admin/revoke-admin {email:"hello@innfeel.app"} → 400 with
+                detail exactly "The owner cannot be demoted." ✓
+              · As owner, POST /admin/revoke-admin {email:"luna@innfeel.app"} → 200 with
+                {ok:true, user_id, is_admin:false}. ✓
+              · GET /admin/users/{luna_id} confirms is_admin:false, pro:false, zen:false
+                (the auto-Zen granted on promotion was correctly stripped). ✓
+              · As owner, POST /admin/revoke-admin {email:"luna@innfeel.app"} again → 200
+                with {ok:true, was_admin:false, user_id} (idempotent). ✓
+              · Cleanup: demoted rio (200).
+
+            6) AUTH GATE — 1/1 PASS:
+              · Fresh httpx.Client with no Authorization header and no cookies, POST
+                /admin/grant-admin {email:"luna@innfeel.app"} → 401
+                {"detail":"Not authenticated"}. ✓
+
+            7) REGRESSION — 4/4 PASS:
+              · GET /admin/stats/overview → 200 with users.admin == 1 (only the owner remains
+                an admin after cleanup; >= 1 as required). ✓
+              · GET /admin/users/list?tier=admin → 200 with the owner present in the result
+                set (email:"hello@innfeel.app", is_owner:true). ✓
+
+            BACKEND HEALTH:
+              · /var/log/supervisor/backend.err.log clean — only WatchFiles reload lines from
+                the routes/admin.py edit + standard purge daemon "[purge] {moods_deleted:0,
+                r2_objects_deleted:0, users_checked:66}" lines.
+              · backend.out.log shows the exact expected sequence:
+                200 (login) → 200 (auth/me) → 400 (revoke-tier owner) →
+                200 (grant-admin luna) → 200 (users/{luna_id}) → 200 (re-grant idempotent) →
+                200 (luna login) → 403 (luna grant-admin rio) → 400 (luna revoke-tier owner) →
+                200 (owner grant-admin rio) → 403 (luna revoke-tier rio) →
+                403 (luna revoke-admin rio) → 400 (owner revoke-admin self) →
+                200 (owner revoke-admin luna) → 200 (verify) →
+                200 (re-revoke idempotent) → 200 (cleanup rio) →
+                401 (no-auth) → 200 (stats) → 200 (users/list).
+              · Zero 500s, zero Tracebacks, zero unhandled exceptions across the entire
+                run.
+
+            HARNESS NOTES (no backend code modified):
+              · Used a fresh httpx.Client per identity (owner / luna) to avoid Set-Cookie
+                cross-talk; cleared cookies post-login and pinned Authorization: Bearer
+                header so the Bearer path is the sole auth on every call. The unauth probe
+                used a separate naked client with no headers and no cookies.
+
+            CONCLUSION: All 7 sections pass exactly per spec. The OWNER role is correctly
+            seeded on hello@innfeel.app with is_owner=True, zen=True, lifetime pro_expires_at;
+            sanitize_user exposes both is_owner and zen; /admin/grant-admin and
+            /admin/revoke-admin are owner-only with correct idempotency, validations, and
+            audit-trail (pro_grants row inserted on promotion, revoked on demotion);
+            /admin/revoke-tier rejects owner targets with 400 and rejects non-owner admins
+            from modifying other admins with 403; auth gate returns 401 unauthenticated.
+            No regressions on /admin/stats/overview or /admin/users/list. No code fixes
+            were applied by the testing agent.
+
+frontend:
+  - task: "Admin panel: OWNER badge, promote/demote actions, profile rename"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/admin.tsx + /app/frontend/app/(tabs)/profile.tsx + /app/frontend/src/auth.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+            UI changes:
+              · auth.tsx User type now includes is_owner, zen.
+              · profile.tsx renamed the admin link from "Admin · Grant Pro"
+                to "Admin · Console" (and "Admin · Console (Owner)" when
+                the user is the owner). Icon changed sparkles→shield-checkmark.
+              · admin.tsx:
+                - UserRow type adds is_owner.
+                - New tierLabel/tierColor helpers paint owner rows gold (#FDE047)
+                  with the label "OWNER" instead of "ADMIN".
+                - User detail badge uses the new helpers.
+                - Action buttons (Grant Pro/Zen/Revoke) are disabled on the
+                  owner row AND on any other admin if the current user is
+                  not the owner.
+                - NEW "Promote to Admin" / "Demote admin" buttons appear on
+                  any non-owner row, but only when the current user is the
+                  owner. Demote shows for is_admin=true; Promote for
+                  is_admin=false.
+                - "This is the owner account" notice in gold appears on the
+                  owner detail card.
+
+## test_plan:
+##   current_focus:
+##     - "Owner protection and admin promote/demote"
+##   stuck_tasks: []
+##   test_all: false
+##   test_priority: "high_first"
+
+## agent_communication:
+##     -agent: "main"
+##     -message: |
+##         Added OWNER role and admin promote/demote endpoints. Please test
+##         the new backend behaviour:
+##         (1) Owner /me returns is_owner:true, zen:true.
+##         (2) /admin/grant-admin (owner-only) promotes a regular user → admin
+##             with auto-Zen for life. Idempotent on already-admin target.
+##         (3) /admin/revoke-admin (owner-only) demotes a non-owner admin to
+##             Free, revokes pro_grants. Refuses owner target with 400.
+##         (4) /admin/revoke-tier refuses owner target (400) and refuses
+##             admin target when caller is not owner (403). Owner can revoke
+##             other admins.
+##         (5) Non-owner admin attempting /admin/grant-admin or
+##             /admin/revoke-admin → 403.
+##         Use credentials hello@innfeel.app / admin123 (owner) and
+##         luna@innfeel.app / demo1234 (regular pro user). Promote luna
+##         then demote her to verify the full cycle.

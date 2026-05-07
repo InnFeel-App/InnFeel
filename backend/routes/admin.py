@@ -30,6 +30,14 @@ def _require_admin(user: dict):
         raise HTTPException(status_code=403, detail="Admin access required")
 
 
+def _require_owner(user: dict):
+    """Owner-only operations: promote/demote admins, anything that touches
+    other admins. The owner is the founder account (hello@innfeel.app) and
+    is the only role that can change admin membership."""
+    if not user.get("is_owner"):
+        raise HTTPException(status_code=403, detail="Owner access required")
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────
@@ -66,6 +74,7 @@ def _public_user(u: dict) -> dict:
         "name": u.get("name", ""),
         "tier": _resolve_tier(u),
         "is_admin": bool(u.get("is_admin", False)),
+        "is_owner": bool(u.get("is_owner", False)),
         "pro": bool(u.get("pro", False)),
         "zen": bool(u.get("zen", False)),
         "pro_expires_at": _iso(u.get("pro_expires_at")),
@@ -97,6 +106,13 @@ class RevokeTierIn(BaseModel):
 
 class ResetQuotaIn(BaseModel):
     user_id: str = Field(min_length=4, max_length=64)
+
+
+class AdminTargetIn(BaseModel):
+    """Identifies a user for admin promote/demote. Either email or user_id."""
+    email: Optional[EmailStr] = None
+    user_id: Optional[str] = Field(default=None, min_length=4, max_length=64)
+    note: Optional[str] = Field(default=None, max_length=200)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -384,11 +400,22 @@ async def admin_grant_tier(data: GrantTierIn, user: dict = Depends(get_current_u
 
 @router.post("/admin/revoke-tier")
 async def admin_revoke_tier(data: RevokeTierIn, user: dict = Depends(get_current_user)):
-    """Revoke Pro AND Zen flags. Marks all active grants as revoked."""
+    """Revoke Pro AND Zen flags. Marks all active grants as revoked.
+
+    Owner accounts are immutable here — only the owner themselves can
+    edit their own subscription state, and even then not via this endpoint.
+    Other admins cannot be downgraded by their peers either; only the owner
+    can demote an admin (via /admin/revoke-admin).
+    """
     _require_admin(user)
     target = await _resolve_target(data)
-    if target.get("is_admin"):
-        raise HTTPException(status_code=400, detail="Cannot revoke an admin")
+    if target.get("is_owner"):
+        raise HTTPException(status_code=400, detail="The owner cannot be revoked.")
+    if target.get("is_admin") and not user.get("is_owner"):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the owner can modify another admin's subscription.",
+        )
     await db.users.update_one(
         {"user_id": target["user_id"]},
         {"$set": {
@@ -421,3 +448,103 @@ async def admin_reset_quota(data: ResetQuotaIn, user: dict = Depends(get_current
         raise HTTPException(status_code=404, detail="User not found")
     res = await db.coach_limits.delete_many({"user_id": data.user_id})
     return {"ok": True, "user_id": data.user_id, "deleted": res.deleted_count}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# /admin/grant-admin & /admin/revoke-admin — OWNER-ONLY operations
+# ──────────────────────────────────────────────────────────────────────────
+async def _resolve_admin_target(data: AdminTargetIn) -> dict:
+    if data.user_id:
+        target = await db.users.find_one({"user_id": data.user_id})
+        if not target:
+            raise HTTPException(status_code=404, detail=f"No user with id {data.user_id}")
+        return target
+    if data.email:
+        target = await db.users.find_one({"email": str(data.email).lower()})
+        if not target:
+            raise HTTPException(status_code=404, detail=f"No user with email {data.email}")
+        return target
+    raise HTTPException(status_code=400, detail="Either email or user_id required")
+
+
+@router.post("/admin/grant-admin")
+async def admin_grant_admin(data: AdminTargetIn, user: dict = Depends(get_current_user)):
+    """Promote a user to admin. OWNER-ONLY.
+
+    Promoting a user automatically grants them lifetime Zen access (full
+    feature unlock) so they aren't bottlenecked by quotas while doing
+    support work. They keep this access until they are demoted.
+    """
+    _require_owner(user)
+    target = await _resolve_admin_target(data)
+    if target.get("is_admin"):
+        return {"ok": True, "already_admin": True, "user_id": target["user_id"]}
+
+    expires_at = now_utc() + timedelta(days=3650)  # effectively forever
+    await db.users.update_one(
+        {"user_id": target["user_id"]},
+        {"$set": {
+            "is_admin": True,
+            "pro": True,
+            "zen": True,
+            "pro_expires_at": expires_at,
+            "pro_source": "admin_promotion",
+            "pro_granted_by": user["user_id"],
+            "pro_grant_note": data.note or "Promoted to admin",
+        }},
+    )
+    await db.pro_grants.insert_one({
+        "grant_id": f"grant_{uuid.uuid4().hex[:12]}",
+        "tier": "zen",
+        "granted_to_user_id": target["user_id"],
+        "granted_to_email": target["email"],
+        "granted_to_name": target.get("name", ""),
+        "granted_by_user_id": user["user_id"],
+        "granted_by_email": user["email"],
+        "days": 3650,
+        "expires_at": expires_at,
+        "note": (data.note or "Admin promotion (auto-Zen)"),
+        "created_at": now_utc(),
+        "revoked": False,
+    })
+    return {
+        "ok": True,
+        "user_id": target["user_id"],
+        "email": target["email"],
+        "is_admin": True,
+    }
+
+
+@router.post("/admin/revoke-admin")
+async def admin_revoke_admin(data: AdminTargetIn, user: dict = Depends(get_current_user)):
+    """Demote an admin back to a regular Free user. OWNER-ONLY.
+
+    Cannot demote the owner. Removes admin flag plus auto-granted Zen so
+    the demoted user reverts to whatever paid tier they had bought outside
+    of the promotion (none, in most cases).
+    """
+    _require_owner(user)
+    target = await _resolve_admin_target(data)
+    if target.get("is_owner"):
+        raise HTTPException(status_code=400, detail="The owner cannot be demoted.")
+    if not target.get("is_admin"):
+        return {"ok": True, "was_admin": False, "user_id": target["user_id"]}
+
+    await db.users.update_one(
+        {"user_id": target["user_id"]},
+        {"$set": {
+            "is_admin": False,
+            "pro": False,
+            "zen": False,
+            "pro_expires_at": None,
+            "pro_source": None,
+            "pro_granted_by": None,
+            "pro_grant_note": None,
+        }},
+    )
+    await db.pro_grants.update_many(
+        {"granted_to_user_id": target["user_id"], "revoked": False},
+        {"$set": {"revoked": True, "revoked_at": now_utc(), "revoked_by": user["user_id"]}},
+    )
+    return {"ok": True, "user_id": target["user_id"], "is_admin": False}
+

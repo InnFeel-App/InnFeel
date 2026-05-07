@@ -54,6 +54,7 @@ type UserRow = {
   name: string;
   tier: "free" | "pro" | "zen" | "admin";
   is_admin: boolean;
+  is_owner: boolean;
   pro: boolean;
   zen: boolean;
   pro_expires_at: string | null;
@@ -130,7 +131,15 @@ const TIER_TINT: Record<string, string> = {
   pro:   "#22D3EE",
   free:  "#94A3B8",
   admin: "#F472B6",
+  owner: "#FDE047",
 };
+
+// The owner gets a special "OWNER" label in lists and the detail header,
+// but the underlying tier (admin) stays the same in filters.
+const tierLabel = (u: { is_owner?: boolean; tier?: string }) =>
+  u.is_owner ? "OWNER" : (u.tier || "free").toUpperCase();
+const tierColor = (u: { is_owner?: boolean; tier?: string }) =>
+  u.is_owner ? TIER_TINT.owner : (TIER_TINT[u.tier || "free"] || COLORS.textSecondary);
 
 export default function AdminPanel() {
   const router = useRouter();
@@ -319,6 +328,62 @@ export default function AdminPanel() {
     );
   };
 
+  // Promote a regular user to admin. Owner-only on the backend.
+  // We auto-grant Zen for life so the new admin isn't quota-limited.
+  const doPromoteAdmin = (uid: string, email: string) => {
+    Alert.alert(
+      "Promote to Admin?",
+      `${email} will gain full Admin access (manage users, grant tiers) and lifetime Zen. This is owner-only and reversible.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Promote",
+          onPress: async () => {
+            try {
+              await api("/admin/grant-admin", {
+                method: "POST",
+                body: { user_id: uid, note: "Promoted via admin panel" },
+              });
+              await Promise.all([fetchStats(), fetchUsers(false)]);
+              if (openUserId) await openDetail(openUserId);
+              Alert.alert("✓ Promoted", `${email} is now an admin.`);
+            } catch (e: any) {
+              Alert.alert("Promote failed", e?.message || String(e));
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Demote an admin back to a regular user. Owner-only. Cannot demote owner.
+  const doDemoteAdmin = (uid: string, email: string) => {
+    Alert.alert(
+      "Demote admin?",
+      `${email} will lose Admin access AND their Zen access. They will return to Free tier.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Demote",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await api("/admin/revoke-admin", {
+                method: "POST",
+                body: { user_id: uid },
+              });
+              await Promise.all([fetchStats(), fetchUsers(false)]);
+              if (openUserId) await openDetail(openUserId);
+              Alert.alert("✓ Demoted", `${email} is no longer an admin.`);
+            } catch (e: any) {
+              Alert.alert("Demote failed", e?.message || String(e));
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const doWeeklyRecap = async (email: string) => {
     try {
       await api("/admin/send-weekly-recap", {
@@ -467,8 +532,8 @@ export default function AdminPanel() {
               <ScrollView showsVerticalScrollIndicator={false}>
                 {/* Identity block */}
                 <View style={styles.identityRow}>
-                  <View style={[styles.tierBadge, { backgroundColor: TIER_TINT[detail.tier] + "33", borderColor: TIER_TINT[detail.tier] }]}>
-                    <Text style={[styles.tierBadgeTxt, { color: TIER_TINT[detail.tier] }]}>{detail.tier.toUpperCase()}</Text>
+                  <View style={[styles.tierBadge, { backgroundColor: tierColor(detail) + "33", borderColor: tierColor(detail) }]}>
+                    <Text style={[styles.tierBadgeTxt, { color: tierColor(detail) }]}>{tierLabel(detail)}</Text>
                   </View>
                   <View style={{ flex: 1, marginLeft: 12 }}>
                     <Text style={styles.identityName}>{detail.name || "—"}</Text>
@@ -556,21 +621,21 @@ export default function AdminPanel() {
                     label="Grant Pro"
                     tint={TIER_TINT.pro}
                     onPress={() => { setGrantTier("pro"); setGrantOpen({ user_id: detail.user_id, email: detail.email, name: detail.name }); }}
-                    disabled={detail.is_admin}
+                    disabled={detail.is_owner || (detail.is_admin && !user?.is_owner)}
                   />
                   <ActionBtn
                     icon="moon"
                     label="Grant Zen"
                     tint={TIER_TINT.zen}
                     onPress={() => { setGrantTier("zen"); setGrantOpen({ user_id: detail.user_id, email: detail.email, name: detail.name }); }}
-                    disabled={detail.is_admin}
+                    disabled={detail.is_owner || (detail.is_admin && !user?.is_owner)}
                   />
                   <ActionBtn
                     icon="close-circle"
                     label="Revoke"
                     tint="#EF4444"
                     onPress={() => doRevoke(detail.user_id, detail.email)}
-                    disabled={detail.is_admin || (!detail.pro && !detail.zen)}
+                    disabled={detail.is_owner || (detail.is_admin && !user?.is_owner) || (!detail.pro && !detail.zen)}
                   />
                   <ActionBtn
                     icon="refresh"
@@ -584,7 +649,38 @@ export default function AdminPanel() {
                     tint="#22D3EE"
                     onPress={() => doWeeklyRecap(detail.email)}
                   />
+
+                  {/* OWNER-only: promote / demote admin role.
+                      The button shape depends on whether the target is
+                      already an admin. The owner row itself is locked. */}
+                  {user?.is_owner && !detail.is_owner ? (
+                    detail.is_admin ? (
+                      <ActionBtn
+                        icon="person-remove"
+                        label="Demote admin"
+                        tint="#EF4444"
+                        onPress={() => doDemoteAdmin(detail.user_id, detail.email)}
+                      />
+                    ) : (
+                      <ActionBtn
+                        icon="shield-checkmark"
+                        label="Promote to Admin"
+                        tint={TIER_TINT.owner}
+                        onPress={() => doPromoteAdmin(detail.user_id, detail.email)}
+                      />
+                    )
+                  ) : null}
                 </View>
+
+                {/* Owner notice */}
+                {detail.is_owner ? (
+                  <View style={styles.ownerNotice}>
+                    <Ionicons name="shield" size={16} color={TIER_TINT.owner} />
+                    <Text style={styles.ownerNoticeTxt}>
+                      This is the owner account. It cannot be revoked or demoted by anyone.
+                    </Text>
+                  </View>
+                ) : null}
 
                 <View style={{ height: 24 }} />
               </ScrollView>
@@ -682,7 +778,8 @@ function KpiSmall({ label, value }: { label: string; value: number }) {
 }
 
 function UserCard({ u, onPress }: { u: UserRow; onPress: () => void }) {
-  const tint = TIER_TINT[u.tier] || COLORS.textSecondary;
+  const tint = tierColor(u);
+  const label = tierLabel(u);
   return (
     <TouchableOpacity onPress={onPress} testID={`user-${u.user_id}`} style={styles.userCard}>
       <View style={[styles.userAvatar, { backgroundColor: tint + "33", borderColor: tint }]}>
@@ -694,7 +791,7 @@ function UserCard({ u, onPress }: { u: UserRow; onPress: () => void }) {
         <View style={styles.userHeadRow}>
           <Text style={styles.userName} numberOfLines={1}>{u.name || u.email}</Text>
           <View style={[styles.tierMicroBadge, { backgroundColor: tint + "22", borderColor: tint }]}>
-            <Text style={[styles.tierMicroTxt, { color: tint }]}>{u.tier.toUpperCase()}</Text>
+            <Text style={[styles.tierMicroTxt, { color: tint }]}>{label}</Text>
           </View>
         </View>
         <Text style={styles.userEmail} numberOfLines={1}>{u.email}</Text>
@@ -869,6 +966,15 @@ const styles = StyleSheet.create({
   actionsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 14 },
   actionBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, borderWidth: 1, backgroundColor: "rgba(255,255,255,0.03)" },
   actionTxt: { fontSize: 12, fontWeight: "800" },
+
+  // Owner notice (shown only on owner's detail card)
+  ownerNotice: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    marginTop: 14, padding: 12, borderRadius: 12,
+    backgroundColor: "rgba(253,224,71,0.08)",
+    borderWidth: 1, borderColor: "rgba(253,224,71,0.4)",
+  },
+  ownerNoticeTxt: { color: "#FDE047", fontSize: 12, flex: 1, fontWeight: "600" },
 
   // Grant modal
   grantOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.75)", alignItems: "center", justifyContent: "center", padding: 24 },

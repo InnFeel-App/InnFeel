@@ -113,8 +113,10 @@ export default function Profile() {
 
           {user?.is_admin ? (
             <TouchableOpacity testID="go-admin" style={[styles.link, styles.adminLink]} onPress={() => router.push("/admin" as any)}>
-              <Ionicons name="sparkles" size={20} color="#FDE047" />
-              <Text style={[styles.linkTxt, { color: "#FDE047", fontWeight: "700" }]}>Admin · Grant Pro</Text>
+              <Ionicons name="shield-checkmark" size={20} color="#FDE047" />
+              <Text style={[styles.linkTxt, { color: "#FDE047", fontWeight: "700" }]}>
+                {user?.is_owner ? "Admin · Console (Owner)" : "Admin · Console"}
+              </Text>
               <Ionicons name="chevron-forward" size={18} color="#FDE047" />
             </TouchableOpacity>
           ) : null}

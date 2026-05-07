@@ -101,22 +101,26 @@ async def startup():
             "name": "Admin",
             "avatar_color": "#F472B6",
             "pro": True,
-            "pro_expires_at": now_utc() + timedelta(days=365),
+            "zen": True,
+            "pro_expires_at": now_utc() + timedelta(days=3650),
             "is_admin": True,
+            "is_owner": True,
             "friend_count": 0,
             "streak": 0,
             "created_at": now_utc(),
             "email_verified_at": now_utc(),
         })
-        logger.info("Seeded admin user (hello@innfeel.app)")
+        logger.info("Seeded owner user (hello@innfeel.app) with full Zen access")
     else:
-        # Ensure admin flag is set + Pro never expires on the seeded admin (idempotent)
+        # Ensure owner flags are set + Zen full access never expires (idempotent)
         await db.users.update_one(
             {"email": "hello@innfeel.app"},
             {"$set": {
                 "is_admin": True,
+                "is_owner": True,
                 "pro": True,
-                "pro_expires_at": now_utc() + timedelta(days=365),
+                "zen": True,
+                "pro_expires_at": now_utc() + timedelta(days=3650),
                 "email_verified_at": existing.get("email_verified_at") or now_utc(),
             }},
         )

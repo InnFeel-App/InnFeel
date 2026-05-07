@@ -124,7 +124,9 @@ def sanitize_user(u: dict) -> dict:
         "pro": is_pro(u),
         "pro_expires_at": u.get("pro_expires_at").isoformat() if isinstance(u.get("pro_expires_at"), datetime) else u.get("pro_expires_at"),
         "pro_source": u.get("pro_source"),  # e.g. "admin_grant" / "stripe" / "iap_apple" / "iap_google" / "dev"
+        "zen": bool(u.get("zen", False)),
         "is_admin": bool(u.get("is_admin", False)),
+        "is_owner": bool(u.get("is_owner", False)),
         "friend_count": u.get("friend_count", 0),
         "streak": u.get("streak", 0),
         "created_at": u.get("created_at").isoformat() if isinstance(u.get("created_at"), datetime) else u.get("created_at"),

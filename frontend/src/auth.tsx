@@ -10,7 +10,9 @@ export type User = {
   pro: boolean;
   pro_expires_at?: string | null;
   pro_source?: string | null;
+  zen?: boolean;
   is_admin?: boolean;
+  is_owner?: boolean;
   friend_count: number;
   streak: number;
   created_at: string;
