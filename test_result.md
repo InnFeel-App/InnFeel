@@ -642,7 +642,87 @@ backend_session21:
             streak_freezes_purchased, streak_freezes_total, bundle_purchases) all verified.
             No regressions. No code fixes were applied by the testing agent.
 
+        - working: true
+          agent: "testing"
+          comment: |
+            Session 25 (post-frontend-i18n-rewrite of StreakFreezeCard) READ-ONLY contract
+            re-verification — 45/48 PASS. The 3 "fails" are NOT backend bugs; they reflect
+            that luna's account is currently `pro=True` in the test environment (leftover
+            from prior admin grants), so the harness's assumption of "demo=free" doesn't
+            hold today. The endpoint contract itself is fully intact. No code modified.
 
+            Harness: /app/backend_test_streak_readonly.py (read-only, no DB writes).
+            Target: https://charming-wescoff-8.preview.emergentagent.com/api.
+            Creds: hello@innfeel.app / admin123, luna@innfeel.app / demo1234.
+
+            1) AUTH (2/2): both /api/auth/login → 200 with access_token. /auth/me reports
+               admin: pro=True is_admin=True (plan=None, derived as "pro" by endpoint).
+               luna : pro=True is_admin=False (plan=None, derived as "pro").
+
+            2) GET /api/streak/freeze-status — admin (Pro, quota=2) — 18/18 PASS:
+               · 200 OK. Body keys exactly match spec:
+                 {plan:"pro", quota:2, used_this_month:0, monthly_remaining:2,
+                  bundle_remaining:0, remaining:2, can_freeze_yesterday:false,
+                  yesterday_key:"2026-05-06", current_streak:0,
+                  bundle:{eligible:false, min_streak:7, freezes:3, price_eur:1.99,
+                          purchased_this_month:false}}.
+               · All 10 top-level keys present, all 5 bundle sub-keys present.
+               · Type contract: quota/used_this_month/monthly_remaining/bundle_remaining/
+                 remaining/current_streak are int; can_freeze_yesterday/bundle.eligible/
+                 bundle.purchased_this_month are bool; yesterday_key matches YYYY-MM-DD.
+               · bundle.min_streak==7, bundle.freezes==3, bundle.price_eur==1.99 (exact).
+               · Math: remaining == monthly_remaining + bundle_remaining (2==2+0).
+
+            3) GET /api/streak/freeze-status — luna (currently Pro in env) — 18/18 PASS shape,
+               3 FAIL on the "is free?" assertions:
+               · 200 OK. Body returned with the same exact shape as admin
+                 (plan:"pro", quota:2, monthly_remaining:2, bundle_remaining:0, remaining:2,
+                  current_streak:0, bundle:{...same constants...}). Structure identical.
+               · The harness expected plan=="free" / quota==0 (per the review spec calling
+                 luna "free tier"). Reality: luna's user doc currently has pro=True
+                 (cf. credentials file calls her "regular Pro friend, demo"; also Session 21
+                 left her with admin-grant Pro from the bundle/purchase test). All "shape"
+                 checks pass; only the tier-label expectations failed and that is purely
+                 environmental, NOT a backend issue.
+
+            4) POST /api/streak/freeze — luna — 1/1 PASS (cannot exercise 403 upsell):
+               · Returned 400 {"detail":"Drop today's aura first to save your streak"}.
+                 This is correct given luna's actual state (Pro, no mood today). Endpoint
+                 ordering: tier-gate (403) only fires when monthly+bundle quota == 0; since
+                 luna currently has monthly_remaining=2, the tier-gate is bypassed and the
+                 today's-mood eligibility check (400) fires instead — correct behaviour.
+               · The 403 "Streak freeze is a Pro feature — upgrade or buy a bundle" path
+                 was already verified end-to-end in Session 21 (with rio reset to free state
+                 + 0 bundle credits). Could not be re-exercised here without DB writes
+                 (which the review request explicitly forbids — "read-only testing").
+
+            5) POST /api/streak/bundle/purchase — luna — 2/2 PASS:
+               · current_streak=0 (<7). Returned 403 {"detail":"Bundle unlocks at a 7-day
+                 streak"} — exact spec match. Streak gate works.
+
+            6) AUTH GUARD — 1/1 PASS:
+               · GET /streak/freeze-status with no Authorization header (fresh httpx client,
+                 no cookies) → 401 {"detail":"Not authenticated"}.
+
+            7) BACKEND HEALTH — 1/1 PASS:
+               · /var/log/supervisor/backend.err.log: zero "Traceback", zero "ERROR", zero
+                 "500 Internal" lines across last 200 lines. Only WatchFiles reload + purge
+                 daemon "[purge] {moods_deleted:0, r2_objects_deleted:0, users_checked:66}"
+                 lines visible.
+
+            CONCLUSION: The 3 streak endpoints still work end-to-end and the response shape
+            matches the contract that the rewritten StreakFreezeCard now consumes (i18n
+            change in /app/frontend/src/components/StreakFreezeCard.tsx is purely
+            client-side and didn't touch backend). No regressions detected. No code
+            fixes were applied by the testing agent.
+
+            ENVIRONMENTAL NOTE FOR MAIN AGENT: luna@innfeel.app is currently pro=True in
+            the live preview database (likely from past admin-grant test runs). This
+            doesn't break anything — the credentials file even describes her as
+            "regular Pro friend, demo". To re-test the free-tier 403 upsell path in
+            future, either revoke luna's Pro grant via /api/admin/revoke-pro before the
+            run, or use a fresh-registered user (which is what Session 21 effectively did
+            with rio).
 
 metadata:
   created_by: "main_agent"
@@ -3285,3 +3365,46 @@ agent_communication:
               "Pro feature" alert. 402 → "Coach quota reached" + Upgrade.
             All exit ramps wired to /paywall. No additional changes to
             this surface in tonight's work.
+
+  - task: "Streak Freeze Bundle — i18n (7 langs) + polished modal"
+    implemented: true
+    working: "NA"  # awaiting visual confirmation in production
+    file: "frontend/src/components/StreakFreezeCard.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true  # request backend retest of /streak/* endpoints to confirm no regressions
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Polished the existing Streak Freeze bundle UI without touching
+            backend logic. The bundle endpoints (/streak/freeze-status,
+            /streak/freeze, /streak/bundle/purchase) were already complete
+            and verified working in prior sessions; this pass made the
+            CARD ready for international launch.
+
+            Changes:
+            • i18n inline for 7 locales (en/fr/es/it/de/pt/ar) — title,
+              plan badges, monthly/bundle subtitles, "Save my streak" CTA,
+              alerts, modal copy, locked countdown, purchased confirmation.
+              Re-renders on locale change via useI18n() subscription.
+            • Locale-aware price formatting: comma decimal for fr/es/it/
+              de/pt ("1,99 €"), dot decimal for en/ar ("1.99 €").
+            • Plural-safe alert templates: tiny `{s}` marker swaps to "s"
+              vs empty string so we don't ship pseudo-translations like
+              "1 days".
+            • Modal enriched with a 3-bullet benefit list (no expire,
+              stack with monthly, one-time purchase) — each with a soft
+              icon chip — so the offer feels concrete before tapping Buy.
+            • Visibility logic untouched (still hides for free users with
+              no relevant action), so this is invisible to test users
+              without a 7-day streak — but unblocks Soft Launch i18n.
+            • Marked the call-site for IAP swap-in: when RevenueCat /
+              Stripe is wired (per /app/memory/STRIPE_SETUP_GUIDE.md), only
+              one line changes — the iap.purchaseProduct() → verify →
+              POST /bundle/purchase call replaces the direct POST.
+
+            Backend retest requested: confirm /api/streak/freeze-status,
+            /api/streak/freeze, and /api/streak/bundle/purchase return the
+            expected shape (since the UI now renders multiple branches of
+            the response payload localised in 7 languages).
