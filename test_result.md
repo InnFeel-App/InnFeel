@@ -4240,3 +4240,28 @@ frontend:
 ##         in FR: Home, Coach, Friends, History and Profile screens are
 ##         fully translated with no English leakage. No backend changes —
 ##         no retest needed.
+
+
+## agent_communication:
+##     -agent: "main"
+##     -message: |
+##         Phase B5 — Empty states polish + offline UX shipped.
+##         (1) `EmptyState` now renders three small satellite orbs that slowly
+##             orbit the central glyph (native-driver, 60fps). Orb colors come
+##             from each tone's gradient family so the polish is consistent.
+##         (2) New `offline` tone: desaturated cloud + jittery lightning bolt
+##             that flickers every ~1s for the "no signal" feel. New `error`
+##             tone (warm orange) for unrecoverable failures.
+##         (3) New `useNetworkStatus()` hook in /app/frontend/src/network.ts.
+##             On native it uses @react-native-community/netinfo; on web it
+##             relies on `navigator.onLine` + window online/offline events
+##             (NetInfo's web shim is unreliable). Added `pingBackend()`
+##             helper for future API-reachability checks.
+##         (4) Global `OfflineBanner` mounted in app/_layout.tsx — slides
+##             down from the top (animated translateY + fade) when offline,
+##             stays out of the way when online, never blocks UI.
+##         (5) Home screen shows offline `EmptyState` with "Try again" CTA
+##             whenever the friends-feed fetch fails OR connectivity drops.
+##         (6) All 7 locales updated with offline.banner / offline.retry /
+##             offline.title / offline.subtitle / common.retry strings.
+##         No backend changes — frontend-only. No retest needed.

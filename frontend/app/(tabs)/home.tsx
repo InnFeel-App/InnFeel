@@ -8,6 +8,7 @@ import Button from "../../src/components/Button";
 import { useAuth } from "../../src/auth";
 import { api } from "../../src/api";
 import { t, dateLong, useI18n } from "../../src/i18n";
+import { useNetworkStatus } from "../../src/network";
 import { COLORS, EMOTION_COLORS } from "../../src/theme";
 import { Ionicons } from "@expo/vector-icons";
 import { useShareToStories } from "../../src/components/ShareToStories";
@@ -231,6 +232,16 @@ export default function Home() {
               tone="lock"
               title={t("home.feedLocked")}
               subtitle={t("home.feedLockedSub")}
+            />
+          ) : (!online || loadFailed) && feed.items.length === 0 ? (
+            <EmptyState
+              testID="feed-offline"
+              tone="offline"
+              title={t("offline.title")}
+              subtitle={t("offline.subtitle")}
+              cta={
+                <Button testID="feed-offline-retry" variant="secondary" label={t("common.retry")} onPress={onRefresh} />
+              }
             />
           ) : feed.items.length === 0 ? (
             <EmptyState
