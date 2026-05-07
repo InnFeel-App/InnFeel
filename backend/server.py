@@ -850,6 +850,22 @@ async def root():
     return {"app": "InnFeel", "version": "1.0"}
 
 
+@api.get("/health")
+async def health():
+    """
+    Lightweight liveness probe used by Railway's deploy health checks and any
+    uptime monitor (e.g. Better Stack, UptimeRobot). Pings Mongo so we don't
+    serve 200 OK while the DB is unreachable.
+    """
+    try:
+        # `ping` is the cheapest admin command — round-trips in <5ms locally.
+        await db.command("ping")
+        db_ok = True
+    except Exception:
+        db_ok = False
+    return {"ok": db_ok, "db": db_ok}
+
+
 
 
 # =========================================================================
