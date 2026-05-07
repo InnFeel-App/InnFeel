@@ -18,7 +18,7 @@ export default function Friends() {
   const { user } = useAuth();
   const pro = !!user?.pro;
   const [friends, setFriends] = useState<any[]>([]);
-  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
@@ -81,19 +81,16 @@ export default function Friends() {
 
   const add = async () => {
     setErr(null);
-    const raw = email.trim();
+    const raw = code.trim();
     if (!raw) return;
     try {
-      // Smart input: if it doesn't look like an email it's almost certainly
-      // an invite code → call /friends/add-by-code instead. Codes are also
-      // upper-cased for the user since the backend stores them uppercase.
-      const looksLikeEmail = /@/.test(raw);
-      if (looksLikeEmail) {
-        await api("/friends/add", { method: "POST", body: { email: raw.toLowerCase() } });
-      } else {
-        await api("/friends/add-by-code", { method: "POST", body: { code: raw.toUpperCase() } });
-      }
-      setEmail("");
+      // Codes are stored uppercase server-side, so we normalise here so a
+      // user can paste in any case. We dropped the email-based add path
+      // entirely — the only ways to onboard a friend are now (1) typing
+      // their 6-char invite code or (2) tapping a shared invite link
+      // which deep-links into the same /friends/add-by-code endpoint.
+      await api("/friends/add-by-code", { method: "POST", body: { code: raw.toUpperCase() } });
+      setCode("");
       await load();
     } catch (e: any) { setErr(e.message); }
   };
@@ -141,14 +138,18 @@ export default function Friends() {
 
           <View style={styles.addRow}>
             <TextInput
-              testID="friend-email"
-              value={email}
-              onChangeText={setEmail}
+              testID="friend-code-input"
+              value={code}
+              onChangeText={setCode}
               style={styles.input}
-              placeholder="Add by code or email"
+              placeholder="Enter a 6-character code"
               placeholderTextColor="#555"
-              autoCapitalize="none"
-              keyboardType="email-address"
+              autoCapitalize="characters"
+              autoCorrect={false}
+              maxLength={12}
+              // Default keyboard so the recipient can pick out a code from
+              // a chat thread or QR scan. Email-based add was removed —
+              // codes + tap-to-add invite links are the only supported flows.
             />
             <TouchableOpacity testID="add-friend-btn" onPress={add} style={styles.addBtn}>
               <Ionicons name="add" size={22} color="#000" />
