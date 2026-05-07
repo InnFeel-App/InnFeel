@@ -26,7 +26,13 @@ export async function api<T = any>(
     method: opts.method || "GET",
     headers,
     body: opts.body ? JSON.stringify(opts.body) : undefined,
-    credentials: "include",
+    // Note: no `credentials: "include"` — we authenticate with a Bearer
+    // token in the Authorization header, not cookies. Including credentials
+    // makes the browser require Access-Control-Allow-Origin to be a
+    // specific origin (not "*"), which the k8s ingress can't guarantee
+    // because it rewrites that header to "*". Removing this lets the
+    // wildcard ACAO succeed and unblocks every POST flow (Meditation
+    // start, paywall checkout, admin actions, etc.).
   });
   let data: any = null;
   try {

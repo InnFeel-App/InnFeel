@@ -1230,7 +1230,12 @@ app.include_router(api)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    # Use a wildcard regex instead of ["*"] because CORS spec rejects
+    # the literal "*" when allow_credentials=True. The regex makes the
+    # middleware echo back whatever Origin the browser sends, which is
+    # what every preflight needs (otherwise OPTIONS fails and POSTs are
+    # silently blocked — bricked Meditation start, paywall checkout, etc.)
+    allow_origin_regex=".*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
