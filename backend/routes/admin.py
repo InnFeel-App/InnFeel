@@ -192,6 +192,10 @@ async def admin_users_list(
     elif tier == "pro":
         mongo_filter["pro"] = True
         mongo_filter["zen"] = {"$ne": True}
+        # Admins carry pro=True for feature gating but are conceptually a
+        # separate tier; exclude them from the Pro filter to match the
+        # admin panel's user expectation.
+        mongo_filter["is_admin"] = {"$ne": True}
     elif tier == "zen":
         mongo_filter["zen"] = True
     elif tier == "admin":
