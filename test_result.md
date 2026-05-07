@@ -3368,11 +3368,11 @@ agent_communication:
 
   - task: "Streak Freeze Bundle — i18n (7 langs) + polished modal"
     implemented: true
-    working: "NA"  # awaiting visual confirmation in production
+    working: true
     file: "frontend/src/components/StreakFreezeCard.tsx"
     stuck_count: 0
     priority: "medium"
-    needs_retesting: true  # request backend retest of /streak/* endpoints to confirm no regressions
+    needs_retesting: false  # backend retest passed — all 3 /streak/* endpoints clean
     status_history:
         - working: "NA"
           agent: "main"
