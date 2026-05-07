@@ -7,6 +7,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import RadialAura from "../src/components/RadialAura";
+import ScreenHeader from "../src/components/ScreenHeader";
+import BackButton from "../src/components/BackButton";
 import Button from "../src/components/Button";
 import { api } from "../src/api";
 import { useAuth } from "../src/auth";
@@ -104,13 +106,7 @@ export default function Account() {
     <View style={styles.container} testID="account-screen">
       <RadialAura color="#A78BFA" />
       <SafeAreaView style={{ flex: 1 }}>
-        <View style={styles.hdr}>
-          <TouchableOpacity onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/profile"))} style={styles.back}>
-            <Ionicons name="chevron-back" size={22} color="#fff" />
-          </TouchableOpacity>
-          <Text style={styles.title}>Account</Text>
-          <View style={{ width: 40 }} />
-        </View>
+        <ScreenHeader title="Account" leftSlot={<BackButton />} />
 
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">

@@ -8,6 +8,8 @@ import { api } from "../src/api";
 import { useAuth } from "../src/auth";
 import { COLORS } from "../src/theme";
 import ShareAuraButton from "../src/components/ShareAuraButton";
+import ScreenHeader from "../src/components/ScreenHeader";
+import BackButton from "../src/components/BackButton";
 import { useShareToStories } from "../src/components/ShareToStories";
 
 type Badge = { key: string; label: string; icon: any; color: string; hint: string; earned: boolean };
@@ -76,13 +78,7 @@ export default function Achievements() {
     <View style={styles.container} testID="achievements-screen">
       <RadialAura color="#FACC15" />
       <SafeAreaView style={{ flex: 1 }}>
-        <View style={styles.hdr}>
-          <TouchableOpacity onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/profile"))} style={styles.back}>
-            <Ionicons name="chevron-back" size={22} color="#fff" />
-          </TouchableOpacity>
-          <Text style={styles.title}>Achievements</Text>
-          <View style={{ width: 40 }} />
-        </View>
+        <ScreenHeader title="Best" leftSlot={<BackButton />} />
 
         <ScrollView contentContainerStyle={styles.scroll}>
           {/* LEADERBOARD */}

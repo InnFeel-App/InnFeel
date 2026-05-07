@@ -4,6 +4,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import RadialAura from "../src/components/RadialAura";
+import ScreenHeader from "../src/components/ScreenHeader";
+import BackButton from "../src/components/BackButton";
 import { api } from "../src/api";
 import { COLORS, REACTIONS, EMOTION_COLORS } from "../src/theme";
 
@@ -56,16 +58,10 @@ export default function ActivityScreen() {
     <View style={styles.container} testID="activity-screen">
       <RadialAura color="#F472B6" />
       <SafeAreaView style={{ flex: 1 }}>
-        <View style={styles.hdr}>
-          <TouchableOpacity
-            onPress={() => { if (router.canGoBack()) router.back(); else router.replace("/(tabs)/home"); }}
-            style={styles.back}
-          >
-            <Ionicons name="chevron-back" size={22} color="#fff" />
-          </TouchableOpacity>
-          <Text style={styles.title}>Activity</Text>
-          <View style={{ width: 40 }} />
-        </View>
+        <ScreenHeader
+          title="Activity"
+          leftSlot={<BackButton fallbackPath="/(tabs)/home" />}
+        />
 
         <ScrollView
           contentContainerStyle={{ padding: 16, paddingBottom: 120 }}

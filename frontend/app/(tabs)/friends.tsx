@@ -7,6 +7,7 @@ import RadialAura from "../../src/components/RadialAura";
 import Button from "../../src/components/Button";
 import EmptyState from "../../src/components/EmptyState";
 import ScreenHeader from "../../src/components/ScreenHeader";
+import BackButton from "../../src/components/BackButton";
 import { api } from "../../src/api";
 import { useAuth } from "../../src/auth";
 import { COLORS } from "../../src/theme";
@@ -134,7 +135,11 @@ export default function Friends() {
       <SafeAreaView style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.scroll}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} tintColor="#fff" />}>
-          <ScreenHeader title={t("friends.title")} style={{ paddingHorizontal: 0, paddingTop: 0, paddingBottom: 16 }} />
+          <ScreenHeader
+            title={t("friends.title")}
+            leftSlot={<BackButton />}
+            style={{ paddingHorizontal: 0, paddingTop: 0, paddingBottom: 16 }}
+          />
 
           <View style={styles.addRow}>
             <TextInput

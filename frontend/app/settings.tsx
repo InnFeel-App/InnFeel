@@ -3,6 +3,8 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Modal, Pr
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import RadialAura from "../src/components/RadialAura";
+import ScreenHeader from "../src/components/ScreenHeader";
+import BackButton from "../src/components/BackButton";
 import { COLORS } from "../src/theme";
 import {
   t,
@@ -104,17 +106,10 @@ export default function Settings() {
     <View style={styles.container} testID="settings-screen">
       <RadialAura color="#60A5FA" />
       <SafeAreaView style={{ flex: 1 }}>
-        <View style={styles.hdr}>
-          <TouchableOpacity
-            testID="settings-back"
-            onPress={() => { if (router.canGoBack()) router.back(); else router.replace("/(tabs)/profile"); }}
-            style={styles.back}
-          >
-            <Ionicons name="chevron-back" size={22} color="#fff" />
-          </TouchableOpacity>
-          <Text style={styles.title}>{t("settings.title")}</Text>
-          <View style={{ width: 40 }} />
-        </View>
+        <ScreenHeader
+          title={t("settings.title")}
+          leftSlot={<BackButton testID="settings-back" />}
+        />
 
         <ScrollView contentContainerStyle={styles.scroll}>
           <Text style={styles.sectionTitle}>{t("settings.section.notifications")}</Text>

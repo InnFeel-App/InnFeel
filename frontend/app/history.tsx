@@ -3,6 +3,8 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from "react-nati
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import RadialAura from "../src/components/RadialAura";
+import ScreenHeader from "../src/components/ScreenHeader";
+import BackButton from "../src/components/BackButton";
 import { api } from "../src/api";
 import { EMOTION_COLORS, COLORS } from "../src/theme";
 import { useAuth } from "../src/auth";
@@ -21,13 +23,10 @@ export default function History() {
     <View style={styles.container} testID="history-screen">
       <RadialAura color="#A78BFA" />
       <SafeAreaView style={{ flex: 1 }}>
-        <View style={styles.hdr}>
-          <TouchableOpacity testID="history-back" onPress={() => { if (router.canGoBack()) router.back(); else router.replace("/(tabs)/profile"); }} style={styles.back}>
-            <Ionicons name="chevron-back" size={22} color="#fff" />
-          </TouchableOpacity>
-          <Text style={styles.title}>{t("history.title")}</Text>
-          <View style={{ width: 40 }} />
-        </View>
+        <ScreenHeader
+          title={t("history.title")}
+          leftSlot={<BackButton testID="history-back" />}
+        />
         <ScrollView contentContainerStyle={styles.scroll}>
           {items.length === 0 ? (
             <Text style={styles.empty}>{t("history.empty")}</Text>
