@@ -3706,3 +3706,299 @@ test_plan:
 
             No backend changes. No regressions to /mood-create direct
             route (still works as a modal with X close).
+
+  - task: "Admin Panel — Pro+Zen mgmt, search, full user detail, support tools"
+    implemented: true
+    working: "NA"
+    file: "backend/routes/admin.py, backend/server.py, backend/app_core/models.py, frontend/app/admin.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            User asked for a comprehensive admin user-management page that
+            handles BOTH Pro and Zen tiers, search, revoke, user_id copy,
+            full user info, etc.
+
+            Backend (NEW routes/admin.py):
+              GET  /api/admin/stats/overview
+                   → KPIs: total/free/pro/zen/admin/verified, new_7d/30d,
+                     DAU/WAU, total moods + today + 7d, active grants.
+              GET  /api/admin/users/list?q=&tier=&sort=&page=&page_size=
+                   → paginated, case-insensitive q match on email|name,
+                     tier filter (free|pro|zen|admin|all), sort by
+                     recent|active|name|email. 40/page default.
+              GET  /api/admin/users/{user_id}
+                   → full detail: identity, plan, expiry, source, friend
+                     code, language, tz, push token presence, full stats
+                     (moods_total, moods_7d, friends, current/longest
+                     streak, last mood with emotion+intensity+timestamp,
+                     coach_used_today, coach_used_lifetime),
+                     meditation_trials_used list, last 20 grants with
+                     active/revoked/expired flags.
+              POST /api/admin/grant-tier {email|user_id, tier:"pro"|"zen", days, note}
+                   → Both tiers set pro=True (zen is a strict superset),
+                     Zen also sets zen=True. Granting Pro after Zen
+                     correctly clears the zen flag (admin's intent).
+                     Records in pro_grants audit collection.
+              POST /api/admin/revoke-tier {email|user_id}
+                   → Wipes pro AND zen flags + active grants. Refuses
+                     to touch admin accounts.
+              POST /api/admin/reset-quota {user_id}
+                   → Support tool: deletes coach_limits docs for that
+                     user, useful when refunding goodwill credits.
+
+              Existing legacy endpoints preserved (server.py): /admin/me,
+              /admin/grant-pro, /admin/revoke-pro, /admin/pro-grants,
+              /admin/users/search, /admin/send-weekly-recap.
+
+              Models updated (app_core/models.py): AdminGrantProIn now
+              accepts an optional `tier: "pro"|"zen"` field (defaults to
+              "pro" — backward compatible).
+
+            Frontend (REWRITE app/admin.tsx, ~770 lines):
+              - KPI strip (Total · Pro · Zen · Admin) + sub-row
+                (DAU · WAU · New 7d · Verified · Auras today · Active grants).
+              - Live debounced search (300 ms) by email/name.
+              - Tier filter chips coloured per tier, sort selector
+                (recent · active · name · email).
+              - User cards with avatar (1st-letter colored by tier),
+                name, email, tier micro-badge, age + streak + language.
+              - Detail bottom sheet:
+                * Identity row + verified badge
+                * One-tap copy of user_id (uses expo-clipboard)
+                * 2-column info grid (created/active/lang/friend code/
+                  pro_expires/source + grant note)
+                * Engagement stats (6 tiles)
+                * Last mood line
+                * Meditation trials used pills (Free only)
+                * Grant history (last 5) with active/revoked status
+                * Action grid: Grant Pro · Grant Zen · Revoke ·
+                  Reset quota · Send recap (each disabled when
+                  semantically illegal — e.g., Revoke greyed for Free
+                  users; Pro/Zen actions greyed for admins).
+              - Grant modal: tier toggle (Pro/Zen), days chips
+                (7/30/90/180/365/10y), optional internal note (200 chars).
+              - Pull-to-refresh on the whole panel.
+              - Defence-in-depth: client-side gate when user.is_admin=false.
+
+            New dependency: expo-clipboard@55.0.13 (yarn added).
+
+            Bug fix during build:
+              - my admin.tsx initially passed `body: JSON.stringify({...})`
+                to `api()`. The `api` helper already JSON-stringifies, so
+                that was double-stringified. Fixed to pass plain objects.
+              - Initial users list wasn't loading because the debounced
+                useEffect collided with React's strict-mode double-mount.
+                Split into a one-shot mount fetch + a separate debounced
+                filter effect using a `firstRender` ref guard.
+
+            Backend retest requested:
+              1. GET /admin/stats/overview as admin → 200, shape matches.
+              2. GET /admin/users/list?tier=pro|zen|free|admin → counts
+                 align with stats overview's per-tier counts.
+              3. GET /admin/users/{admin_user_id} → 200, returns the
+                 expected detail bundle with stats + grants[].
+              4. POST /admin/grant-tier {tier:"zen"} on a free user →
+                 200, then GET that user → tier=zen, pro=true, zen=true.
+              5. POST /admin/grant-tier {tier:"pro"} on the same user →
+                 200, then GET → tier=pro, pro=true, zen=false (overrode).
+              6. POST /admin/revoke-tier on same user → 200, then GET →
+                 tier=free, pro=false, zen=false. Grant marked revoked.
+              7. POST /admin/revoke-tier targeting an admin → 400
+                 "Cannot revoke an admin".
+              8. POST /admin/reset-quota → 200, deleted_count >= 0.
+              9. Non-admin user tries any /admin/* → 403.
+
+
+backend_session_admin_user_management:
+  - task: "NEW admin user-management endpoints — /admin/stats/overview, /admin/users/list, /admin/users/{user_id}, /admin/grant-tier, /admin/revoke-tier, /admin/reset-quota"
+    implemented: true
+    working: true
+    file: "/app/backend/routes/admin.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Admin user-management endpoints validation COMPLETE — 87/89 PASS.
+            Harness: /app/backend_test.py vs https://charming-wescoff-8.preview.emergentagent.com/api.
+            Creds: hello@innfeel.app / admin123 (admin), luna@innfeel.app / demo1234 (demo, Pro).
+
+            A) GET /api/admin/stats/overview — 18/18 PASS:
+              · admin → 200. Body shape exactly matches spec:
+                {users:{total:66, free:63, pro:2, zen:0, admin:1, verified:11,
+                        new_7d:66, new_30d:66, dau:0, wau:0},
+                 moods:{total:24, today:3, last_7d:24},
+                 grants:{active:0},
+                 as_of:"2026-05-07T08:11:13.330145+00:00"}.
+              · All 10 users.* counters present and int. All 3 moods.* counters present
+                and int. grants.active is int. as_of is ISO-8601 with timezone.
+              · users.total >= 1 ✓, users.admin >= 1 ✓.
+
+            B) GET /api/admin/users/list — 14/16 PASS (2 spec deviations on tier=pro):
+              · No filter, page=0, page_size=10 → 200. All 5 envelope keys
+                {users, total, page, page_size, has_more} present. users is list
+                with len <= page_size.
+              · tier=admin → 200. n=1, every row has tier=="admin" and is_admin=true.
+                list.total (1) matches stats.users.admin (1) ✓.
+              · tier=pro → 200. n=2, but BOTH the pro user AND the admin user are
+                returned. Spec said "tier=pro → only Pro users (no zen, no admin)";
+                actual rows include `hello@innfeel.app` with tier="admin" is_admin=true
+                pro=true zen=false. Root cause: routes/admin.py L192-194 sets
+                `mongo_filter["pro"] = True; mongo_filter["zen"] = {"$ne": True}` and
+                does NOT exclude admins. Since admin docs carry pro=True for feature
+                gating, they bleed into the Pro list. Fix is one line:
+                  `mongo_filter["is_admin"] = {"$ne": True}` after the existing
+                  pro/zen lines (mirrors the tier=="free" branch above which DOES
+                  exclude admins). Two harness checks failed for this reason:
+                  · "every row pro=true zen=false admin=false" → FAIL (admin row
+                     present with is_admin=true)
+                  · "all tiers == 'pro'" → FAIL (tiers={'pro','admin'}).
+              · tier=zen → 200, total=0 (no zen users in env at the time of test).
+                Acceptable.
+              · q=hello → 200, response includes hello@innfeel.app. Substring search
+                works against email.
+              · sort=name page=0 page_size=5 → 200, names sorted ascending
+                ['Admin InnFeel','Cooldown Tester','Cooldown Tester','Cooldown Tester',
+                 'Emo_Lost'].
+
+            C) GET /api/admin/users/{user_id} — 17/17 PASS:
+              · admin self-detail → 200. All required identity keys present
+                (user_id, email, name, tier, is_admin). stats sub-object has the
+                full key set: moods_total, moods_7d, friends, current_streak,
+                longest_streak, last_mood (dict here), coach_used_today,
+                coach_used_lifetime. grants is a list. meditation_trials_used is
+                a list. tier_label, device_locale, timezone, push_token_present,
+                friend_code, bio, avatar_url, pro_grant_note, pro_granted_by all
+                included as documented.
+              · /admin/users/nonexistent_id_12345 → 404 {"detail":"User not found"}.
+
+            D) Grant / Revoke cycle on luna — 14/14 PASS:
+              · D11: POST /admin/grant-tier {user_id:luna, tier:"zen", days:30,
+                note:"test grant via deep-testing"} → 200 with
+                {ok:true, tier:"zen", user:{user_id, email, name},
+                 expires_at:"2026-06-06T08:11:13.836998+00:00"} (ISO with TZ).
+              · D12: GET /admin/users/{luna_id} → tier=="zen", pro=true, zen=true.
+              · D13: POST /admin/grant-tier {user_id:luna, tier:"pro", days:7} → 200.
+              · D14: GET /admin/users/{luna_id} → tier=="pro", pro=true, zen=false.
+                Pro grant correctly clears the zen flag (matches admin.py L348-349
+                comment: "Granting Pro after a Zen grant should NOT silently leave
+                zen=true").
+              · D15: POST /admin/revoke-tier {user_id:luna} → 200
+                {ok:true, user_id:"user_e96b072d4480"}.
+              · D16: GET /admin/users/{luna_id} → tier=="free", pro=false, zen=false.
+                grants[0].revoked == true (latest grant correctly marked).
+              · D17: POST /admin/grant-tier {user_id:luna, tier:"zen", days:3650,
+                note:"restored"} → 200. Luna restored to long-lived Zen for
+                downstream tests (per spec instruction).
+
+            E) Cannot revoke admins — 2/2 PASS:
+              · POST /admin/revoke-tier {user_id:admin_id} → 400
+                {"detail":"Cannot revoke an admin"} (exact wording).
+
+            F) Reset quota — 3/3 PASS:
+              · POST /admin/reset-quota {user_id:luna} → 200
+                {ok:true, user_id:"user_e96b072d4480", deleted:1}. Returns int.
+              · POST /admin/reset-quota {user_id:"nonexistent_id_xxx"} → 404
+                {"detail":"User not found"}.
+
+            G) Auth gate — 4/4 PASS:
+              · demo (luna, Pro non-admin) GET /admin/stats/overview → 403
+                {"detail":"Admin access required"}.
+              · demo POST /admin/grant-tier → 403 {"detail":"Admin access required"}.
+              · No-token GET /admin/stats/overview (fresh httpx.Client, no cookies)
+                → 401 {"detail":"Not authenticated"}.
+
+            H) Models / validation — 4/4 PASS:
+              · POST /admin/grant-tier {tier:"platinum"} → 422 (Pydantic pattern
+                violation on the `^(pro|zen)$` regex).
+              · POST /admin/grant-tier with neither email nor user_id → 400
+                {"detail":"Either email or user_id required"} (raised by
+                _resolve_target helper).
+              · POST /admin/grant-tier {days:0} → 422 (Field ge=1 violation).
+
+            BACKEND HEALTH:
+              · backend.err.log clean during the run — only WatchFiles reload lines
+                from prior dev edits and the standard "[purge] {moods_deleted:0,
+                r2_objects_deleted:0, users_checked:66}" daemon lines.
+              · backend.out.log shows the expected status code mix
+                (200/400/401/403/404/422) for every harness call. No 500s, no
+                Python exceptions caused by any of the new admin endpoints.
+              · Pre-existing TypeError in routes/moods.py L483 (offset-naive vs
+                offset-aware in the /moods/insights range slicing) is visible in
+                older log entries — UNRELATED to the admin module under test.
+
+            CLEANUP / END STATE:
+              · Luna left with Zen grant for 3650 days (note:"restored") per
+                step 17 of the spec — no cleanup required.
+              · Two restore_zen DB writes were performed via the public
+                /admin/grant-tier API (idempotent, audited in pro_grants).
+              · Five extra pro_grants rows added to db.pro_grants for luna
+                (visible in subsequent /admin/users/{luna_id}.grants list);
+                each is correctly tagged with granted_by_user_id,
+                granted_to_user_id, expires_at, and revoked flag.
+
+            ISSUE FOR MAIN AGENT (1):
+              · BUG (minor severity, spec deviation): GET /api/admin/users/list
+                ?tier=pro currently includes admin users (who carry pro=true for
+                feature gates). Spec: "only Pro users (no zen, no admin)". Fix
+                is a one-line addition in routes/admin.py at L192-194:
+                  ```
+                  elif tier == "pro":
+                      mongo_filter["pro"] = True
+                      mongo_filter["zen"] = {"$ne": True}
+                      mongo_filter["is_admin"] = {"$ne": True}   # ADD THIS
+                  ```
+                The tier=="free" branch already does this correctly. All the other
+                tier filters (admin, zen, free, all) work as documented.
+
+            CONCLUSION: All 6 new admin user-management endpoints work end-to-end.
+            Stats overview, list (with q/tier/sort/pagination), user detail with
+            stats+grants+meditation, grant/revoke cycle including zen-clears-on-pro
+            and "cannot revoke admin" guard, reset-quota happy + 404 path, and the
+            auth gate (401 unauth, 403 non-admin) all match the spec exactly.
+            One spec deviation on tier=pro (admins leaking into the result), with
+            a one-line fix identified. No backend code was modified by the
+            testing agent.
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Admin user-management endpoints backend test COMPLETE — 87/89 PASS.
+
+        ✅ /admin/stats/overview (18/18): exact shape match (users{10 keys},
+           moods{3 keys}, grants{1 key}, as_of ISO).
+        ✅ /admin/users/list (14/16): pagination envelope correct, tier=admin
+           count matches stats, tier=zen empty, q=hello finds admin, sort=name
+           ascending. ❌ tier=pro filter LEAKS admin users (one-line fix in
+           routes/admin.py L194 — mirror the free-branch's `is_admin: {$ne:true}`).
+        ✅ /admin/users/{id} (17/17): full bundle with stats sub-object
+           (moods_total, moods_7d, friends, current_streak, longest_streak,
+           last_mood, coach_used_today, coach_used_lifetime), grants list,
+           meditation_trials_used list. nonexistent → 404.
+        ✅ Grant/Revoke cycle (14/14): zen→pro clears zen flag (admin.py L348
+           working as commented), revoke marks grants[0].revoked=true.
+           Restored luna to Zen 3650d at the end (spec step 17).
+        ✅ "Cannot revoke an admin" → 400 exact match.
+        ✅ /admin/reset-quota → 200 {ok, user_id, deleted:int}; nonexistent → 404.
+        ✅ Auth gate: demo non-admin → 403 "Admin access required";
+           no-token → 401 "Not authenticated".
+        ✅ Validation: tier="platinum" → 422 (regex), no email/user_id → 400
+           "Either email or user_id required", days=0 → 422 (ge=1).
+
+        BACKEND HEALTH: backend.err.log clean during the run — only WatchFiles
+        + purge daemon lines. Zero 500s. The pre-existing
+        offset-naive-vs-offset-aware TypeError in routes/moods.py L483 (insights
+        endpoint) is visible in older log lines — UNRELATED to admin module.
+
+        ISSUE: tier=pro filter currently returns admins. One-line fix:
+          routes/admin.py L194 add `mongo_filter["is_admin"] = {"$ne": True}`
+          inside the `elif tier == "pro":` branch. Mirrors the free branch.
+
+        No backend code was modified by the testing agent.
+

@@ -1,283 +1,321 @@
-"""Backend test — Session 26: Meditation endpoints + new Coach quotas (5/day Pro, 20/day Zen)."""
+"""Session: NEW admin user-management endpoints validation.
+
+Read-only style validation against the live preview backend. We only mutate
+luna's tier (which is expected — the spec restores it at the end) and
+luna's coach_limits collection via /admin/reset-quota. We do NOT modify
+any code.
+"""
+from __future__ import annotations
+
 import sys
+from typing import Dict, Optional
+
 import httpx
-from typing import Optional
 
 BASE = "https://charming-wescoff-8.preview.emergentagent.com/api"
 
 ADMIN_EMAIL = "hello@innfeel.app"
-ADMIN_PW = "admin123"
+ADMIN_PASSWORD = "admin123"
 DEMO_EMAIL = "luna@innfeel.app"
-DEMO_PW = "demo1234"
+DEMO_PASSWORD = "demo1234"
 
-VALID_THEMES = ("sleep", "anxiety", "gratitude", "focus")
-
-results = []
-
-
-def log(name: str, ok: bool, detail: str = "") -> None:
-    mark = "PASS" if ok else "FAIL"
-    print(f"[{mark}] {name}  {detail}")
-    results.append((ok, name, detail))
+PASS = []
+FAIL = []
 
 
-def login(client: httpx.Client, email: str, password: str) -> str:
-    r = client.post(f"{BASE}/auth/login", json={"email": email, "password": password})
-    r.raise_for_status()
-    return r.json()["access_token"]
+def log(tag, name, ok, info=""):
+    bullet = "PASS" if ok else "FAIL"
+    msg = f"[{bullet}] {tag}: {name}"
+    if info:
+        msg += f"  | {info}"
+    print(msg)
+    (PASS if ok else FAIL).append((tag, name, info))
 
 
-def make_client(token: Optional[str] = None) -> httpx.Client:
-    headers = {}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    return httpx.Client(timeout=60.0, headers=headers, cookies=None)
+def login(client: httpx.Client, email: str, password: str) -> Optional[str]:
+    r = client.post(f"{BASE}/auth/login", json={"email": email, "password": password}, timeout=20)
+    if r.status_code != 200:
+        print(f"login failed for {email}: {r.status_code} {r.text}")
+        return None
+    return r.json().get("access_token")
 
 
-def auth():
-    print("\n=== LOGIN ===")
-    with httpx.Client(timeout=15.0) as c:
-        admin_tok = login(c, ADMIN_EMAIL, ADMIN_PW)
-        demo_tok = login(c, DEMO_EMAIL, DEMO_PW)
-    print(f"  admin token: {admin_tok[:24]}...")
-    print(f"  demo  token: {demo_tok[:24]}...")
-    return admin_tok, demo_tok
-
-
-def test_eligibility(admin_tok: str, demo_tok: str):
-    print("\n=== A — /meditation/eligibility ===")
-    with make_client(admin_tok) as c:
-        r = c.get(f"{BASE}/meditation/eligibility")
-    log("A1 admin GET /meditation/eligibility status=200", r.status_code == 200, f"got {r.status_code}: {r.text[:200]}")
-    if r.status_code == 200:
-        b = r.json()
-        print(f"  admin body: {b}")
-        log("A1.tier == 'pro'", b.get("tier") == "pro", f"tier={b.get('tier')}")
-        log("A1.unlimited == True", b.get("unlimited") is True, f"unlimited={b.get('unlimited')}")
-        log("A1.used == []", b.get("used") == [], f"used={b.get('used')}")
-        log("A1.remaining matches all themes", set(b.get("remaining") or []) == set(VALID_THEMES), f"remaining={b.get('remaining')}")
-        log("A1.themes == sleep/anxiety/gratitude/focus", set(b.get("themes") or []) == set(VALID_THEMES), f"themes={b.get('themes')}")
-
-    with make_client(demo_tok) as c:
-        r = c.get(f"{BASE}/meditation/eligibility")
-    log("A2 demo GET /meditation/eligibility status=200", r.status_code == 200, f"got {r.status_code}: {r.text[:200]}")
-    demo_used_initial = []
-    demo_tier = None
-    if r.status_code == 200:
-        b = r.json()
-        print(f"  demo body: {b}")
-        demo_tier = b.get("tier")
-        # NOTE: per env note, luna may currently be Pro (admin grant leftovers).
-        # We log the actual tier and adapt the rest of the test to whatever the server says.
-        log("A2.tier present", demo_tier in ("free", "pro", "zen"), f"tier={demo_tier}")
-        log("A2.themes set complete", set(b.get("themes") or []) == set(VALID_THEMES), f"themes={b.get('themes')}")
-        demo_used_initial = b.get("used") or []
-        if demo_tier == "free":
-            log("A2.unlimited == False", b.get("unlimited") is False, f"unlimited={b.get('unlimited')}")
-            if demo_used_initial:
-                print(f"  ⚠️  demo already has used trials from prior session: {demo_used_initial}")
-        else:
-            print(f"  ⚠️  demo tier is '{demo_tier}' (expected 'free' per spec). Likely leftover Pro grant in env.")
-            log("A2.unlimited == True (since tier=pro)", b.get("unlimited") is True, f"unlimited={b.get('unlimited')}")
-        expected_remaining = [t for t in VALID_THEMES if t not in demo_used_initial]
-        log(
-            "A2.remaining == themes - used",
-            set(b.get("remaining") or []) == set(expected_remaining),
-            f"remaining={b.get('remaining')} expected={expected_remaining}",
-        )
-    return demo_used_initial, demo_tier
-
-
-def test_start(admin_tok: str, demo_tok: str, demo_used_initial: list, demo_tier: str):
-    print("\n=== B — /meditation/start ===")
-
-    if demo_tier != "free":
-        # Demo is currently Pro — start always returns consumed:false.
-        print("  demo is not 'free' — running B as a Pro pass-through assertion")
-        with make_client(demo_tok) as c:
-            r = c.post(f"{BASE}/meditation/start", json={"theme": "sleep"})
-        log("B-pro demo POST start theme=sleep → 200", r.status_code == 200, f"got {r.status_code}: {r.text[:200]}")
-        if r.status_code == 200:
-            b = r.json()
-            log("B-pro.consumed == False", b.get("consumed") is False, f"body={b}")
-
-    else:
-        candidates = [t for t in VALID_THEMES if t not in demo_used_initial]
-        if not candidates:
-            log("B0 demo has at least one fresh theme", False, f"all themes consumed: used={demo_used_initial}")
-            theme_to_use = None
-        else:
-            theme_to_use = candidates[0]
-            print(f"  using theme '{theme_to_use}' for demo consumption test")
-
-            # B3 — first POST start
-            with make_client(demo_tok) as c:
-                r = c.post(f"{BASE}/meditation/start", json={"theme": theme_to_use})
-            log(f"B3 demo POST start theme={theme_to_use} → 200", r.status_code == 200, f"got {r.status_code}: {r.text[:200]}")
-            if r.status_code == 200:
-                b = r.json()
-                print(f"  B3 body: {b}")
-                log("B3.ok==True", b.get("ok") is True, "")
-                log("B3.tier=='free'", b.get("tier") == "free", f"tier={b.get('tier')}")
-                log("B3.consumed==True", b.get("consumed") is True, f"consumed={b.get('consumed')}")
-                log(f"B3.theme=='{theme_to_use}'", b.get("theme") == theme_to_use, f"theme={b.get('theme')}")
-
-            # B4 — same theme again → 402
-            with make_client(demo_tok) as c:
-                r = c.post(f"{BASE}/meditation/start", json={"theme": theme_to_use})
-            log(f"B4 re-call theme={theme_to_use} → 402", r.status_code == 402, f"got {r.status_code}: {r.text[:200]}")
-            if r.status_code == 402:
-                try:
-                    detail = r.json().get("detail", "")
-                except Exception:
-                    detail = r.text
-                log("B4 detail mentions 'Upgrade to Pro'", "Upgrade to Pro" in detail, f"detail={detail}")
-
-            # B5 — eligibility now lists the just-used theme
-            with make_client(demo_tok) as c:
-                r = c.get(f"{BASE}/meditation/eligibility")
-            if r.status_code == 200:
-                b = r.json()
-                used = b.get("used") or []
-                log(f"B5.used contains '{theme_to_use}'", theme_to_use in used, f"used={used}")
-                log(f"B5.remaining excludes '{theme_to_use}'", theme_to_use not in (b.get("remaining") or []), f"remaining={b.get('remaining')}")
-
-    # B6 — bad theme always 400 regardless of tier
-    with make_client(demo_tok) as c:
-        r = c.post(f"{BASE}/meditation/start", json={"theme": "badtheme"})
-    log("B6 demo POST start theme=badtheme → 400", r.status_code == 400, f"got {r.status_code}: {r.text[:200]}")
-    if r.status_code == 400:
-        try:
-            detail = r.json().get("detail", "")
-        except Exception:
-            detail = r.text
-        log("B6 detail == 'Unknown meditation theme'", "Unknown meditation theme" in detail, f"detail={detail}")
-
-    # B7 — admin (Pro) → consumed:false on any theme
-    with make_client(admin_tok) as c:
-        r = c.post(f"{BASE}/meditation/start", json={"theme": "focus"})
-    log("B7 admin POST start theme=focus → 200", r.status_code == 200, f"got {r.status_code}: {r.text[:200]}")
-    if r.status_code == 200:
-        b = r.json()
-        print(f"  B7 body: {b}")
-        log("B7.ok==True", b.get("ok") is True, "")
-        log("B7.tier=='pro'", b.get("tier") == "pro", f"tier={b.get('tier')}")
-        log("B7.consumed==False", b.get("consumed") is False, f"consumed={b.get('consumed')}")
-
-
-def test_coach_quota(admin_tok: str):
-    print("\n=== C — /coach/chat at 5/day Pro quota (shared with /journal/reflect) ===")
-
-    with make_client(admin_tok) as c:
-        r = c.get(f"{BASE}/coach/history")
-    log("C0 GET /coach/history → 200", r.status_code == 200, f"got {r.status_code}: {r.text[:300]}")
-    pre_quota_left = None
-    if r.status_code == 200:
-        b = r.json()
-        pre_quota_left = b.get("quota_left")
-        log("C0.tier=='pro'", b.get("tier") == "pro", f"tier={b.get('tier')}")
-        print(f"  Pre-test admin quota_left = {pre_quota_left} (out of 5/day)")
-        # The new quota is 5/day, so quota_left should be ≤ 5
-        log("C0 quota_left ≤ 5 (new lower limit)", isinstance(pre_quota_left, int) and pre_quota_left <= 5, f"quota_left={pre_quota_left}")
-
-    if not isinstance(pre_quota_left, int):
-        log("C0 quota_left is int", False, "aborting C")
-        return
-
-    # Send pre_quota_left messages, expect all 200
-    print(f"\n  --- Sending {pre_quota_left} chat messages (should all succeed) ---")
-    success_count = 0
-    last_quota_left = None
-    for i in range(pre_quota_left):
-        with make_client(admin_tok) as c:
-            r = c.post(f"{BASE}/coach/chat", json={"text": f"Quick hi #{i+1}, just say 'hi'."}, timeout=90.0)
-        if r.status_code == 200:
-            success_count += 1
-            try:
-                b = r.json()
-                last_quota_left = b.get("quota_left")
-                print(f"    msg #{i+1}: 200 → quota_left={last_quota_left}, tier={b.get('tier')}")
-            except Exception:
-                pass
-        else:
-            print(f"    msg #{i+1}: {r.status_code} → {r.text[:300]}")
-            break
-    log(f"C1 sent {pre_quota_left} chat messages, all returned 200", success_count == pre_quota_left, f"got {success_count}/{pre_quota_left}")
-    if success_count == pre_quota_left:
-        log("C1.final quota_left == 0", last_quota_left == 0, f"quota_left after last successful = {last_quota_left}")
-
-    # Boundary — next call must be 402
-    print("\n  --- Boundary: next call should be 402 ---")
-    with make_client(admin_tok) as c:
-        r = c.post(f"{BASE}/coach/chat", json={"text": "hello"})
-    log(f"C2 next /coach/chat → 402 (boundary)", r.status_code == 402, f"got {r.status_code}: {r.text[:300]}")
-    detail_402 = ""
-    if r.status_code == 402:
-        try:
-            detail_402 = r.json().get("detail", "")
-        except Exception:
-            detail_402 = r.text
-        print(f"  402 detail: {detail_402!r}")
-        log("C10 detail mentions 'AI credits'", "AI credits" in detail_402, f"detail={detail_402}")
-        log("C10 detail mentions 'chat + journal'", "chat + journal" in detail_402, f"detail={detail_402}")
-        log("C10 detail mentions '5'", "5" in detail_402, f"detail={detail_402}")
-
-    # C9 — Shared counter: /journal/reflect should also 402
-    print("\n  --- Shared counter via /journal/reflect ---")
-    with make_client(admin_tok) as c:
-        r0 = c.post(
-            f"{BASE}/journal/checkin",
-            json={"kind": "morning", "answers": {"intention": "Calm focus today."}, "note": "test"},
-        )
-        log("C9 prep: POST /journal/checkin → 200", r0.status_code == 200, f"got {r0.status_code}: {r0.text[:200]}")
-        r = c.post(f"{BASE}/journal/reflect", json={"kind": "morning"})
-    log("C9 POST /journal/reflect → 402 (shared counter exhausted)", r.status_code == 402, f"got {r.status_code}: {r.text[:300]}")
-    if r.status_code == 402:
-        try:
-            d = r.json().get("detail", "")
-        except Exception:
-            d = r.text
-        print(f"  402 detail: {d!r}")
-        log("C9 detail mentions 'AI credits' or 'chat + journal'", ("AI credits" in d) or ("chat + journal" in d), f"detail={d}")
-
-
-def test_regression(admin_tok: str, demo_tok: str):
-    print("\n=== D — Regression /streak/freeze-status ===")
-    with make_client(admin_tok) as c:
-        r = c.get(f"{BASE}/streak/freeze-status")
-    log("D1 admin GET /streak/freeze-status → 200", r.status_code == 200, f"got {r.status_code}: {r.text[:200]}")
-    if r.status_code == 200:
-        b = r.json()
-        for k in ("plan", "quota", "used_this_month", "monthly_remaining", "remaining", "current_streak", "bundle"):
-            log(f"D1.{k} present", k in b, "")
-
-    with make_client(demo_tok) as c:
-        r = c.get(f"{BASE}/streak/freeze-status")
-    log("D2 demo GET /streak/freeze-status → 200", r.status_code == 200, f"got {r.status_code}: {r.text[:200]}")
+def H(token: str) -> Dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
 
 
 def main():
-    try:
-        admin_tok, demo_tok = auth()
-    except Exception as e:
-        print(f"FATAL: login failed: {e}")
+    admin = httpx.Client(timeout=30)
+    demo = httpx.Client(timeout=30)
+    naked = httpx.Client(timeout=30)
+
+    admin_token = login(admin, ADMIN_EMAIL, ADMIN_PASSWORD)
+    demo_token = login(demo, DEMO_EMAIL, DEMO_PASSWORD)
+
+    if not admin_token or not demo_token:
+        print("Cannot login — abort")
         sys.exit(1)
 
-    demo_used, demo_tier = test_eligibility(admin_tok, demo_tok)
-    test_start(admin_tok, demo_tok, demo_used, demo_tier)
-    test_coach_quota(admin_tok)
-    test_regression(admin_tok, demo_tok)
+    AH = H(admin_token)
+    DH = H(demo_token)
 
-    print("\n" + "=" * 70)
-    total = len(results)
-    passed = sum(1 for ok, _, _ in results if ok)
-    print(f"SUMMARY: {passed}/{total} PASS")
-    fails = [(n, d) for ok, n, d in results if not ok]
-    if fails:
-        print("\nFAILS:")
-        for n, d in fails:
-            print(f"  - {n}  | {d}")
-    print("=" * 70)
+    # ── A) Stats overview ──────────────────────────────────────────────
+    r = admin.get(f"{BASE}/admin/stats/overview", headers=AH)
+    body = r.json() if r.status_code == 200 else {}
+    log("A1", "GET /admin/stats/overview returns 200",
+        r.status_code == 200, f"status={r.status_code}")
+    if r.status_code == 200:
+        u = body.get("users", {})
+        m = body.get("moods", {})
+        g = body.get("grants", {})
+        for k in ["total", "free", "pro", "zen", "admin", "verified", "new_7d", "new_30d", "dau", "wau"]:
+            log("A1", f"users.{k} present and int",
+                isinstance(u.get(k), int), f"value={u.get(k)}")
+        for k in ["total", "today", "last_7d"]:
+            log("A1", f"moods.{k} present and int",
+                isinstance(m.get(k), int), f"value={m.get(k)}")
+        log("A1", "grants.active present and int",
+            isinstance(g.get("active"), int), f"value={g.get('active')}")
+        log("A1", "as_of present (ISO string)",
+            isinstance(body.get("as_of"), str) and "T" in body.get("as_of", ""),
+            f"as_of={body.get('as_of')}")
+        log("A1", "users.total >= 1", u.get("total", 0) >= 1, f"total={u.get('total')}")
+        log("A1", "users.admin >= 1", u.get("admin", 0) >= 1, f"admin={u.get('admin')}")
+
+    stats_admin_count = body.get("users", {}).get("admin", 0)
+
+    # ── B) Users list ──────────────────────────────────────────────────
+    r = admin.get(f"{BASE}/admin/users/list", headers=AH, params={"page": 0, "page_size": 10})
+    body = r.json() if r.status_code == 200 else {}
+    log("B2", "GET /admin/users/list (no filter) → 200", r.status_code == 200,
+        f"status={r.status_code}")
+    if r.status_code == 200:
+        for k in ["users", "total", "page", "page_size", "has_more"]:
+            log("B2", f"key {k} present", k in body, f"keys={list(body.keys())}")
+        log("B2", "users is a list", isinstance(body.get("users"), list))
+        log("B2", "page_size honoured (≤10)", len(body.get("users", [])) <= 10,
+            f"len={len(body.get('users', []))}")
+
+    r = admin.get(f"{BASE}/admin/users/list", headers=AH, params={"tier": "admin", "page_size": 50})
+    body = r.json() if r.status_code == 200 else {}
+    log("B3", "tier=admin → 200", r.status_code == 200, f"status={r.status_code}")
+    users = body.get("users", [])
+    if users:
+        all_admin = all(u.get("is_admin") and u.get("tier") == "admin" for u in users)
+        log("B3", "every returned user has tier=admin & is_admin=true",
+            all_admin, f"n={len(users)}")
+        log("B3", "count matches stats.users.admin",
+            body.get("total") == stats_admin_count,
+            f"list.total={body.get('total')} stats.admin={stats_admin_count}")
+
+    r = admin.get(f"{BASE}/admin/users/list", headers=AH, params={"tier": "pro", "page_size": 50})
+    body = r.json() if r.status_code == 200 else {}
+    log("B4", "tier=pro → 200", r.status_code == 200, f"status={r.status_code}")
+    users = body.get("users", [])
+    if users:
+        ok = all(u.get("pro") and not u.get("zen") and not u.get("is_admin") for u in users)
+        log("B4", "every row pro=true zen=false admin=false", ok, f"n={len(users)}")
+        tiers = {u.get("tier") for u in users}
+        log("B4", "all tiers == 'pro'", tiers == {"pro"}, f"tiers={tiers}")
+    else:
+        log("B4", "tier=pro returned empty (acceptable)", True, f"total={body.get('total')}")
+
+    r = admin.get(f"{BASE}/admin/users/list", headers=AH, params={"tier": "zen", "page_size": 50})
+    body = r.json() if r.status_code == 200 else {}
+    log("B5", "tier=zen → 200", r.status_code == 200, f"status={r.status_code}")
+    users = body.get("users", [])
+    if users:
+        ok = all(u.get("zen") for u in users)
+        log("B5", "every row zen=true", ok, f"n={len(users)}")
+    else:
+        log("B5", "tier=zen returned empty (acceptable)", True, f"total={body.get('total')}")
+
+    r = admin.get(f"{BASE}/admin/users/list", headers=AH, params={"q": "hello", "page_size": 20})
+    body = r.json() if r.status_code == 200 else {}
+    log("B6", "q=hello → 200", r.status_code == 200, f"status={r.status_code}")
+    if r.status_code == 200:
+        emails = [u.get("email") for u in body.get("users", [])]
+        log("B6", "admin email present in q=hello result",
+            ADMIN_EMAIL in emails, f"emails={emails}")
+
+    r = admin.get(f"{BASE}/admin/users/list", headers=AH,
+                  params={"sort": "name", "page": 0, "page_size": 5})
+    body = r.json() if r.status_code == 200 else {}
+    log("B7", "sort=name → 200", r.status_code == 200, f"status={r.status_code}")
+    if r.status_code == 200:
+        names = [u.get("name") or "" for u in body.get("users", [])]
+        is_sorted = names == sorted(names, key=lambda s: (s or ""))
+        log("B7", "results sorted ascending by name", is_sorted, f"names={names}")
+
+    # ── C) User detail ─────────────────────────────────────────────────
+    r = admin.get(f"{BASE}/auth/me", headers=AH)
+    admin_uid = r.json().get("user_id") if r.status_code == 200 else None
+    log("C-pre", "fetched admin user_id", bool(admin_uid), f"admin_uid={admin_uid}")
+
+    r = admin.get(f"{BASE}/admin/users/{admin_uid}", headers=AH)
+    body = r.json() if r.status_code == 200 else {}
+    log("C8", "GET /admin/users/{admin_id} → 200", r.status_code == 200,
+        f"status={r.status_code}")
+    if r.status_code == 200:
+        for k in ["user_id", "email", "name", "tier", "is_admin", "stats", "grants",
+                  "meditation_trials_used"]:
+            log("C8", f"key {k} present", k in body, f"keys={list(body.keys())[:25]}")
+        stats = body.get("stats", {})
+        for k in ["moods_total", "moods_7d", "friends", "current_streak",
+                  "longest_streak", "last_mood", "coach_used_today", "coach_used_lifetime"]:
+            log("C8", f"stats.{k} present", k in stats, f"stats keys={list(stats.keys())}")
+        last_mood = stats.get("last_mood")
+        log("C8", "stats.last_mood is dict-or-null",
+            last_mood is None or isinstance(last_mood, dict),
+            f"last_mood={type(last_mood).__name__}")
+        log("C8", "grants is list", isinstance(body.get("grants"), list))
+        log("C8", "meditation_trials_used is list",
+            isinstance(body.get("meditation_trials_used"), list))
+
+    r = admin.get(f"{BASE}/admin/users/nonexistent_id_12345", headers=AH)
+    log("C9", "GET /admin/users/nonexistent_id_12345 → 404",
+        r.status_code == 404, f"status={r.status_code} body={r.text[:200]}")
+
+    # ── D) Grant / Revoke cycle on luna ────────────────────────────────
+    r = admin.get(f"{BASE}/admin/users/list", headers=AH, params={"q": "luna", "page_size": 5})
+    body = r.json() if r.status_code == 200 else {}
+    luna_uid = None
+    for u in body.get("users", []):
+        if u.get("email") == DEMO_EMAIL:
+            luna_uid = u.get("user_id")
+            break
+    log("D10", "discovered luna user_id via q=luna", bool(luna_uid),
+        f"luna_uid={luna_uid}")
+
+    r = admin.post(f"{BASE}/admin/grant-tier", headers=AH,
+                   json={"user_id": luna_uid, "tier": "zen", "days": 30,
+                         "note": "test grant via deep-testing"})
+    body = r.json() if r.status_code == 200 else {}
+    log("D11", "POST /admin/grant-tier zen 30d → 200",
+        r.status_code == 200, f"status={r.status_code} body={r.text[:300]}")
+    log("D11", "response.expires_at present (ISO)",
+        isinstance(body.get("expires_at"), str) and "T" in body.get("expires_at", ""),
+        f"expires_at={body.get('expires_at')}")
+
+    r = admin.get(f"{BASE}/admin/users/{luna_uid}", headers=AH)
+    body = r.json() if r.status_code == 200 else {}
+    log("D12", "luna detail tier=zen", body.get("tier") == "zen",
+        f"tier={body.get('tier')}")
+    log("D12", "luna pro=True", body.get("pro") is True, f"pro={body.get('pro')}")
+    log("D12", "luna zen=True", body.get("zen") is True, f"zen={body.get('zen')}")
+
+    r = admin.post(f"{BASE}/admin/grant-tier", headers=AH,
+                   json={"user_id": luna_uid, "tier": "pro", "days": 7})
+    log("D13", "POST /admin/grant-tier pro 7d → 200",
+        r.status_code == 200, f"status={r.status_code}")
+
+    r = admin.get(f"{BASE}/admin/users/{luna_uid}", headers=AH)
+    body = r.json() if r.status_code == 200 else {}
+    log("D14", "luna detail tier=pro", body.get("tier") == "pro",
+        f"tier={body.get('tier')}")
+    log("D14", "luna pro=True", body.get("pro") is True, f"pro={body.get('pro')}")
+    log("D14", "luna zen=False (cleared by pro grant)",
+        body.get("zen") is False, f"zen={body.get('zen')}")
+
+    r = admin.post(f"{BASE}/admin/revoke-tier", headers=AH, json={"user_id": luna_uid})
+    log("D15", "POST /admin/revoke-tier → 200", r.status_code == 200,
+        f"status={r.status_code} body={r.text[:200]}")
+
+    r = admin.get(f"{BASE}/admin/users/{luna_uid}", headers=AH)
+    body = r.json() if r.status_code == 200 else {}
+    log("D16", "luna detail tier=free", body.get("tier") == "free",
+        f"tier={body.get('tier')}")
+    log("D16", "luna pro=False", body.get("pro") is False, f"pro={body.get('pro')}")
+    log("D16", "luna zen=False", body.get("zen") is False, f"zen={body.get('zen')}")
+    grants = body.get("grants") or []
+    if grants:
+        log("D16", "last grant revoked=true", grants[0].get("revoked") is True,
+            f"first grant revoked={grants[0].get('revoked')}")
+
+    r = admin.post(f"{BASE}/admin/grant-tier", headers=AH,
+                   json={"user_id": luna_uid, "tier": "zen", "days": 3650, "note": "restored"})
+    log("D17", "POST /admin/grant-tier zen 3650d (restore) → 200",
+        r.status_code == 200, f"status={r.status_code}")
+
+    # ── E) Cannot revoke admin ─────────────────────────────────────────
+    r = admin.post(f"{BASE}/admin/revoke-tier", headers=AH, json={"user_id": admin_uid})
+    body = {}
+    try:
+        body = r.json()
+    except Exception:
+        pass
+    log("E18", "revoke admin → 400", r.status_code == 400,
+        f"status={r.status_code} detail={body.get('detail')}")
+    log("E18", "detail == 'Cannot revoke an admin'",
+        body.get("detail") == "Cannot revoke an admin",
+        f"detail={body.get('detail')}")
+
+    # ── F) Reset quota ─────────────────────────────────────────────────
+    r = admin.post(f"{BASE}/admin/reset-quota", headers=AH, json={"user_id": luna_uid})
+    body = r.json() if r.status_code == 200 else {}
+    log("F19", "reset-quota luna → 200", r.status_code == 200,
+        f"status={r.status_code} body={body}")
+    log("F19", "response ok=true & deleted is int",
+        body.get("ok") is True and isinstance(body.get("deleted"), int),
+        f"body={body}")
+
+    r = admin.post(f"{BASE}/admin/reset-quota", headers=AH,
+                   json={"user_id": "nonexistent_id_xxx"})
+    log("F20", "reset-quota nonexistent → 404",
+        r.status_code == 404, f"status={r.status_code} body={r.text[:200]}")
+
+    # ── G) Auth gate ───────────────────────────────────────────────────
+    r = demo.get(f"{BASE}/admin/stats/overview", headers=DH)
+    body = {}
+    try:
+        body = r.json()
+    except Exception:
+        pass
+    log("G21", "demo GET /admin/stats/overview → 403",
+        r.status_code == 403, f"status={r.status_code} detail={body.get('detail')}")
+    log("G21", "detail == 'Admin access required'",
+        body.get("detail") == "Admin access required",
+        f"detail={body.get('detail')}")
+
+    r = demo.post(f"{BASE}/admin/grant-tier", headers=DH,
+                  json={"user_id": luna_uid, "tier": "pro", "days": 7})
+    log("G22", "demo POST /admin/grant-tier → 403",
+        r.status_code == 403, f"status={r.status_code} body={r.text[:200]}")
+
+    r = naked.get(f"{BASE}/admin/stats/overview")
+    log("G23", "no token GET /admin/stats/overview → 401",
+        r.status_code == 401, f"status={r.status_code} body={r.text[:200]}")
+
+    # ── H) Models / validation ─────────────────────────────────────────
+    r = admin.post(f"{BASE}/admin/grant-tier", headers=AH,
+                   json={"user_id": luna_uid, "tier": "platinum", "days": 5})
+    log("H24", "tier=platinum → 422", r.status_code == 422,
+        f"status={r.status_code}")
+
+    r = admin.post(f"{BASE}/admin/grant-tier", headers=AH,
+                   json={"tier": "pro", "days": 7})
+    body = {}
+    try:
+        body = r.json()
+    except Exception:
+        pass
+    log("H25", "neither email nor user_id → 400", r.status_code == 400,
+        f"status={r.status_code} detail={body.get('detail')}")
+    log("H25", "detail == 'Either email or user_id required'",
+        body.get("detail") == "Either email or user_id required",
+        f"detail={body.get('detail')}")
+
+    r = admin.post(f"{BASE}/admin/grant-tier", headers=AH,
+                   json={"user_id": luna_uid, "tier": "pro", "days": 0})
+    log("H26", "days=0 → 422", r.status_code == 422,
+        f"status={r.status_code}")
+
+    print()
+    print(f"PASS: {len(PASS)}    FAIL: {len(FAIL)}")
+    if FAIL:
+        print("\nFAILURES:")
+        for tag, name, info in FAIL:
+            print(f"  [{tag}] {name}  | {info}")
 
 
 if __name__ == "__main__":

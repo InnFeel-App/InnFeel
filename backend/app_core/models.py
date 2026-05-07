@@ -115,10 +115,19 @@ class AdminGrantProIn(BaseModel):
     email: EmailStr
     days: int = Field(ge=1, le=3650, default=30)
     note: Optional[str] = Field(default=None, max_length=200)
+    # Tier defaults to "pro" so existing callers stay backward compatible.
+    # Admin panel sends "zen" to grant the higher tier.
+    tier: Optional[str] = Field(default="pro", pattern="^(pro|zen)$")
 
 
 class AdminRevokeProIn(BaseModel):
     email: EmailStr
+
+
+class AdminUserActionIn(BaseModel):
+    """Generic admin action keyed by user_id (preferred over email when
+    the admin is operating on a specific record they already loaded)."""
+    user_id: str = Field(min_length=4, max_length=64)
 
 
 class PushTokenIn(BaseModel):

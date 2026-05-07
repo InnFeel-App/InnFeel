@@ -24,6 +24,7 @@
     "expo": "~54.0.34",
     "expo-av": "^16.0.8",
     "expo-blur": "~15.0.8",
+    "expo-clipboard": "^55.0.13",
     "expo-constants": "~18.0.13",
     "expo-contacts": "~15.0.11",
     "expo-device": "~8.0.10",
