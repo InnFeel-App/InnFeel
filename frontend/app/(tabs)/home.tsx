@@ -7,7 +7,7 @@ import MoodCard from "../../src/components/MoodCard";
 import Button from "../../src/components/Button";
 import { useAuth } from "../../src/auth";
 import { api } from "../../src/api";
-import { t } from "../../src/i18n";
+import { t, dateLong, useI18n } from "../../src/i18n";
 import { COLORS, EMOTION_COLORS } from "../../src/theme";
 import { Ionicons } from "@expo/vector-icons";
 import { useShareToStories } from "../../src/components/ShareToStories";
@@ -19,6 +19,8 @@ import { useScreenCaptureGuard } from "../../src/hooks/useScreenCaptureGuard";
 export default function Home() {
   const router = useRouter();
   const { user } = useAuth();
+  // Re-renders the screen when the user switches the language.
+  useI18n();
   // Block screenshots of friends' auras — this screen only. Admins bypass so they can
   // triage bug reports. Anywhere else in the app screenshots stay enabled so users can
   // share error states with support.
@@ -106,8 +108,8 @@ export default function Home() {
         >
           <View style={styles.topRow}>
             <View>
-              <Text style={styles.hello}>Hello, {user?.name?.split(" ")[0] || "there"}</Text>
-              <Text style={styles.dateTxt}>{new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</Text>
+              <Text style={styles.hello}>{t("home.hello", { name: user?.name?.split(" ")[0] || "there" })}</Text>
+              <Text style={styles.dateTxt}>{dateLong()}</Text>
             </View>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
               <TouchableOpacity
@@ -153,7 +155,7 @@ export default function Home() {
           {!todayMood ? (
             <View style={styles.cta}>
               <Text style={styles.ctaTitle}>{t("home.dropToday")}</Text>
-              <Text style={styles.ctaSub}>One aura. Twenty seconds. Unlock your friends' feelings.</Text>
+              <Text style={styles.ctaSub}>{t("home.dropSubtitle")}</Text>
               <View style={{ marginTop: 16 }}>
                 <Button testID="cta-drop-mood" label={t("home.dropCTA")} onPress={() => router.push("/mood-create")} />
               </View>

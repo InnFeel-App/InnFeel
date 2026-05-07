@@ -7,6 +7,7 @@ import { useRouter } from "expo-router";
 import { useAuth } from "../../src/auth";
 import ScreenHeader from "../../src/components/ScreenHeader";
 import { COLORS } from "../../src/theme";
+import { t, useI18n } from "../../src/i18n";
 
 /**
  * Coach Hub — the new top-level entry point for InnFeel's premium-feeling
@@ -24,8 +25,8 @@ import { COLORS } from "../../src/theme";
 
 type Category = {
   key: string;
-  title: string;
-  subtitle: string;
+  titleKey: string;
+  subtitleKey: string;
   icon: keyof typeof Ionicons.glyphMap;
   colors: [string, string];
   route?: string;
@@ -35,8 +36,8 @@ type Category = {
 const CATEGORIES: Category[] = [
   {
     key: "wellness",
-    title: "Wellness Coach",
-    subtitle: "Talk through what you feel — Claude Sonnet 4.5 listens, mirrors, suggests.",
+    titleKey: "coach.cat.wellness.title",
+    subtitleKey: "coach.cat.wellness.subtitle",
     icon: "sparkles",
     colors: ["#A78BFA", "#F472B6"],
     route: "/coach-chat",
@@ -44,24 +45,24 @@ const CATEGORIES: Category[] = [
   },
   {
     key: "journal",
-    title: "Journaling",
-    subtitle: "Morning intention · Evening reflection · Three-prompt check-ins.",
+    titleKey: "coach.cat.journal.title",
+    subtitleKey: "coach.cat.journal.subtitle",
     icon: "book",
     colors: ["#FACC15", "#F59E0B"],
     route: "/journal",
   },
   {
     key: "breath",
-    title: "Breathing",
-    subtitle: "Guided breath cycles with a soft voice. Land yourself before the noise.",
+    titleKey: "coach.cat.breath.title",
+    subtitleKey: "coach.cat.breath.subtitle",
     icon: "leaf",
     colors: ["#34D399", "#10B981"],
     route: "/breath",
   },
   {
     key: "meditation",
-    title: "Meditation",
-    subtitle: "Themed sessions — Sleep, Anxiety, Gratitude, Focus. Soft female voice.",
+    titleKey: "coach.cat.meditation.title",
+    subtitleKey: "coach.cat.meditation.subtitle",
     icon: "moon",
     colors: ["#1E1B4B", "#4C1D95"],
     route: "/meditation",
@@ -100,13 +101,9 @@ export default function CoachHub() {
       >
         {/* Hero — centred to match the rest of the app's tab headers. */}
         <ScreenHeader
-          kicker="Your Wellness"
-          title="Coach"
-          subtitle={
-            pro
-              ? "Your innerself."
-              : "Your innerself.  Upgrade to Pro to unlock everything ✦"
-          }
+          kicker={t("coach.kicker")}
+          title={t("coach.title")}
+          subtitle={pro ? t("coach.subtitle.pro") : t("coach.subtitle.free")}
         />
 
         {/* Category cards */}
@@ -133,7 +130,7 @@ export default function CoachHub() {
                     </View>
                     <View style={{ flex: 1 }}>
                       <View style={styles.cardTitleRow}>
-                        <Text style={styles.cardTitle}>{c.title}</Text>
+                        <Text style={styles.cardTitle}>{t(c.titleKey)}</Text>
                         {c.badge ? (
                           <View style={[styles.badge, c.badge === "Soon" ? styles.badgeMuted : styles.badgeBright]}>
                             <Text style={[styles.badgeTxt, c.badge === "Soon" ? styles.badgeTxtMuted : styles.badgeTxtBright]}>
@@ -142,7 +139,7 @@ export default function CoachHub() {
                           </View>
                         ) : null}
                       </View>
-                      <Text style={styles.cardSub}>{c.subtitle}</Text>
+                      <Text style={styles.cardSub}>{t(c.subtitleKey)}</Text>
                     </View>
                     {!disabled ? (
                       <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.7)" />
@@ -156,8 +153,7 @@ export default function CoachHub() {
 
         {/* Footer note */}
         <Text style={styles.footnote}>
-          ✦ AI replies are powered by Claude Sonnet 4.5. We don't store voice or use your
-          words to train any model.
+          {t("coach.footnote")}
         </Text>
       </ScrollView>
     </SafeAreaView>

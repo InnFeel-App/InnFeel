@@ -4216,3 +4216,27 @@ frontend:
 ##         Use credentials hello@innfeel.app / admin123 (owner) and
 ##         luna@innfeel.app / demo1234 (regular pro user). Promote luna
 ##         then demote her to verify the full cycle.
+
+
+## agent_communication:
+##     -agent: "main"
+##     -message: |
+##         Completed 100% i18n localization. Replaced all remaining hardcoded
+##         English strings across the app. Specifically:
+##         (1) Coach hub: kicker, title, subtitle and the 4 category cards
+##             (Wellness Coach, Journaling, Breathing, Meditation) now read
+##             from t() — including descriptions and footnote.
+##         (2) Home: "Hello, {name}" → t("home.hello"), date now uses
+##             dateLong() locale-aware helper, drop subtitle uses
+##             home.dropSubtitle key.
+##         (3) Friends: "Tap to invite", "Your circle", "Share your code",
+##             "Posted/Waiting", code placeholder, empty state copy and
+##             "close · Pro ✦" badge all translated.
+##         (4) Profile: "streak" / "friends" stat labels.
+##         (5) History + Stats + MoodCard + mood-create: emotion labels now
+##             go through emotionLabel(key) so they translate per locale.
+##         (6) Added dateShort() helper alongside dateLong() in i18n.ts.
+##         All 7 locales (en/fr/es/it/de/pt/ar) updated. Verified visually
+##         in FR: Home, Coach, Friends, History and Profile screens are
+##         fully translated with no English leakage. No backend changes —
+##         no retest needed.

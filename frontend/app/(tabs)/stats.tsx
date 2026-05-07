@@ -7,7 +7,7 @@ import Button from "../../src/components/Button";
 import { api } from "../../src/api";
 import { COLORS, EMOTION_COLORS } from "../../src/theme";
 import { useAuth } from "../../src/auth";
-import { t } from "../../src/i18n";
+import { t, emotionLabel, useI18n } from "../../src/i18n";
 import { Ionicons } from "@expo/vector-icons";
 import { useShareToStories } from "../../src/components/ShareToStories";
 import ShareAuraButton from "../../src/components/ShareAuraButton";
@@ -31,6 +31,7 @@ function volatilityLabel(v: number): string {
 }
 
 export default function Stats() {
+  useI18n();
   const { user } = useAuth();
   const [stats, setStats] = useState<any>(null);
   const [insights, setInsights] = useState<any>(null);
@@ -70,7 +71,7 @@ export default function Stats() {
       count: Number(count),
       pct: Math.round((Number(count) / total) * 100),
       color: EMOTION_COLORS[key]?.hex || "#888",
-      label: EMOTION_COLORS[key]?.label || key,
+      label: emotionLabel(key),
     }));
   }, [rangeData]);
 
@@ -202,7 +203,7 @@ export default function Stats() {
                 return (
                   <View key={key} style={styles.distRow}>
                     <View style={[styles.distDot, { backgroundColor: color }]} />
-                    <Text style={styles.distLabel}>{EMOTION_COLORS[key]?.label || key}</Text>
+                    <Text style={styles.distLabel}>{emotionLabel(key)}</Text>
                     <View style={styles.distTrack}>
                       <View style={[styles.distFill, { width: `${pct}%`, backgroundColor: color }]} />
                     </View>

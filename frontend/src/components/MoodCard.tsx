@@ -5,6 +5,7 @@ import { Audio } from "expo-av";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { Ionicons } from "@expo/vector-icons";
 import { EMOTION_COLORS, COLORS, REACTIONS } from "../theme";
+import { emotionLabel } from "../i18n";
 import { api } from "../api";
 import CommentsSheet from "./CommentsSheet";
 
@@ -186,7 +187,7 @@ export default function MoodCard({ mood, onReact, onMessage, showAuthor = true, 
         ) : <View />}
         <View style={[styles.emotionPill, { borderColor: em.hex }]}>
           <View style={[styles.dot, { backgroundColor: em.hex }]} />
-          <Text style={styles.emotionTxt}>{em.label}</Text>
+          <Text style={styles.emotionTxt}>{emotionLabel(mood.emotion)}</Text>
         </View>
       </View>
 

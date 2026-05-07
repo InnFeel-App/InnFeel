@@ -14,7 +14,7 @@ import ProBadge from "../src/components/ProBadge";
 import { api } from "../src/api";
 import { useAuth } from "../src/auth";
 import { EMOTION_COLORS, COLORS } from "../src/theme";
-import { t } from "../src/i18n";
+import { t, emotionLabel } from "../src/i18n";
 import { uploadMedia } from "../src/media";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -531,7 +531,7 @@ export default function MoodCreate({ inTabsLayout = false }: { inTabsLayout?: bo
                     style={[styles.emotionChip, sel && { borderColor: meta.hex, backgroundColor: meta.hex + "22" }]}
                   >
                     <View style={[styles.emotionDot, { backgroundColor: meta.hex }]} />
-                    <Text style={[styles.emotionName, sel && { color: "#fff", fontWeight: "700" }]}>{meta.label}</Text>
+                    <Text style={[styles.emotionName, sel && { color: "#fff", fontWeight: "700" }]}>{emotionLabel(key)}</Text>
                   </TouchableOpacity>
                 );
               })}

@@ -11,12 +11,14 @@ import BackButton from "../../src/components/BackButton";
 import { api } from "../../src/api";
 import { useAuth } from "../../src/auth";
 import { COLORS } from "../../src/theme";
-import { t } from "../../src/i18n";
+import { t, useI18n } from "../../src/i18n";
 import { Ionicons } from "@expo/vector-icons";
 
 export default function Friends() {
   const router = useRouter();
   const { user } = useAuth();
+  // Re-renders on locale change.
+  useI18n();
   const pro = !!user?.pro;
   const [friends, setFriends] = useState<any[]>([]);
   const [code, setCode] = useState("");
@@ -147,7 +149,7 @@ export default function Friends() {
               value={code}
               onChangeText={setCode}
               style={styles.input}
-              placeholder="Enter a 6-character code"
+              placeholder={t("friends.codePlaceholder")}
               placeholderTextColor="#555"
               autoCapitalize="characters"
               autoCorrect={false}
@@ -197,7 +199,7 @@ export default function Friends() {
                     </Animated.View>
                     <View style={styles.shareInner}>
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.shareKicker}>Share your code</Text>
+                        <Text style={styles.shareKicker}>{t("friends.shareYourCode")}</Text>
                         <Text style={styles.shareCode} numberOfLines={1}>
                           {myCode}
                         </Text>
@@ -207,25 +209,25 @@ export default function Friends() {
                   </LinearGradient>
                 </Animated.View>
               </Pressable>
-              <Text style={styles.shareHint}>Tap to invite — opens your share sheet ✦</Text>
+              <Text style={styles.shareHint}>{t("friends.tapToInvite")}</Text>
             </View>
           ) : null}
 
           <View style={{ height: 20 }} />
           <View style={styles.sectionHdr}>
-            <Text style={styles.sectionTxt}>Your circle {friends.length > 0 ? `· ${friends.length}` : ""}</Text>
+            <Text style={styles.sectionTxt}>{t("friends.yourCircle")} {friends.length > 0 ? `· ${friends.length}` : ""}</Text>
             {friends.length > 0 ? (
               <View style={styles.closeBadge}>
                 <Ionicons name="star" size={11} color="#FACC15" />
-                <Text style={styles.closeBadgeTxt}>{closeCount} close{!pro ? " · Pro ✦" : ""}</Text>
+                <Text style={styles.closeBadgeTxt}>{closeCount} {pro ? t("friends.close") : t("friends.closeWithPro")}</Text>
               </View>
             ) : null}
           </View>
           {friends.length === 0 ? (
             <EmptyState
               tone="people"
-              title="No friends yet"
-              subtitle="Tap your code above and share it on WhatsApp, SMS or AirDrop. They'll be added with one tap."
+              title={t("friends.noFriends")}
+              subtitle={t("friends.noFriendsSub")}
             />
           ) : friends.map((f) => (
             <View key={f.user_id} style={[styles.row, f.is_close && styles.rowClose]} testID={`friend-${f.user_id}`}>
@@ -244,7 +246,7 @@ export default function Friends() {
                   size={11}
                   color={f.dropped_today ? "#22C55E" : COLORS.textTertiary}
                 />
-                <Text style={styles.pillTxt}>{f.dropped_today ? "Posted" : "Waiting"}</Text>
+                <Text style={styles.pillTxt}>{f.dropped_today ? t("friends.posted") : t("friends.waiting")}</Text>
               </View>
               <TouchableOpacity
                 onPress={() => toggleClose(f.user_id, !!f.is_close)}

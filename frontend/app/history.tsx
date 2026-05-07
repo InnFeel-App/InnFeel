@@ -9,11 +9,12 @@ import { api } from "../src/api";
 import { EMOTION_COLORS, COLORS } from "../src/theme";
 import { useAuth } from "../src/auth";
 import { Ionicons } from "@expo/vector-icons";
-import { t } from "../src/i18n";
+import { t, dateShort, emotionLabel, useI18n } from "../src/i18n";
 
 export default function History() {
   const router = useRouter();
   const { user } = useAuth();
+  useI18n();
   const [items, setItems] = useState<any[]>([]);
 
   const load = useCallback(async () => { try { const r = await api<any>("/moods/history"); setItems(r.items || []); } catch {} }, []);
@@ -38,9 +39,9 @@ export default function History() {
                 <View style={[styles.swatch, { backgroundColor: color }]} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.word}>{m.word}</Text>
-                  <Text style={styles.meta}>{EMOTION_COLORS[m.emotion]?.label} · {m.intensity}/{m.intensity > 5 ? 10 : 5}</Text>
+                  <Text style={styles.meta}>{emotionLabel(m.emotion)} · {m.intensity}/{m.intensity > 5 ? 10 : 5}</Text>
                 </View>
-                <Text style={styles.date}>{d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}</Text>
+                <Text style={styles.date}>{dateShort(d)}</Text>
               </View>
             );
           })}

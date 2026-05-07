@@ -9,13 +9,14 @@ import { useAuth } from "../../src/auth";
 import { api } from "../../src/api";
 import { uploadMedia } from "../../src/media";
 import { COLORS } from "../../src/theme";
-import { t } from "../../src/i18n";
+import { t, useI18n } from "../../src/i18n";
 import { Ionicons } from "@expo/vector-icons";
 import { getUserTier } from "../../src/userTier";
 
 export default function Profile() {
   const router = useRouter();
   const { user, logout, refresh } = useAuth();
+  useI18n();
   const tier = getUserTier(user);
 
   const togglePro = async () => {
@@ -73,11 +74,11 @@ export default function Profile() {
           <View style={styles.statsRow}>
             <View style={styles.statBox}>
               <Text style={styles.statV}>{user?.streak || 0}</Text>
-              <Text style={styles.statK}>streak</Text>
+              <Text style={styles.statK}>{t("profile.statStreak")}</Text>
             </View>
             <View style={styles.statBox}>
               <Text style={styles.statV}>{user?.friend_count || 0}</Text>
-              <Text style={styles.statK}>friends</Text>
+              <Text style={styles.statK}>{t("profile.statFriends")}</Text>
             </View>
           </View>
 
