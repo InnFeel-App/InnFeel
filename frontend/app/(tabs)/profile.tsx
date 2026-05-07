@@ -11,10 +11,12 @@ import { uploadMedia } from "../../src/media";
 import { COLORS } from "../../src/theme";
 import { t } from "../../src/i18n";
 import { Ionicons } from "@expo/vector-icons";
+import { getUserTier } from "../../src/userTier";
 
 export default function Profile() {
   const router = useRouter();
   const { user, logout, refresh } = useAuth();
+  const tier = getUserTier(user);
 
   const togglePro = async () => {
     try { await api("/dev/toggle-pro", { method: "POST" }); await refresh(); } catch {}
@@ -60,10 +62,10 @@ export default function Profile() {
             </TouchableOpacity>
             <Text style={styles.name}>{user?.name}</Text>
             <Text style={styles.email}>{user?.email}</Text>
-            {user?.pro ? (
-              <View style={styles.proBadge}>
-                <Ionicons name="sparkles" size={14} color="#FDE047" />
-                <Text style={styles.proBadgeTxt}>PRO</Text>
+            {tier.unlocked ? (
+              <View style={[styles.tierBadge, { backgroundColor: tier.bg, borderColor: tier.border }]}>
+                <Ionicons name={tier.icon} size={14} color={tier.color} />
+                <Text style={[styles.tierBadgeTxt, { color: tier.color }]}>{tier.label}</Text>
               </View>
             ) : null}
           </View>
@@ -133,19 +135,27 @@ export default function Profile() {
           ) : null}
 
           <View style={{ marginTop: 10, gap: 10 }}>
-            {user?.pro ? (
-              <View style={styles.proCard}>
-                <Text style={styles.proTitle}>{t("profile.youArePro")} ✦</Text>
-                <Text style={styles.proSub}>All features unlocked</Text>
+            {tier.unlocked ? (
+              <View style={[styles.tierCard, { borderColor: tier.border, backgroundColor: tier.bg }]}>
+                <Ionicons name={tier.icon} size={20} color={tier.color} />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={[styles.tierCardTitle, { color: tier.color }]}>{tier.cardTitle}</Text>
+                  <Text style={styles.tierCardSub}>{tier.cardSub}</Text>
+                </View>
               </View>
             ) : (
               <Button testID="go-paywall" label={t("profile.goPro")} onPress={() => router.push("/paywall")} />
             )}
-            <TouchableOpacity testID="toggle-pro" onPress={togglePro} style={{ alignSelf: "center", padding: 8 }}>
-              <Text style={{ color: COLORS.textTertiary, fontSize: 12 }}>
-                [demo] {user?.pro ? "Disable Pro" : "Enable Pro without paying"}
-              </Text>
-            </TouchableOpacity>
+            {/* Dev-only toggle. Hidden for owner/admin since they own the
+                tier above any toggle anyway and shouldn't accidentally
+                strip their lifetime grant. */}
+            {!user?.is_owner && !user?.is_admin ? (
+              <TouchableOpacity testID="toggle-pro" onPress={togglePro} style={{ alignSelf: "center", padding: 8 }}>
+                <Text style={{ color: COLORS.textTertiary, fontSize: 12 }}>
+                  [demo] {user?.pro ? "Disable Pro" : "Enable Pro without paying"}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
             <Button testID="logout" variant="secondary" label={t("profile.logout")} onPress={async () => { await logout(); router.replace("/(auth)/login"); }} />
           </View>
           <View style={{ height: 120 }} />
@@ -165,8 +175,20 @@ const styles = StyleSheet.create({
   editDot: { position: "absolute", right: 0, bottom: 12, width: 28, height: 28, borderRadius: 14, backgroundColor: "#fff", alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "#050505" },
   name: { color: "#fff", fontSize: 24, fontWeight: "700" },
   email: { color: COLORS.textSecondary, marginTop: 2 },
-  proBadge: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 8, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: "rgba(253,224,71,0.15)", borderWidth: 1, borderColor: "rgba(253,224,71,0.4)", borderRadius: 999 },
-  proBadgeTxt: { color: "#FDE047", fontWeight: "700", fontSize: 11, letterSpacing: 1 },
+  // Tier badge (colour-aware: OWNER / ADMIN / ZEN / PRO).
+  tierBadge: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    marginTop: 10, paddingHorizontal: 12, paddingVertical: 5,
+    borderWidth: 1, borderRadius: 999,
+  },
+  tierBadgeTxt: { fontWeight: "800", fontSize: 11, letterSpacing: 1.4 },
+  // Tier card (the "you're X" panel above the logout button).
+  tierCard: {
+    flexDirection: "row", alignItems: "center",
+    padding: 16, borderRadius: 20, borderWidth: 1,
+  },
+  tierCardTitle: { fontWeight: "800", fontSize: 16 },
+  tierCardSub: { color: COLORS.textSecondary, fontSize: 12, marginTop: 3, lineHeight: 17 },
   statsRow: { flexDirection: "row", gap: 12, marginBottom: 20 },
   statBox: { flex: 1, borderRadius: 18, borderWidth: 1, borderColor: COLORS.border, padding: 16, alignItems: "center", backgroundColor: "rgba(255,255,255,0.03)" },
   statV: { color: "#fff", fontSize: 28, fontWeight: "700" },
@@ -185,7 +207,4 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   sectionLabelSpaced: { marginTop: 18 },
-  proCard: { padding: 16, borderRadius: 20, borderWidth: 1, borderColor: "rgba(253,224,71,0.35)", backgroundColor: "rgba(253,224,71,0.07)", alignItems: "center" },
-  proTitle: { color: "#FDE047", fontWeight: "700", fontSize: 18 },
-  proSub: { color: COLORS.textSecondary, fontSize: 13, marginTop: 2 },
 });
