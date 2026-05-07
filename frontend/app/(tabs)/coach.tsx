@@ -104,8 +104,8 @@ export default function CoachHub() {
           title="Coach"
           subtitle={
             pro
-              ? "A quiet space to land with yourself."
-              : "A quiet space to land with yourself.  Upgrade to Pro to unlock everything ✦"
+              ? "Your innerself."
+              : "Your innerself.  Upgrade to Pro to unlock everything ✦"
           }
         />
 

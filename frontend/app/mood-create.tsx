@@ -6,6 +6,7 @@ import * as ImagePicker from "expo-image-picker";
 import { Audio } from "expo-av";
 import Slider from "@react-native-community/slider";
 import RadialAura from "../src/components/RadialAura";
+import ScreenHeader from "../src/components/ScreenHeader";
 import Button from "../src/components/Button";
 import WellnessSheet from "../src/components/WellnessSheet";
 import { useShareToStories } from "../src/components/ShareToStories";
@@ -496,20 +497,17 @@ export default function MoodCreate({ inTabsLayout = false }: { inTabsLayout?: bo
       <RadialAura color={auraColor} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <SafeAreaView style={{ flex: 1 }}>
-          <View style={styles.headerRow}>
-            {inTabsLayout ? (
-              // No close button needed — the floating tab bar provides
-              // navigation. We keep an empty 40-px slot so the title
-              // stays optically centred under the safe area.
-              <View style={{ width: 40 }} />
-            ) : (
-              <TouchableOpacity testID="close-create" onPress={() => { if (router.canGoBack()) router.back(); else router.replace("/(tabs)/home"); }} style={styles.closeBtn}>
-                <Ionicons name="close" size={22} color="#fff" />
-              </TouchableOpacity>
-            )}
-            <Text style={styles.hdr}>Share your aura</Text>
-            <View style={{ width: 40 }} />
-          </View>
+          <ScreenHeader
+            title="Aura"
+            leftSlot={
+              !inTabsLayout ? (
+                <TouchableOpacity testID="close-create" onPress={() => { if (router.canGoBack()) router.back(); else router.replace("/(tabs)/home"); }} style={styles.closeBtn}>
+                  <Ionicons name="close" size={22} color="#fff" />
+                </TouchableOpacity>
+              ) : null
+            }
+            tone="tight"
+          />
 
           <ScrollView
             contentContainerStyle={[
@@ -861,7 +859,15 @@ const styles = StyleSheet.create({
   closeBtn: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: COLORS.border },
   hdr: { color: "#fff", fontSize: 16, fontWeight: "600" },
   scroll: { padding: 20, paddingTop: 4 },
-  section: { color: COLORS.textSecondary, fontSize: 12, textTransform: "uppercase", letterSpacing: 1.5, marginTop: 18, marginBottom: 10, fontWeight: "700", textAlign: "center" },
+  // Standardised section heading: 12pt uppercase gray with 1.5 letter-spacing.
+  // The 28pt top margin gives clear breathing room between consecutive
+  // form blocks (was 18pt — felt cramped especially after the emotion
+  // grid). The first section after the page header gets its top margin
+  // collapsed by the parent so we don't double up.
+  section: { color: COLORS.textSecondary, fontSize: 12, textTransform: "uppercase", letterSpacing: 1.5, marginTop: 28, marginBottom: 12, fontWeight: "700", textAlign: "center" },
+  // Inline section row keeps the chip/badge on the right while sharing
+  // the same vertical rhythm as a regular section title.
+  sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 28, marginBottom: 12 },
   emotionsWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   emotionChip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.04)" },
   emotionDot: { width: 10, height: 10, borderRadius: 5 },
@@ -903,7 +909,6 @@ const styles = StyleSheet.create({
   privTxt: { color: COLORS.textSecondary, fontWeight: "600", fontSize: 12 },
   proBadgeSmall: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(250,204,21,0.12)", borderWidth: 1, borderColor: "rgba(250,204,21,0.35)" },
   proBadgeSmallTxt: { color: "#FACC15", fontSize: 9, fontWeight: "700", letterSpacing: 0.5 },
-  sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 24, marginBottom: 10 },
   proInlineTag: {
     flexDirection: "row", alignItems: "center", gap: 4,
     paddingHorizontal: 9, paddingVertical: 3, borderRadius: 999,
