@@ -13,6 +13,7 @@ import { useShareToStories } from "../../src/components/ShareToStories";
 import ShareAuraButton from "../../src/components/ShareAuraButton";
 import StreakFreezeCard from "../../src/components/StreakFreezeCard";
 import HeatmapCalendar from "../../src/components/HeatmapCalendar";
+import ScreenHeader from "../../src/components/ScreenHeader";
 
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const RANGES: { key: 30 | 90 | 365; label: string }[] = [
@@ -78,9 +79,7 @@ export default function Stats() {
       <SafeAreaView style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.scroll}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} tintColor="#fff" />}>
-          <View style={styles.topHeader}>
-            <Text style={styles.title}>{t("stats.title")}</Text>
-          </View>
+          <ScreenHeader title={t("stats.title")} style={{ paddingHorizontal: 0, paddingTop: 0, paddingBottom: 16 }} />
 
           {/* Mood Patterns Insights — surfaces non-obvious things about the user's
               emotional life (best weekday, trend, dominant emotion, streaks, time-of-day).

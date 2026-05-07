@@ -5,6 +5,7 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import RadialAura from "../../src/components/RadialAura";
 import EmptyState from "../../src/components/EmptyState";
+import ScreenHeader from "../../src/components/ScreenHeader";
 import { api } from "../../src/api";
 import { COLORS } from "../../src/theme";
 
@@ -60,15 +61,17 @@ export default function MessagesInbox() {
     <View style={styles.container} testID="messages-screen">
       <RadialAura color="#A78BFA" />
       <SafeAreaView style={{ flex: 1 }}>
-        <View style={styles.hdr}>
-          <Text style={styles.title}>Messages</Text>
-          {unreadTotal > 0 ? (
-            <View style={styles.unreadBadge}>
-              <Ionicons name="mail-unread" size={11} color="#fff" />
-              <Text style={styles.unreadBadgeTxt}>{unreadTotal} new</Text>
-            </View>
-          ) : null}
-        </View>
+        <ScreenHeader
+          title="Messages"
+          rightSlot={
+            unreadTotal > 0 ? (
+              <View style={styles.unreadBadge}>
+                <Ionicons name="mail-unread" size={11} color="#fff" />
+                <Text style={styles.unreadBadgeTxt}>{unreadTotal}</Text>
+              </View>
+            ) : null
+          }
+        />
 
         <ScrollView
           contentContainerStyle={{ padding: 16, paddingBottom: 120 }}

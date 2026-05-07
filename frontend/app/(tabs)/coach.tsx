@@ -5,6 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../src/auth";
+import ScreenHeader from "../../src/components/ScreenHeader";
 import { COLORS } from "../../src/theme";
 
 /**
@@ -94,19 +95,22 @@ export default function CoachHub() {
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ padding: 18, paddingBottom: 40 }}
+        contentContainerStyle={{ paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Hero */}
-        <Text style={styles.kicker}>YOUR WELLNESS</Text>
-        <Text style={styles.title}>Coach</Text>
-        <Text style={styles.subtitle}>
-          A quiet space to land with yourself.
-          {!pro ? "  Upgrade to Pro to unlock everything ✦" : ""}
-        </Text>
+        {/* Hero — centred to match the rest of the app's tab headers. */}
+        <ScreenHeader
+          kicker="Your Wellness"
+          title="Coach"
+          subtitle={
+            pro
+              ? "A quiet space to land with yourself."
+              : "A quiet space to land with yourself.  Upgrade to Pro to unlock everything ✦"
+          }
+        />
 
         {/* Category cards */}
-        <View style={{ marginTop: 22, gap: 14 }}>
+        <View style={{ paddingHorizontal: 18, gap: 14 }}>
           {CATEGORIES.map((c, i) => {
             const disabled = c.badge === "Soon";
             return (
@@ -162,9 +166,6 @@ export default function CoachHub() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
-  kicker: { color: COLORS.textTertiary, fontSize: 11, fontWeight: "800", letterSpacing: 2.4, marginTop: 8 },
-  title: { color: "#fff", fontSize: 36, fontWeight: "900", letterSpacing: -1, marginTop: 6 },
-  subtitle: { color: COLORS.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 8, maxWidth: 360 },
 
   card: {
     flexDirection: "row",
@@ -200,6 +201,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     textAlign: "center",
     marginTop: 28,
+    marginHorizontal: 18,
     paddingHorizontal: 18,
     lineHeight: 16,
   },

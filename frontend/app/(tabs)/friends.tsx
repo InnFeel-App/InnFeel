@@ -6,6 +6,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import RadialAura from "../../src/components/RadialAura";
 import Button from "../../src/components/Button";
 import EmptyState from "../../src/components/EmptyState";
+import ScreenHeader from "../../src/components/ScreenHeader";
 import { api } from "../../src/api";
 import { useAuth } from "../../src/auth";
 import { COLORS } from "../../src/theme";
@@ -136,7 +137,7 @@ export default function Friends() {
       <SafeAreaView style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.scroll}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} tintColor="#fff" />}>
-          <Text style={styles.title}>{t("friends.title")}</Text>
+          <ScreenHeader title={t("friends.title")} style={{ paddingHorizontal: 0, paddingTop: 0, paddingBottom: 16 }} />
 
           <View style={styles.addRow}>
             <TextInput

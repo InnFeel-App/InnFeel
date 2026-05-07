@@ -82,8 +82,10 @@ export default function Profile() {
           {/* Wellness Coach + Journal links removed from here — they're now
               dedicated tab destinations under the Coach hub (/coach). */}
 
-          {/* Reorganized by user interest priority:
-              Friends → Best → Stats → Settings → History → Admin (gated) */}
+          {/* Reorganized by user interest priority, grouped into clear
+              sections so the eye can scan: Social → Personal → Admin. */}
+
+          <Text style={styles.sectionLabel}>SOCIAL</Text>
 
           <TouchableOpacity testID="go-friends" style={styles.link} onPress={() => router.push("/(tabs)/friends")}>
             <Ionicons name="people-outline" size={20} color="#34D399" />
@@ -96,6 +98,8 @@ export default function Profile() {
             <Text style={styles.linkTxt}>Best</Text>
             <Ionicons name="chevron-forward" size={18} color={COLORS.textTertiary} />
           </TouchableOpacity>
+
+          <Text style={[styles.sectionLabel, styles.sectionLabelSpaced]}>PERSONAL</Text>
 
           <TouchableOpacity testID="go-stats" style={styles.link} onPress={() => router.push("/(tabs)/stats")}>
             <Ionicons name="stats-chart-outline" size={20} color="#fff" />
@@ -116,13 +120,16 @@ export default function Profile() {
           </TouchableOpacity>
 
           {user?.is_admin ? (
-            <TouchableOpacity testID="go-admin" style={[styles.link, styles.adminLink]} onPress={() => router.push("/admin" as any)}>
-              <Ionicons name="shield-checkmark" size={20} color="#FDE047" />
-              <Text style={[styles.linkTxt, { color: "#FDE047", fontWeight: "700" }]}>
-                {user?.is_owner ? "Admin · Console (Owner)" : "Admin · Console"}
-              </Text>
-              <Ionicons name="chevron-forward" size={18} color="#FDE047" />
-            </TouchableOpacity>
+            <>
+              <Text style={[styles.sectionLabel, styles.sectionLabelSpaced]}>ADMIN</Text>
+              <TouchableOpacity testID="go-admin" style={[styles.link, styles.adminLink]} onPress={() => router.push("/admin" as any)}>
+                <Ionicons name="shield-checkmark" size={20} color="#FDE047" />
+                <Text style={[styles.linkTxt, { color: "#FDE047", fontWeight: "700" }]}>
+                  {user?.is_owner ? "Console (Owner)" : "Console"}
+                </Text>
+                <Ionicons name="chevron-forward" size={18} color="#FDE047" />
+              </TouchableOpacity>
+            </>
           ) : null}
 
           <View style={{ marginTop: 10, gap: 10 }}>
@@ -164,9 +171,20 @@ const styles = StyleSheet.create({
   statBox: { flex: 1, borderRadius: 18, borderWidth: 1, borderColor: COLORS.border, padding: 16, alignItems: "center", backgroundColor: "rgba(255,255,255,0.03)" },
   statV: { color: "#fff", fontSize: 28, fontWeight: "700" },
   statK: { color: COLORS.textSecondary, fontSize: 11, marginTop: 2, textTransform: "uppercase", letterSpacing: 1 },
-  link: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 16, paddingHorizontal: 16, borderRadius: 18, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)", marginBottom: 10 },
+  link: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 16, paddingHorizontal: 16, borderRadius: 18, borderWidth: 1, borderColor: COLORS.border, backgroundColor: "rgba(255,255,255,0.03)", marginBottom: 8 },
   adminLink: { borderColor: "rgba(253,224,71,0.35)", backgroundColor: "rgba(253,224,71,0.06)" },
   linkTxt: { color: "#fff", fontSize: 15, flex: 1 },
+  // Section labels group navigation links visually — adds breathing room
+  // and a magazine-feel header to each cluster.
+  sectionLabel: {
+    color: COLORS.textTertiary,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1.6,
+    marginBottom: 10,
+    marginLeft: 4,
+  },
+  sectionLabelSpaced: { marginTop: 18 },
   proCard: { padding: 16, borderRadius: 20, borderWidth: 1, borderColor: "rgba(253,224,71,0.35)", backgroundColor: "rgba(253,224,71,0.07)", alignItems: "center" },
   proTitle: { color: "#FDE047", fontWeight: "700", fontSize: 18 },
   proSub: { color: COLORS.textSecondary, fontSize: 13, marginTop: 2 },
