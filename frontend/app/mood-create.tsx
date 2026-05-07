@@ -19,7 +19,22 @@ import { Ionicons } from "@expo/vector-icons";
 
 const MAX_AUDIO_SECONDS = 10;
 
-export default function MoodCreate() {
+/**
+ * Mood/Aura compose screen.
+ *
+ * Two render contexts:
+ *   • Default (`/mood-create` route): full-screen modal-like experience.
+ *     Renders the close-X header, content goes edge-to-edge.
+ *   • Embedded in the tabs layout (passed `inTabsLayout`): the floating
+ *     bottom tab bar is visible underneath, so we (a) hide the redundant
+ *     close-X — the tab bar is the navigation — and (b) add bottom
+ *     padding to the scroll container so the last form fields don't sit
+ *     hidden behind the floating bar.
+ *
+ * The two contexts share 99% of the layout to keep diffs small; only the
+ * header row + the scroll padding change.
+ */
+export default function MoodCreate({ inTabsLayout = false }: { inTabsLayout?: boolean } = {}) {
   const router = useRouter();
   const params = useLocalSearchParams<{ edit?: string }>();
   const isEdit = params.edit === "1";
@@ -482,14 +497,31 @@ export default function MoodCreate() {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <SafeAreaView style={{ flex: 1 }}>
           <View style={styles.headerRow}>
-            <TouchableOpacity testID="close-create" onPress={() => { if (router.canGoBack()) router.back(); else router.replace("/(tabs)/home"); }} style={styles.closeBtn}>
-              <Ionicons name="close" size={22} color="#fff" />
-            </TouchableOpacity>
+            {inTabsLayout ? (
+              // No close button needed — the floating tab bar provides
+              // navigation. We keep an empty 40-px slot so the title
+              // stays optically centred under the safe area.
+              <View style={{ width: 40 }} />
+            ) : (
+              <TouchableOpacity testID="close-create" onPress={() => { if (router.canGoBack()) router.back(); else router.replace("/(tabs)/home"); }} style={styles.closeBtn}>
+                <Ionicons name="close" size={22} color="#fff" />
+              </TouchableOpacity>
+            )}
             <Text style={styles.hdr}>Share your aura</Text>
             <View style={{ width: 40 }} />
           </View>
 
-          <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+          <ScrollView
+            contentContainerStyle={[
+              styles.scroll,
+              // The floating tab bar is 68px tall + 16px gap from bottom
+              // + safe area. We add ~96px to make sure nothing scrolls
+              // *under* the bar — particularly the "Drop my aura" CTA
+              // and any media chips at the bottom of the form.
+              inTabsLayout && { paddingBottom: 110 },
+            ]}
+            keyboardShouldPersistTaps="handled"
+          >
             <Text style={styles.section}>{t("create.pickEmotion")}</Text>
             <View style={styles.emotionsWrap}>
               {Object.entries(EMOTION_COLORS).map(([key, meta]) => {

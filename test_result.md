@@ -3666,3 +3666,43 @@ test_plan:
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+  - task: "Aura tab UX — keep bottom tab bar visible during mood creation"
+    implemented: true
+    working: true
+    file: "frontend/app/(tabs)/create.tsx, frontend/app/mood-create.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: |
+            User feedback: "on perd le repère et la croix en haut à gauche
+            n'est pas intuitive pour sortir de la page Aura". Agreed — the
+            previous setup had `(tabs)/create.tsx` redirect immediately to
+            a separate `/mood-create` route OUTSIDE the tabs group, so the
+            floating bottom tab bar disappeared and the user only had a
+            non-standard top-left X to navigate away.
+
+            Fix:
+            • `(tabs)/create.tsx`: stop the redirect; render the existing
+              MoodCreate component directly with a new `inTabsLayout`
+              prop. Inheriting the (tabs) group means the floating bar
+              re-appears, with the "+" Aura icon highlighted.
+            • `mood-create.tsx`: small additive prop API
+                – `inTabsLayout?: boolean` (default false → legacy modal
+                  flow with X close button keeps working for any deep
+                  link / push notification routing).
+                – When `inTabsLayout` is true, hide the X button (replaced
+                  with an empty 40px slot to keep the title centred), and
+                  add `paddingBottom: 110` to the ScrollView so the
+                  "Share it" CTA + media chips don't sit hidden behind
+                  the floating tab bar (68px tall + 16px gap).
+            • Verified visually on web: tab bar visible with Aura active,
+              "Share your aura" title centred, all form sections (emotion
+              picker, word, intensity, photo, visibility, share CTA)
+              fully scrollable without overlap.
+
+            No backend changes. No regressions to /mood-create direct
+            route (still works as a modal with X close).
