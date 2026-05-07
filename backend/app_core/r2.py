@@ -158,3 +158,18 @@ def delete_object(key: str) -> bool:
     except Exception as e:
         logger.warning(f"R2 delete failed ({key}): {e}")
         return False
+
+
+
+def object_exists(key: str) -> bool:
+    """Cheap existence check via HEAD. Returns False on any error so
+    callers fall back to a fresh upload instead of trusting a stale URL.
+    """
+    c = _get_client()
+    if not c or not key:
+        return False
+    try:
+        c.head_object(Bucket=R2_BUCKET, Key=key)
+        return True
+    except Exception:
+        return False

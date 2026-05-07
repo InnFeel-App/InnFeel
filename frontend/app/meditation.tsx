@@ -14,6 +14,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Speech from "expo-speech";
+import { narrate as narrateNeural, stopAll as stopNarrator, prefetch as prefetchNeural } from "../src/narrator";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import { COLORS } from "../src/theme";
@@ -805,6 +806,7 @@ export default function MeditationScreen() {
       loopRef.current = null;
     }
     Speech.stop().catch(() => {});
+    stopNarrator().catch(() => {});
     scale.stopAnimation();
     scale.setValue(0.55);
     setRunning(false);
@@ -849,17 +851,34 @@ export default function MeditationScreen() {
     cancelled.current = false;
     let i = 0;
 
+    // Common narrator opts — slower rate and slightly warmer pitch make
+    // the meditation feel like a real instructor, not a TTS bot.
+    const narratorOpts = {
+      lang: (ttsLanguage || "en").split("-")[0],
+      rate: "-15%",
+      pitch: "-2Hz",
+    };
+
+    // Pre-warm the next 3 cues' audio in R2 so the natural voice
+    // streams instantly when its turn comes. Best-effort, fire-and-forget.
+    const prefetchAhead = (fromIdx: number) => {
+      for (let k = fromIdx; k < Math.min(fromIdx + 3, session.cues.length); k++) {
+        prefetchNeural(T(session.cues[k].id), narratorOpts);
+      }
+      prefetchNeural(T("closing"), narratorOpts);
+    };
+    prefetchAhead(0);
+
     const speakNext = () => {
       if (cancelled.current) return;
       if (i >= session.cues.length) {
         // End of session — final closing line + stop.
         const closing = T("closing");
-        Speech.speak(closing, {
-          language: ttsLanguage,
-          voice: bestVoice,
-          rate: Platform.OS === "ios" ? 0.42 : 0.85,
-          pitch: 1.0,
-          onDone: () => {
+        setCurrentPhrase(closing);
+        setProgress(1);
+        narrateNeural(closing, {
+          ...narratorOpts,
+          onFinish: () => {
             const t = setTimeout(() => {
               if (cancelled.current) return;
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
@@ -868,8 +887,6 @@ export default function MeditationScreen() {
             timeouts.current.push(t);
           },
         });
-        setCurrentPhrase(closing);
-        setProgress(1);
         return;
       }
 
@@ -877,28 +894,16 @@ export default function MeditationScreen() {
       const phrase = T(cue.id);
       setCurrentPhrase(phrase);
       setProgress(i / session.cues.length);
-      Speech.speak(phrase, {
-        language: ttsLanguage,
-        voice: bestVoice,
-        rate: Platform.OS === "ios" ? 0.42 : 0.85,
-        pitch: 1.0,
-        onDone: () => {
+      narrateNeural(phrase, {
+        ...narratorOpts,
+        onFinish: () => {
           if (cancelled.current) return;
           // Pause AFTER the cue finishes, then move to the next.
           const t = setTimeout(() => {
             i += 1;
+            prefetchAhead(i);
             speakNext();
           }, cue.pauseAfter * 1000);
-          timeouts.current.push(t);
-        },
-        onError: () => {
-          // If TTS errors out (e.g., voice not available), skip ahead so
-          // the session still completes rather than freezing.
-          if (cancelled.current) return;
-          const t = setTimeout(() => {
-            i += 1;
-            speakNext();
-          }, 800);
           timeouts.current.push(t);
         },
       });

@@ -13,6 +13,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Speech from "expo-speech";
+import { narrate as narrateNeural, stopAll as stopNarrator } from "../src/narrator";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import { COLORS } from "../src/theme";
@@ -635,6 +636,7 @@ export default function BreathScreen() {
     timeouts.current = [];
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
     Speech.stop().catch(() => {});
+    stopNarrator().catch(() => {});
     scale.stopAnimation();
     setRunning(false);
     setPhaseKey("idle");
@@ -646,13 +648,15 @@ export default function BreathScreen() {
   useEffect(() => () => stopAll(), []);
 
   const speak = (text: string) => {
-    Speech.speak(text, {
-      language: ttsLanguage,
-      voice: bestVoice,
-      // Slower than conversational speech so each cue feels like a soft
-      // exhalation — calmer pacing for a mindfulness exercise.
-      rate: Platform.OS === "ios" ? 0.46 : 0.88,
-      pitch: 1.0,
+    // Use the new neural narrator (Microsoft Edge TTS via /api/tts) for
+    // a much warmer, less robotic voice. Each cue is cached in R2 by
+    // (voice, rate, pitch, text) so the second cycle and beyond is
+    // instant. The narrator falls back to expo-speech automatically if
+    // the network or backend is unavailable.
+    narrateNeural(text, {
+      lang: ttsLanguage?.split("-")[0],
+      rate: "-12%",   // calmer pacing for breath cues
+      pitch: "-1Hz",
     });
   };
 
