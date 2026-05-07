@@ -81,8 +81,9 @@ export default function Stats() {
         <ScrollView contentContainerStyle={styles.scroll}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} tintColor="#fff" />}>
           <ScreenHeader
-            title={t("stats.title")}
-            leftSlot={<BackButton />}
+            title="Stats"
+            kicker={t("stats.title")}
+            leftSlot={<BackButton forceReplace />}
             style={{ paddingHorizontal: 0, paddingTop: 0, paddingBottom: 16 }}
           />
 

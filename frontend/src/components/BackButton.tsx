@@ -23,6 +23,12 @@ import { useRouter } from "expo-router";
 type Props = {
   /** Optional override — by default we go back, then to /me as fallback. */
   fallbackPath?: string;
+  /** When true, ALWAYS replace with fallbackPath instead of trying
+   *  router.back() first. Use this on tab routes (Friends/Stats) where
+   *  the navigation history is unreliable — if the user landed there
+   *  by switching tabs, "back" would otherwise pop them to a random
+   *  earlier tab (often Home) instead of the screen they came from. */
+  forceReplace?: boolean;
   /** Override icon colour (white by default). */
   color?: string;
   style?: ViewStyle;
@@ -31,6 +37,7 @@ type Props = {
 
 export default function BackButton({
   fallbackPath = "/(tabs)/profile",
+  forceReplace = false,
   color = "#fff",
   style,
   testID = "back-btn",
@@ -40,7 +47,7 @@ export default function BackButton({
     <TouchableOpacity
       testID={testID}
       onPress={() => {
-        if (router.canGoBack()) {
+        if (!forceReplace && router.canGoBack()) {
           router.back();
         } else {
           router.replace(fallbackPath as any);

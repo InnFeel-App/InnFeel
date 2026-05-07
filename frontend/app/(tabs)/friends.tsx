@@ -137,7 +137,7 @@ export default function Friends() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} tintColor="#fff" />}>
           <ScreenHeader
             title={t("friends.title")}
-            leftSlot={<BackButton />}
+            leftSlot={<BackButton forceReplace />}
             style={{ paddingHorizontal: 0, paddingTop: 0, paddingBottom: 16 }}
           />
 

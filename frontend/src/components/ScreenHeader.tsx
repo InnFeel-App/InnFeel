@@ -61,7 +61,18 @@ export default function ScreenHeader({
       {rightSlot ? <View style={styles.rightSlot}>{rightSlot}</View> : null}
 
       {kicker ? <Text style={styles.kicker}>{kicker.toUpperCase()}</Text> : null}
-      <Text style={styles.title} numberOfLines={1} adjustsFontSizeToFit>
+      <Text
+        style={[
+          styles.title,
+          // Reserve room for floating slots so a long title can never
+          // visually collide with the back button or right badge. 56px
+          // = 40 (slot width) + 16 (margin from screen edge).
+          (leftSlot || rightSlot) ? { paddingHorizontal: 56 } : null,
+        ]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.7}
+      >
         {title}
       </Text>
       {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
