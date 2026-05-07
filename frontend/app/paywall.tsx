@@ -352,7 +352,7 @@ export default function Paywall() {
       const origin = process.env.EXPO_PUBLIC_BACKEND_URL || "";
       const res = await api<{ url: string; session_id: string }>("/payments/checkout", {
         method: "POST",
-        body: JSON.stringify({ origin_url: origin, tier }),
+        body: { origin_url: origin, tier },
       });
       await WebBrowser.openBrowserAsync(res.url);
       let paid = false;

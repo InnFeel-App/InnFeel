@@ -917,7 +917,7 @@ export default function MeditationScreen() {
     try {
       await api("/meditation/start", {
         method: "POST",
-        body: JSON.stringify({ theme: sk }),
+        body: { theme: sk },
       });
     } catch (e: any) {
       const msg = String(e?.message || "");

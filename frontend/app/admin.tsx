@@ -290,7 +290,7 @@ export default function AdminPanel() {
             try {
               await api("/admin/revoke-tier", {
                 method: "POST",
-                body: JSON.stringify({ user_id: uid }),
+                body: { user_id: uid },
               });
               await Promise.all([fetchStats(), fetchUsers(false)]);
               if (openUserId) await openDetail(openUserId);
@@ -315,7 +315,7 @@ export default function AdminPanel() {
             try {
               await api("/admin/reset-quota", {
                 method: "POST",
-                body: JSON.stringify({ user_id: uid }),
+                body: { user_id: uid },
               });
               if (openUserId) await openDetail(openUserId);
               Alert.alert("✓ Quota reset");
@@ -388,7 +388,7 @@ export default function AdminPanel() {
     try {
       await api("/admin/send-weekly-recap", {
         method: "POST",
-        body: JSON.stringify({ email }),
+        body: { email },
       });
       Alert.alert("✓ Email sent", email);
     } catch (e: any) {
