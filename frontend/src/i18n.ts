@@ -309,6 +309,18 @@ const es: Dict = {
   "profile.settings": "Ajustes",
   "profile.goPro": "Hazte Pro",
   "profile.youArePro": "Eres Pro",
+  "profile.statStreak": "racha",
+  "profile.statFriends": "amigos",
+  "friends.tapToInvite": "Toca para invitar — abre la hoja de compartir ✦",
+  "friends.yourCircle": "Tu círculo",
+  "coach.cat.wellness.title": "Coach de Bienestar",
+  "coach.cat.wellness.subtitle": "Habla de cómo te sientes — Claude Sonnet 4.5 escucha, refleja, sugiere.",
+  "coach.cat.journal.title": "Diario",
+  "coach.cat.journal.subtitle": "Intención de la mañana · Reflexión nocturna · Check-ins de tres preguntas.",
+  "coach.cat.breath.title": "Respiración",
+  "coach.cat.breath.subtitle": "Ciclos de respiración guiados con voz suave. Aterriza antes del ruido.",
+  "coach.cat.meditation.title": "Meditación",
+  "coach.cat.meditation.subtitle": "Sesiones temáticas — Sueño, Ansiedad, Gratitud, Foco. Voz femenina suave.",
   "nav.section.social": "SOCIAL",
   "nav.section.personal": "PERSONAL",
   "nav.section.admin": "ADMIN",
@@ -428,6 +440,18 @@ const it: Dict = {
   "profile.settings": "Impostazioni",
   "profile.goPro": "Passa a Pro",
   "profile.youArePro": "Sei Pro",
+  "profile.statStreak": "serie",
+  "profile.statFriends": "amici",
+  "friends.tapToInvite": "Tocca per invitare — apre il foglio di condivisione ✦",
+  "friends.yourCircle": "La tua cerchia",
+  "coach.cat.wellness.title": "Coach del Benessere",
+  "coach.cat.wellness.subtitle": "Parla di come ti senti — Claude Sonnet 4.5 ascolta, riflette, suggerisce.",
+  "coach.cat.journal.title": "Diario",
+  "coach.cat.journal.subtitle": "Intenzione del mattino · Riflessione serale · Check-in di tre domande.",
+  "coach.cat.breath.title": "Respiro",
+  "coach.cat.breath.subtitle": "Cicli di respirazione guidati con voce morbida. Ancorati prima del rumore.",
+  "coach.cat.meditation.title": "Meditazione",
+  "coach.cat.meditation.subtitle": "Sessioni a tema — Sonno, Ansia, Gratitudine, Focus. Voce femminile soffice.",
   "nav.section.social": "SOCIAL",
   "nav.section.personal": "PERSONALE",
   "nav.section.admin": "ADMIN",
@@ -547,6 +571,18 @@ const de: Dict = {
   "profile.settings": "Einstellungen",
   "profile.goPro": "Pro werden",
   "profile.youArePro": "Du bist Pro",
+  "profile.statStreak": "Serie",
+  "profile.statFriends": "Freunde",
+  "friends.tapToInvite": "Tippen zum Einladen — öffnet das Teilen-Menü ✦",
+  "friends.yourCircle": "Dein Kreis",
+  "coach.cat.wellness.title": "Wellness-Coach",
+  "coach.cat.wellness.subtitle": "Sprich aus, wie du dich fühlst — Claude Sonnet 4.5 hört zu, spiegelt, schlägt vor.",
+  "coach.cat.journal.title": "Tagebuch",
+  "coach.cat.journal.subtitle": "Morgenintention · Abendreflexion · Drei-Fragen-Check-in.",
+  "coach.cat.breath.title": "Atmen",
+  "coach.cat.breath.subtitle": "Geführte Atemzyklen mit weicher Stimme. Erde dich, bevor der Lärm beginnt.",
+  "coach.cat.meditation.title": "Meditation",
+  "coach.cat.meditation.subtitle": "Themen-Sessions — Schlaf, Angst, Dankbarkeit, Fokus. Sanfte weibliche Stimme.",
   "nav.section.social": "SOZIAL",
   "nav.section.personal": "PERSÖNLICH",
   "nav.section.admin": "ADMIN",
@@ -666,6 +702,18 @@ const pt: Dict = {
   "profile.settings": "Definições",
   "profile.goPro": "Ir para Pro",
   "profile.youArePro": "És Pro",
+  "profile.statStreak": "série",
+  "profile.statFriends": "amigos",
+  "friends.tapToInvite": "Toca para convidar — abre a folha de partilha ✦",
+  "friends.yourCircle": "O teu círculo",
+  "coach.cat.wellness.title": "Coach de Bem-estar",
+  "coach.cat.wellness.subtitle": "Fala sobre o que sentes — Claude Sonnet 4.5 escuta, espelha, sugere.",
+  "coach.cat.journal.title": "Diário",
+  "coach.cat.journal.subtitle": "Intenção da manhã · Reflexão da noite · Check-ins de três perguntas.",
+  "coach.cat.breath.title": "Respiração",
+  "coach.cat.breath.subtitle": "Ciclos de respiração guiados com voz suave. Aterra-te antes do ruído.",
+  "coach.cat.meditation.title": "Meditação",
+  "coach.cat.meditation.subtitle": "Sessões temáticas — Sono, Ansiedade, Gratidão, Foco. Voz feminina suave.",
   "nav.section.social": "SOCIAL",
   "nav.section.personal": "PESSOAL",
   "nav.section.admin": "ADMIN",
@@ -785,6 +833,18 @@ const ar: Dict = {
   "profile.settings": "الإعدادات",
   "profile.goPro": "الاشتراك في Pro",
   "profile.youArePro": "أنت Pro",
+  "profile.statStreak": "متتالية",
+  "profile.statFriends": "أصدقاء",
+  "friends.tapToInvite": "انقر للدعوة — يفتح لوحة المشاركة ✦",
+  "friends.yourCircle": "دائرتك",
+  "coach.cat.wellness.title": "مدرب العافية",
+  "coach.cat.wellness.subtitle": "تحدث عما تشعر به — Claude Sonnet 4.5 يستمع، يعكس، يقترح.",
+  "coach.cat.journal.title": "اليوميات",
+  "coach.cat.journal.subtitle": "نية الصباح · تأمل المساء · جلسات بثلاثة أسئلة.",
+  "coach.cat.breath.title": "التنفس",
+  "coach.cat.breath.subtitle": "دورات تنفس موجهة بصوت ناعم. اهبط إلى نفسك قبل الضجيج.",
+  "coach.cat.meditation.title": "التأمل",
+  "coach.cat.meditation.subtitle": "جلسات بمواضيع — النوم، القلق، الامتنان، التركيز. صوت أنثوي ناعم.",
   "nav.section.social": "اجتماعي",
   "nav.section.personal": "شخصي",
   "nav.section.admin": "المدير",
@@ -1058,3 +1118,106 @@ export function useI18n() {
 export function isRTL(): boolean {
   return (RTL_LOCALES as string[]).includes(currentLocale());
 }
+
+
+/* ------------------------------------------------------------------------
+ * Per-locale emotion label catalogue.
+ *
+ * `EMOTION_COLORS.label` ships English defaults so the constant remains
+ * usable from non-React contexts. For every UI spot that renders an
+ * emotion to the user, call `emotionLabel(key)` which maps the key
+ * through the active locale here. Falls back to the English label,
+ * then the raw key.
+ * ----------------------------------------------------------------------- */
+const EMOTION_LABELS: Record<LocaleCode, Record<string, string>> = {
+  en: {
+    joy: "Joyful", happy: "Happy", love: "In Love", excitement: "Excited",
+    grateful: "Grateful", hopeful: "Hopeful", inspired: "Inspired",
+    confident: "Confident", motivated: "Motivated",
+    peace: "Peaceful", calm: "Calm", focus: "Focused", nostalgia: "Nostalgic",
+    tired: "Tired", bored: "Bored", unmotivated: "Unmotivated", lonely: "Lonely",
+    sadness: "Sad", worried: "Worried", anxiety: "Anxious", lost: "Lost",
+    stressed: "Stressed", overwhelmed: "Overwhelmed", anger: "Angry",
+  },
+  fr: {
+    joy: "Joyeux", happy: "Heureux", love: "Amoureux", excitement: "Excité",
+    grateful: "Reconnaissant", hopeful: "Plein d'espoir", inspired: "Inspiré",
+    confident: "Confiant", motivated: "Motivé",
+    peace: "Paisible", calm: "Calme", focus: "Concentré", nostalgia: "Nostalgique",
+    tired: "Fatigué", bored: "Ennuyé", unmotivated: "Démotivé", lonely: "Seul",
+    sadness: "Triste", worried: "Inquiet", anxiety: "Anxieux", lost: "Perdu",
+    stressed: "Stressé", overwhelmed: "Submergé", anger: "En colère",
+  },
+  es: {
+    joy: "Alegre", happy: "Feliz", love: "Enamorado", excitement: "Emocionado",
+    grateful: "Agradecido", hopeful: "Esperanzado", inspired: "Inspirado",
+    confident: "Confiado", motivated: "Motivado",
+    peace: "En paz", calm: "Calmado", focus: "Concentrado", nostalgia: "Nostálgico",
+    tired: "Cansado", bored: "Aburrido", unmotivated: "Desmotivado", lonely: "Solo",
+    sadness: "Triste", worried: "Preocupado", anxiety: "Ansioso", lost: "Perdido",
+    stressed: "Estresado", overwhelmed: "Abrumado", anger: "Enfadado",
+  },
+  it: {
+    joy: "Gioioso", happy: "Felice", love: "Innamorato", excitement: "Entusiasta",
+    grateful: "Grato", hopeful: "Speranzoso", inspired: "Ispirato",
+    confident: "Sicuro", motivated: "Motivato",
+    peace: "Sereno", calm: "Calmo", focus: "Concentrato", nostalgia: "Nostalgico",
+    tired: "Stanco", bored: "Annoiato", unmotivated: "Demotivato", lonely: "Solo",
+    sadness: "Triste", worried: "Preoccupato", anxiety: "Ansioso", lost: "Smarrito",
+    stressed: "Stressato", overwhelmed: "Sopraffatto", anger: "Arrabbiato",
+  },
+  de: {
+    joy: "Fröhlich", happy: "Glücklich", love: "Verliebt", excitement: "Aufgeregt",
+    grateful: "Dankbar", hopeful: "Hoffnungsvoll", inspired: "Inspiriert",
+    confident: "Selbstsicher", motivated: "Motiviert",
+    peace: "Friedlich", calm: "Ruhig", focus: "Fokussiert", nostalgia: "Nostalgisch",
+    tired: "Müde", bored: "Gelangweilt", unmotivated: "Unmotiviert", lonely: "Einsam",
+    sadness: "Traurig", worried: "Besorgt", anxiety: "Ängstlich", lost: "Verloren",
+    stressed: "Gestresst", overwhelmed: "Überfordert", anger: "Wütend",
+  },
+  pt: {
+    joy: "Alegre", happy: "Feliz", love: "Apaixonado", excitement: "Empolgado",
+    grateful: "Grato", hopeful: "Esperançoso", inspired: "Inspirado",
+    confident: "Confiante", motivated: "Motivado",
+    peace: "Em paz", calm: "Calmo", focus: "Focado", nostalgia: "Nostálgico",
+    tired: "Cansado", bored: "Aborrecido", unmotivated: "Desmotivado", lonely: "Sozinho",
+    sadness: "Triste", worried: "Preocupado", anxiety: "Ansioso", lost: "Perdido",
+    stressed: "Stressado", overwhelmed: "Sobrecarregado", anger: "Zangado",
+  },
+  ar: {
+    joy: "مبتهج", happy: "سعيد", love: "واقع في الحب", excitement: "متحمس",
+    grateful: "ممتن", hopeful: "متفائل", inspired: "ملهم",
+    confident: "واثق", motivated: "متحفز",
+    peace: "هادئ", calm: "مرتاح", focus: "مركز", nostalgia: "حنين",
+    tired: "متعب", bored: "ضجر", unmotivated: "غير محفز", lonely: "وحيد",
+    sadness: "حزين", worried: "قلق", anxiety: "متوتر", lost: "ضائع",
+    stressed: "مرهق", overwhelmed: "مغمور", anger: "غاضب",
+  },
+};
+
+/** Returns a localised label for an emotion key, e.g. "happy" → "Heureux"
+ *  in French. Falls back to a Title-cased version of the key so the UI
+ *  never shows nothing. */
+export function emotionLabel(key: string): string {
+  if (!key) return "";
+  const dict = EMOTION_LABELS[currentLocale()] || EMOTION_LABELS.en;
+  return dict[key] || EMOTION_LABELS.en[key] || key.charAt(0).toUpperCase() + key.slice(1);
+}
+
+/** Long, locale-aware date — e.g. "jeudi 7 mai" in French, "Thursday, May 7"
+ *  in English. Built on Intl.DateTimeFormat so it adapts to all 7 locales
+ *  the app supports without us hand-rolling weekday/month names.
+ */
+export function dateLong(d: Date = new Date()): string {
+  try {
+    const loc = currentLocale() === "ar" ? "ar-EG" : currentLocale();
+    return new Intl.DateTimeFormat(loc, {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    }).format(d);
+  } catch {
+    return d.toDateString();
+  }
+}
+
