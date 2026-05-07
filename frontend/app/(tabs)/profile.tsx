@@ -87,25 +87,25 @@ export default function Profile() {
           {/* Reorganized by user interest priority, grouped into clear
               sections so the eye can scan: Social → Personal → Admin. */}
 
-          <Text style={styles.sectionLabel}>SOCIAL</Text>
+          <Text style={styles.sectionLabel}>{t("nav.section.social")}</Text>
 
           <TouchableOpacity testID="go-friends" style={styles.link} onPress={() => router.push("/(tabs)/friends")}>
             <Ionicons name="people-outline" size={20} color="#34D399" />
-            <Text style={styles.linkTxt}>Friends · Invite</Text>
+            <Text style={styles.linkTxt}>{t("nav.friends")}</Text>
             <Ionicons name="chevron-forward" size={18} color={COLORS.textTertiary} />
           </TouchableOpacity>
 
           <TouchableOpacity testID="go-achievements" style={styles.link} onPress={() => router.push("/achievements")}>
             <Ionicons name="trophy-outline" size={20} color="#FACC15" />
-            <Text style={styles.linkTxt}>Best</Text>
+            <Text style={styles.linkTxt}>{t("nav.achievements")}</Text>
             <Ionicons name="chevron-forward" size={18} color={COLORS.textTertiary} />
           </TouchableOpacity>
 
-          <Text style={[styles.sectionLabel, styles.sectionLabelSpaced]}>PERSONAL</Text>
+          <Text style={[styles.sectionLabel, styles.sectionLabelSpaced]}>{t("nav.section.personal")}</Text>
 
           <TouchableOpacity testID="go-stats" style={styles.link} onPress={() => router.push("/(tabs)/stats")}>
             <Ionicons name="stats-chart-outline" size={20} color="#fff" />
-            <Text style={styles.linkTxt}>Stats</Text>
+            <Text style={styles.linkTxt}>{t("nav.stats")}</Text>
             <Ionicons name="chevron-forward" size={18} color={COLORS.textTertiary} />
           </TouchableOpacity>
 
@@ -117,17 +117,17 @@ export default function Profile() {
 
           <TouchableOpacity testID="go-history" style={styles.link} onPress={() => router.push("/history")}>
             <Ionicons name="time-outline" size={20} color="#fff" />
-            <Text style={styles.linkTxt}>{t("history.title")}</Text>
+            <Text style={styles.linkTxt}>{t("nav.history")}</Text>
             <Ionicons name="chevron-forward" size={18} color={COLORS.textTertiary} />
           </TouchableOpacity>
 
           {user?.is_admin ? (
             <>
-              <Text style={[styles.sectionLabel, styles.sectionLabelSpaced]}>ADMIN</Text>
+              <Text style={[styles.sectionLabel, styles.sectionLabelSpaced]}>{t("nav.section.admin")}</Text>
               <TouchableOpacity testID="go-admin" style={[styles.link, styles.adminLink]} onPress={() => router.push("/admin" as any)}>
                 <Ionicons name="shield-checkmark" size={20} color="#FDE047" />
                 <Text style={[styles.linkTxt, { color: "#FDE047", fontWeight: "700" }]}>
-                  {user?.is_owner ? "Console (Owner)" : "Console"}
+                  {user?.is_owner ? t("nav.consoleOwner") : t("nav.console")}
                 </Text>
                 <Ionicons name="chevron-forward" size={18} color="#FDE047" />
               </TouchableOpacity>

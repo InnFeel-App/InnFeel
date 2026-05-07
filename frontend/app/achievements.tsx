@@ -10,6 +10,7 @@ import { COLORS } from "../src/theme";
 import ShareAuraButton from "../src/components/ShareAuraButton";
 import ScreenHeader from "../src/components/ScreenHeader";
 import BackButton from "../src/components/BackButton";
+import { t } from "../src/i18n";
 import { useShareToStories } from "../src/components/ShareToStories";
 
 type Badge = { key: string; label: string; icon: any; color: string; hint: string; earned: boolean };
@@ -78,7 +79,7 @@ export default function Achievements() {
     <View style={styles.container} testID="achievements-screen">
       <RadialAura color="#FACC15" />
       <SafeAreaView style={{ flex: 1 }}>
-        <ScreenHeader title="Best" leftSlot={<BackButton />} />
+        <ScreenHeader title={t("achievements.title")} leftSlot={<BackButton />} />
 
         <ScrollView contentContainerStyle={styles.scroll}>
           {/* LEADERBOARD */}

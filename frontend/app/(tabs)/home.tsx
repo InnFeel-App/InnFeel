@@ -160,7 +160,7 @@ export default function Home() {
             </View>
           ) : (
             <View>
-              <Text style={[styles.sectionTitle, { marginBottom: 14 }]}>Your aura today</Text>
+              <Text style={[styles.sectionTitle, { marginBottom: 14 }]}>{t("home.auraTodayTitle")}</Text>
               <MoodCard
                 mood={{
                   ...todayMood,
@@ -174,7 +174,7 @@ export default function Home() {
               <View style={styles.myMoodActions}>
                 <ShareAuraButton
                   testID="share-my-mood"
-                  label="Share your aura"
+                  label={t("home.dropCTA")}
                   onPress={() =>
                     share({
                       kind: "mood",
@@ -191,12 +191,12 @@ export default function Home() {
                   testID="redo-my-mood"
                   onPress={() =>
                     Alert.alert(
-                      "Update today's aura?",
-                      "You'll be taken to the create screen. Your day count and streak are preserved — only the content changes.",
+                      t("home.editTitle"),
+                      t("home.editBody"),
                       [
-                        { text: "Cancel", style: "cancel" },
+                        { text: t("common.cancel"), style: "cancel" },
                         {
-                          text: "Edit",
+                          text: t("common.edit"),
                           onPress: () => router.push("/mood-create?edit=1"),
                         },
                       ],
@@ -205,7 +205,7 @@ export default function Home() {
                   style={styles.redoBtn}
                 >
                   <Ionicons name="refresh" size={14} color="#fff" />
-                  <Text style={styles.shareBtnTxt}>Redo</Text>
+                  <Text style={styles.shareBtnTxt}>{t("home.redo")}</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -228,13 +228,13 @@ export default function Home() {
               testID="feed-locked"
               tone="lock"
               title={t("home.feedLocked")}
-              subtitle="Drop your aura to unblur your friends — it's a daily gift in both directions."
+              subtitle={t("home.feedLockedSub")}
             />
           ) : feed.items.length === 0 ? (
             <EmptyState
               tone="people"
               title={t("home.noFriendsYet")}
-              subtitle="Share your invite link from the Friends tab — they'll be added with one tap."
+              subtitle={t("home.noFriendsSub")}
               cta={
                 <Button testID="add-friend-cta" variant="secondary" label={t("friends.add")} onPress={() => router.push("/(tabs)/friends")} />
               }
