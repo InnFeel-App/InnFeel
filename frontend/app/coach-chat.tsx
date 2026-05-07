@@ -170,11 +170,15 @@ export default function CoachScreen() {
     );
   };
 
+  // Tier badge — copy explicitly mentions "AI credits (chat + journal)"
+  // because the daily counter is shared with /journal/reflect. Numbers
+  // mirror the backend constants in routes/coach.py: FREE=1 lifetime,
+  // PRO=5/day, ZEN=20/day.
   const headerHint = tier === "free"
-    ? (quotaLeft && quotaLeft > 0 ? "Free trial — 1 message" : "Free trial used")
+    ? (quotaLeft && quotaLeft > 0 ? "Free trial — 1 AI credit" : "Free trial used")
     : tier === "zen"
-      ? `${quotaLeft ?? 30}/30 left today · Zen`
-      : `${quotaLeft ?? 10}/10 left today · Pro`;
+      ? `${quotaLeft ?? 20}/20 AI credits today · Zen`
+      : `${quotaLeft ?? 5}/5 AI credits today · Pro`;
 
   const isEmpty = !loading && turns.length === 0;
 

@@ -43,8 +43,8 @@ router = APIRouter()
 # Tier quotas — keep them lazy-readable for future dashboards.
 # ──────────────────────────────────────────────────────────────────────────────
 QUOTA_FREE_LIFETIME = 1   # one-shot trial for free users
-QUOTA_PRO_DAILY = 10
-QUOTA_ZEN_DAILY = 30
+QUOTA_PRO_DAILY = 5       # shared between coach chat AND journal reflect
+QUOTA_ZEN_DAILY = 20      # 4× Pro, defensible margin even on heavy users
 
 # Maximum recent turns we feed back into the prompt for continuity.
 MAX_HISTORY_TURNS = 12
@@ -64,7 +64,13 @@ def _user_tier(user: dict) -> str:
 
 
 async def _check_and_consume_quota(user: dict) -> None:
-    """Atomically check + consume one chat credit. Raises 402 on quota exhaustion."""
+    """Atomically check + consume one chat credit. Raises 402 on quota exhaustion.
+
+    The same counter is shared with the Journal Reflect endpoint — it's the
+    user-facing "AI credits" pool. We keep one counter per user/day so the
+    UI can render a single, honest "X/5 left today" badge regardless of
+    whether they spent the credit on a chat turn or a journal reflection.
+    """
     uid = user["user_id"]
     tier = _user_tier(user)
     if tier == "free":
@@ -74,7 +80,7 @@ async def _check_and_consume_quota(user: dict) -> None:
         if used >= QUOTA_FREE_LIFETIME:
             raise HTTPException(
                 status_code=402,
-                detail="Your free coach trial is over. Upgrade to Pro for 10 messages a day.",
+                detail=f"Your free coach trial is over. Upgrade to Pro for {QUOTA_PRO_DAILY} AI credits a day (chat + journal).",
             )
         await db.coach_limits.update_one(
             {"user_id": uid, "kind": "free_trial"},
@@ -82,7 +88,7 @@ async def _check_and_consume_quota(user: dict) -> None:
             upsert=True,
         )
         return
-    # Pro / Zen — daily rolling counter (UTC day_key).
+    # Pro / Zen — daily rolling counter (UTC day_key). Shared with journal.
     daily_quota = QUOTA_ZEN_DAILY if tier == "zen" else QUOTA_PRO_DAILY
     day = today_key(now_utc())
     doc = await db.coach_limits.find_one({"user_id": uid, "kind": "daily", "day_key": day})
@@ -90,7 +96,7 @@ async def _check_and_consume_quota(user: dict) -> None:
     if used >= daily_quota:
         raise HTTPException(
             status_code=402,
-            detail=f"You've reached your daily coach quota ({daily_quota} messages). It refreshes tomorrow.",
+            detail=f"You've used your {daily_quota} AI credits today (chat + journal). They refresh tomorrow.",
         )
     await db.coach_limits.update_one(
         {"user_id": uid, "kind": "daily", "day_key": day},

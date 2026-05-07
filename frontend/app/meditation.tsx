@@ -8,6 +8,7 @@ import {
   Easing,
   ScrollView,
   Platform,
+  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -17,6 +18,15 @@ import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import { COLORS } from "../src/theme";
 import { currentLocale, useI18n } from "../src/i18n";
+import { api } from "../src/api";
+
+type Eligibility = {
+  tier: "free" | "pro" | "zen";
+  used: SessionKey[];
+  remaining: SessionKey[];
+  unlimited: boolean;
+  themes: SessionKey[];
+};
 
 /**
  * Guided Meditation — themed sessions narrated by a soft female voice.
@@ -176,6 +186,11 @@ const STR: Record<string, Record<string, string>> = {
     "focus.b2": "Cuts through mental fog",
     "focus.b3": "Reconnects you to your intention",
     closing: "Take this calm with you.",
+    trialBadge: "Free trial",
+    trialUsedTitle: "Trial used",
+    trialUsedDesc: "Upgrade to Pro to unlock unlimited meditations.",
+    upgrade: "Upgrade",
+    notNow: "Not now",
     // Cue narration
     "settle.1": "Find a position where your body can soften.",
     "settle.2": "Close your eyes if you'd like, or let your gaze rest.",
@@ -235,6 +250,11 @@ const STR: Record<string, Record<string, string>> = {
     "focus.b2": "Dissipe le brouillard mental",
     "focus.b3": "Te reconnecte à ton intention",
     closing: "Emporte ce calme avec toi.",
+    trialBadge: "Essai gratuit",
+    trialUsedTitle: "Essai utilisé",
+    trialUsedDesc: "Passe à Pro pour débloquer les méditations en illimité.",
+    upgrade: "Passer à Pro",
+    notNow: "Plus tard",
     "settle.1": "Trouve une position où ton corps peut se relâcher.",
     "settle.2": "Ferme les yeux si tu veux, ou laisse ton regard se poser.",
     "settle.3": "Sens la surface sous toi qui soutient ton poids.",
@@ -286,6 +306,11 @@ const STR: Record<string, Record<string, string>> = {
     "focus.b2": "Disipa la niebla mental",
     "focus.b3": "Te reconecta con tu intención",
     closing: "Lleva esta calma contigo.",
+    trialBadge: "Prueba gratis",
+    trialUsedTitle: "Prueba usada",
+    trialUsedDesc: "Hazte Pro para desbloquear meditaciones ilimitadas.",
+    upgrade: "Pasar a Pro",
+    notNow: "Ahora no",
     "settle.1": "Encuentra una posición donde tu cuerpo pueda relajarse.",
     "settle.2": "Cierra los ojos si quieres, o deja que la mirada repose.",
     "settle.3": "Siente la superficie que te sostiene.",
@@ -336,6 +361,11 @@ const STR: Record<string, Record<string, string>> = {
     "focus.b2": "Dissipa la nebbia mentale",
     "focus.b3": "Ti riconnette alla tua intenzione",
     closing: "Porta questa calma con te.",
+    trialBadge: "Prova gratuita",
+    trialUsedTitle: "Prova usata",
+    trialUsedDesc: "Passa a Pro per sbloccare meditazioni illimitate.",
+    upgrade: "Passa a Pro",
+    notNow: "Più tardi",
     "settle.1": "Trova una posizione in cui il corpo possa rilassarsi.",
     "settle.2": "Chiudi gli occhi se vuoi, o lascia che lo sguardo si posi.",
     "settle.3": "Senti la superficie che ti sostiene.",
@@ -386,6 +416,11 @@ const STR: Record<string, Record<string, string>> = {
     "focus.b2": "Lichtet den mentalen Nebel",
     "focus.b3": "Verbindet dich neu mit deiner Absicht",
     closing: "Nimm diese Ruhe mit.",
+    trialBadge: "Gratis-Test",
+    trialUsedTitle: "Test verbraucht",
+    trialUsedDesc: "Werde Pro für unbegrenzte Meditationen.",
+    upgrade: "Pro werden",
+    notNow: "Später",
     "settle.1": "Finde eine Haltung, in der dein Körper weich werden kann.",
     "settle.2": "Schließe die Augen, oder lass deinen Blick ruhen.",
     "settle.3": "Spüre die Oberfläche, die dich trägt.",
@@ -436,6 +471,11 @@ const STR: Record<string, Record<string, string>> = {
     "focus.b2": "Dissipa a névoa mental",
     "focus.b3": "Reconecta-te à tua intenção",
     closing: "Leva esta calma contigo.",
+    trialBadge: "Teste grátis",
+    trialUsedTitle: "Teste utilizado",
+    trialUsedDesc: "Sobe para Pro para meditações ilimitadas.",
+    upgrade: "Passar a Pro",
+    notNow: "Mais tarde",
     "settle.1": "Encontra uma posição em que o corpo possa amaciar.",
     "settle.2": "Fecha os olhos se quiseres, ou deixa o olhar pousar.",
     "settle.3": "Sente a superfície que te sustenta.",
@@ -486,6 +526,11 @@ const STR: Record<string, Record<string, string>> = {
     "focus.b2": "يبدّد الضباب الذهني",
     "focus.b3": "يعيد ربطك بنيّتك",
     closing: "خذ هذا الهدوء معك.",
+    trialBadge: "تجربة مجانية",
+    trialUsedTitle: "تم استخدام التجربة",
+    trialUsedDesc: "ترقّ إلى Pro لفتح تأملات بلا حدود.",
+    upgrade: "ترقية إلى Pro",
+    notNow: "لاحقًا",
     "settle.1": "اعثر على وضعية يستطيع جسدك فيها أن يلين.",
     "settle.2": "أغلق عينيك إن شئت، أو دع نظرك يستريح.",
     "settle.3": "اشعر بالسطح الذي يحملك.",
@@ -620,33 +665,45 @@ function SessionCard({
   lc,
   gradient,
   icon,
+  trialState,
 }: {
   sessionKey: SessionKey;
   onPick: () => void;
   lc: string;
   gradient: [string, string];
   icon: keyof typeof Ionicons.glyphMap;
+  // "free-available" → show a "Free trial" badge
+  // "free-used"      → dim the card + lock icon
+  // "unlimited"      → no badge (Pro/Zen)
+  trialState: "free-available" | "free-used" | "unlimited";
 }) {
   const T = (k: string) => tr(lc, k);
   const session = SESSIONS[sessionKey];
+  const locked = trialState === "free-used";
   return (
     <TouchableOpacity activeOpacity={0.88} onPress={onPick} testID={`med-pick-${sessionKey}`}>
       <LinearGradient
         colors={gradient}
         start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-        style={pickStyles.card}
+        style={[pickStyles.card, locked && pickStyles.cardLocked]}
       >
         <View style={pickStyles.headerRow}>
           <View style={pickStyles.iconWrap}>
-            <Ionicons name={icon} size={22} color="#fff" />
+            <Ionicons name={locked ? "lock-closed" : icon} size={22} color="#fff" />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={pickStyles.cardTitle}>{T(`${sessionKey}.name`)}</Text>
             <Text style={pickStyles.cardTag}>{T(`${sessionKey}.tag`)}</Text>
           </View>
-          <View style={pickStyles.lengthPill}>
-            <Text style={pickStyles.lengthTxt}>{session.approxMinutes} {T("minutes")}</Text>
-          </View>
+          {trialState === "free-available" ? (
+            <View style={pickStyles.trialPill}>
+              <Text style={pickStyles.trialTxt}>{T("trialBadge")}</Text>
+            </View>
+          ) : (
+            <View style={pickStyles.lengthPill}>
+              <Text style={pickStyles.lengthTxt}>{session.approxMinutes} {T("minutes")}</Text>
+            </View>
+          )}
         </View>
         <View style={pickStyles.bullets}>
           {[`${sessionKey}.b1`, `${sessionKey}.b2`, `${sessionKey}.b3`].map((k) => (
@@ -657,7 +714,7 @@ function SessionCard({
           ))}
         </View>
         <View style={pickStyles.cta}>
-          <Text style={pickStyles.ctaTxt}>{T("start")}</Text>
+          <Text style={pickStyles.ctaTxt}>{locked ? T("upgrade") : T("start")}</Text>
           <Ionicons name="arrow-forward" size={16} color="#0E0A1F" />
         </View>
       </LinearGradient>
@@ -667,12 +724,19 @@ function SessionCard({
 
 const pickStyles = StyleSheet.create({
   card: { borderRadius: 22, padding: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", gap: 14 },
+  // Locked state: still tappable so the user can hit it and see the
+  // upgrade alert — but the visual cue tells them immediately what's up.
+  cardLocked: { opacity: 0.55 },
   headerRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   iconWrap: { width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.18)", alignItems: "center", justifyContent: "center" },
   cardTitle: { color: "#fff", fontSize: 18, fontWeight: "900", letterSpacing: -0.3 },
   cardTag: { color: "rgba(255,255,255,0.85)", fontSize: 12, marginTop: 2, fontWeight: "600" },
   lengthPill: { backgroundColor: "rgba(0,0,0,0.30)", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 },
   lengthTxt: { color: "#fff", fontSize: 11, fontWeight: "800" },
+  // The "Free trial" pill replaces the duration pill for free-available
+  // themes — green to read as opportunity, not as a warning.
+  trialPill: { backgroundColor: "rgba(16,185,129,0.30)", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, borderWidth: 1, borderColor: "rgba(16,185,129,0.7)" },
+  trialTxt: { color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 0.5 },
   bullets: { gap: 6 },
   bulletRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   bulletDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.85)" },
@@ -700,10 +764,28 @@ export default function MeditationScreen() {
   const [currentPhrase, setCurrentPhrase] = useState<string>("");
   const [progress, setProgress] = useState(0);  // 0..1 across the session
 
+  // Server-driven trial gate. We refetch on mount AND every time the user
+  // returns to the picker stage after playing — so the "Free trial" badge
+  // disappears from a card the moment they consume it.
+  const [eligibility, setEligibility] = useState<Eligibility | null>(null);
+
   const scale = useRef(new Animated.Value(0.55)).current;
   const loopRef = useRef<Animated.CompositeAnimation | null>(null);
   const timeouts = useRef<any[]>([]);
   const cancelled = useRef(false);
+
+  const refreshEligibility = async () => {
+    try {
+      const e = await api<Eligibility>("/meditation/eligibility");
+      setEligibility(e);
+    } catch {
+      // Network failure → assume Pro/unlimited so we don't lock out paying
+      // users on a transient blip. The server is the source of truth on the
+      // /start call regardless, so freeloading isn't actually possible here.
+      setEligibility({ tier: "pro", used: [], remaining: ["sleep", "anxiety", "gratitude", "focus"], unlimited: true, themes: ["sleep", "anxiety", "gratitude", "focus"] });
+    }
+  };
+  useEffect(() => { refreshEligibility(); }, []);
 
   // Pre-pick the soft female voice once per locale.
   useEffect(() => {
@@ -824,10 +906,39 @@ export default function MeditationScreen() {
     speakNext();
   };
 
-  const start = (key?: SessionKey) => {
+  const start = async (key?: SessionKey) => {
     const sk = key || sessionKey;
     stopAll();
     setSessionKey(sk);
+
+    // Server gate: claim the trial (Free) or no-op (Pro/Zen). If the user
+    // exhausted their trial for this theme, we get a 402 and route them
+    // to the paywall rather than starting the narration.
+    try {
+      await api("/meditation/start", {
+        method: "POST",
+        body: JSON.stringify({ theme: sk }),
+      });
+    } catch (e: any) {
+      const msg = String(e?.message || "");
+      // 402 → paywall flow. We don't want to show a generic toast; surface
+      // the upsell with an explicit Upgrade CTA.
+      if (/402|trial/i.test(msg) || /upgrade/i.test(msg)) {
+        setStage("pick");
+        Alert.alert(
+          T("trialUsedTitle"),
+          T("trialUsedDesc"),
+          [
+            { text: T("notNow"), style: "cancel" },
+            { text: T("upgrade"), onPress: () => router.push("/paywall") },
+          ],
+        );
+      }
+      // Refresh eligibility so the badge on the card updates immediately.
+      refreshEligibility();
+      return;
+    }
+
     setRunning(true);
     cancelled.current = false;
     Haptics.selectionAsync().catch(() => {});
@@ -836,6 +947,9 @@ export default function MeditationScreen() {
     // makes the very first cue feel less abrupt.
     const t = setTimeout(() => runScript(sk), 600);
     timeouts.current.push(t);
+    // Refresh now so the picker badge state is correct when the user
+    // navigates back via "Change".
+    refreshEligibility();
   };
 
   // ── Pick screen ───────────────────────────────────────────────────────
@@ -859,34 +973,53 @@ export default function MeditationScreen() {
           <Text style={styles.bigSub}>{T("pickSub")}</Text>
 
           <View style={{ marginTop: 22, gap: 14 }}>
-            <SessionCard
-              sessionKey="sleep"
-              lc={lc}
-              gradient={["#1E1B4B", "#4C1D95"]}
-              icon="moon"
-              onPick={() => { setSessionKey("sleep"); setStage("play"); setTimeout(() => start("sleep"), 50); }}
-            />
-            <SessionCard
-              sessionKey="anxiety"
-              lc={lc}
-              gradient={["#0EA5E9", "#0284C7"]}
-              icon="leaf"
-              onPick={() => { setSessionKey("anxiety"); setStage("play"); setTimeout(() => start("anxiety"), 50); }}
-            />
-            <SessionCard
-              sessionKey="gratitude"
-              lc={lc}
-              gradient={["#F59E0B", "#D97706"]}
-              icon="heart"
-              onPick={() => { setSessionKey("gratitude"); setStage("play"); setTimeout(() => start("gratitude"), 50); }}
-            />
-            <SessionCard
-              sessionKey="focus"
-              lc={lc}
-              gradient={["#10B981", "#059669"]}
-              icon="eye"
-              onPick={() => { setSessionKey("focus"); setStage("play"); setTimeout(() => start("focus"), 50); }}
-            />
+            {(["sleep", "anxiety", "gratitude", "focus"] as SessionKey[]).map((k) => {
+              // Resolve the trial state for this card from the eligibility
+              // payload. Default to "unlimited" while we're loading so the
+              // initial paint matches the Pro experience (no jarring badges
+              // that disappear after mount).
+              const trialState: "free-available" | "free-used" | "unlimited" =
+                !eligibility || eligibility.unlimited
+                  ? "unlimited"
+                  : eligibility.used.includes(k)
+                  ? "free-used"
+                  : "free-available";
+              const meta = (() => {
+                switch (k) {
+                  case "sleep":     return { gradient: ["#1E1B4B", "#4C1D95"] as [string, string], icon: "moon" as const };
+                  case "anxiety":   return { gradient: ["#0EA5E9", "#0284C7"] as [string, string], icon: "leaf" as const };
+                  case "gratitude": return { gradient: ["#F59E0B", "#D97706"] as [string, string], icon: "heart" as const };
+                  case "focus":     return { gradient: ["#10B981", "#059669"] as [string, string], icon: "eye" as const };
+                }
+              })();
+              return (
+                <SessionCard
+                  key={k}
+                  sessionKey={k}
+                  lc={lc}
+                  gradient={meta.gradient}
+                  icon={meta.icon}
+                  trialState={trialState}
+                  onPick={() => {
+                    if (trialState === "free-used") {
+                      // No need to enter the play stage — go straight to paywall.
+                      Alert.alert(
+                        T("trialUsedTitle"),
+                        T("trialUsedDesc"),
+                        [
+                          { text: T("notNow"), style: "cancel" },
+                          { text: T("upgrade"), onPress: () => router.push("/paywall") },
+                        ],
+                      );
+                      return;
+                    }
+                    setSessionKey(k);
+                    setStage("play");
+                    setTimeout(() => start(k), 50);
+                  }}
+                />
+              );
+            })}
           </View>
 
           <Text style={styles.hint}>{T("headphones")}</Text>
