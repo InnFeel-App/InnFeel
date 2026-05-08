@@ -39,23 +39,17 @@ async def get_subscriber(app_user_id: str) -> Optional[dict]:
         return None
 
 
-def extract_pro_state(subscriber: dict) -> tuple[bool, Optional[str], Optional[str]]:
-    """From a RevenueCat subscriber payload, return (is_pro, expires_at_iso, store).
-
-    Looks up the "pro" entitlement. If absent or inactive, returns (False, None, None).
-    `store` is one of app_store / play_store / stripe / promotional / None.
-    """
+def _extract_entitlement(subscriber: dict, key: str) -> tuple[bool, Optional[str], Optional[str]]:
+    """Internal helper. Returns (is_active, expires_at_iso, store) for a given entitlement key."""
     if not subscriber:
         return False, None, None
-    ent = (subscriber.get("entitlements") or {}).get("pro") or {}
+    ent = (subscriber.get("entitlements") or {}).get(key) or {}
     expires_at = ent.get("expires_date") or ent.get("expires_at")
     product_id = ent.get("product_identifier")
-    # Cross-reference the subscriptions block to find the store
     subs = subscriber.get("subscriptions") or {}
     store = None
     if product_id and product_id in subs:
         store = subs[product_id].get("store")
-    # "is_active" is the most reliable signal (RevenueCat precomputes it)
     from datetime import datetime, timezone
     is_active = False
     if expires_at:
@@ -65,3 +59,20 @@ def extract_pro_state(subscriber: dict) -> tuple[bool, Optional[str], Optional[s
         except Exception:
             is_active = False
     return is_active, expires_at, store
+
+
+def extract_pro_state(subscriber: dict) -> tuple[bool, Optional[str], Optional[str]]:
+    """From a RevenueCat subscriber payload, return (is_pro, expires_at_iso, store).
+
+    Looks up the "pro" entitlement. If absent or inactive, returns (False, None, None).
+    `store` is one of app_store / play_store / stripe / promotional / None.
+
+    Note: In InnFeel, Zen users also have the `pro` entitlement attached (Zen includes Pro features).
+    So a Zen-active user returns True here as well.
+    """
+    return _extract_entitlement(subscriber, "pro")
+
+
+def extract_zen_state(subscriber: dict) -> tuple[bool, Optional[str], Optional[str]]:
+    """From a RevenueCat subscriber payload, return (is_zen, expires_at_iso, store) for the `zen` entitlement."""
+    return _extract_entitlement(subscriber, "zen")

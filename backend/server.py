@@ -617,7 +617,7 @@ async def stripe_webhook(request: Request):
 # =========================================================================
 # In-App Purchases — RevenueCat unified (iOS App Store + Google Play + Stripe Web)
 # =========================================================================
-from app_core.revenuecat import get_subscriber as rc_get_subscriber, extract_pro_state
+from app_core.revenuecat import get_subscriber as rc_get_subscriber, extract_pro_state, extract_zen_state
 from app_core.config import REVENUECAT_WEBHOOK_AUTH
 
 
@@ -625,25 +625,43 @@ from app_core.config import REVENUECAT_WEBHOOK_AUTH
 async def iap_sync(user: dict = Depends(get_current_user)):
     """Client calls this right after a successful native purchase (or on demand).
     Backend fetches the authoritative subscriber state from RevenueCat REST and
-    mirrors pro/pro_expires_at into our users collection.
+    mirrors pro/zen/expires_at into our users collection.
     """
     sub = await rc_get_subscriber(user["user_id"])
     if not sub:
-        return {"ok": False, "pro": False, "reason": "no_subscriber"}
-    is_active, expires_at, store = extract_pro_state(sub)
+        return {"ok": False, "pro": False, "zen": False, "reason": "no_subscriber"}
+    is_pro, pro_expires_at, pro_store = extract_pro_state(sub)
+    is_zen, zen_expires_at, zen_store = extract_zen_state(sub)
+    store = zen_store or pro_store
     source = {"app_store": "iap_apple", "play_store": "iap_google", "stripe": "iap_stripe", "promotional": "iap_promo"}.get(store or "", "iap")
-    update = {"pro": bool(is_active)}
-    if is_active and expires_at:
+    update = {"pro": bool(is_pro), "zen": bool(is_zen)}
+    if is_pro and pro_expires_at:
         try:
-            update["pro_expires_at"] = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            update["pro_expires_at"] = datetime.fromisoformat(pro_expires_at.replace("Z", "+00:00"))
             update["pro_source"] = source
         except Exception:
             pass
     else:
         update["pro_expires_at"] = None
         update["pro_source"] = None
+    if is_zen and zen_expires_at:
+        try:
+            update["zen_expires_at"] = datetime.fromisoformat(zen_expires_at.replace("Z", "+00:00"))
+            update["zen_source"] = source
+        except Exception:
+            pass
+    else:
+        update["zen_expires_at"] = None
+        update["zen_source"] = None
     await db.users.update_one({"user_id": user["user_id"]}, {"$set": update})
-    return {"ok": True, "pro": bool(is_active), "pro_expires_at": expires_at, "source": source}
+    return {
+        "ok": True,
+        "pro": bool(is_pro),
+        "zen": bool(is_zen),
+        "pro_expires_at": pro_expires_at,
+        "zen_expires_at": zen_expires_at,
+        "source": source,
+    }
 
 
 @api.post("/iap/webhook")
@@ -684,20 +702,29 @@ async def iap_webhook(request: Request):
     })
     # 4) Pull authoritative state from the REST API and update the user
     sub = await rc_get_subscriber(app_user_id)
-    update = {"pro": False, "pro_expires_at": None}
+    update = {"pro": False, "zen": False, "pro_expires_at": None, "zen_expires_at": None}
     if sub:
-        is_active, expires_at, store = extract_pro_state(sub)
+        is_pro, pro_expires_at, pro_store = extract_pro_state(sub)
+        is_zen, zen_expires_at, zen_store = extract_zen_state(sub)
+        store = zen_store or pro_store
         source = {"app_store": "iap_apple", "play_store": "iap_google", "stripe": "iap_stripe", "promotional": "iap_promo"}.get(store or "", "iap")
-        update["pro"] = bool(is_active)
-        update["pro_source"] = source if is_active else None
-        if is_active and expires_at:
+        update["pro"] = bool(is_pro)
+        update["zen"] = bool(is_zen)
+        update["pro_source"] = source if is_pro else None
+        update["zen_source"] = source if is_zen else None
+        if is_pro and pro_expires_at:
             try:
-                update["pro_expires_at"] = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                update["pro_expires_at"] = datetime.fromisoformat(pro_expires_at.replace("Z", "+00:00"))
+            except Exception:
+                pass
+        if is_zen and zen_expires_at:
+            try:
+                update["zen_expires_at"] = datetime.fromisoformat(zen_expires_at.replace("Z", "+00:00"))
             except Exception:
                 pass
     await db.users.update_one({"user_id": app_user_id}, {"$set": update})
-    logger.info(f"IAP webhook {event_type} applied for {app_user_id}: pro={update['pro']}")
-    return {"ok": True, "event_type": event_type, "pro": update["pro"]}
+    logger.info(f"IAP webhook {event_type} applied for {app_user_id}: pro={update['pro']} zen={update['zen']}")
+    return {"ok": True, "event_type": event_type, "pro": update["pro"], "zen": update["zen"]}
 
 
 @api.get("/iap/status")
