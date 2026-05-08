@@ -8,7 +8,6 @@ import Button from "../../src/components/Button";
 import { useAuth } from "../../src/auth";
 import { api } from "../../src/api";
 import { t, dateLong, useI18n } from "../../src/i18n";
-import { useNetworkStatus } from "../../src/network";
 import { COLORS, EMOTION_COLORS } from "../../src/theme";
 import { Ionicons } from "@expo/vector-icons";
 import { useShareToStories } from "../../src/components/ShareToStories";
@@ -30,7 +29,9 @@ export default function Home() {
   const [feed, setFeed] = useState<{ locked: boolean; items: any[] }>({ locked: true, items: [] });
   const [refreshing, setRefreshing] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
-  const { online } = useNetworkStatus();
+  // Offline detection temporarily disabled (was causing crashes in some Expo Go
+  // configurations). Hardcoded to online; can be re-introduced later.
+  const online = true;
   const { share, Renderer: ShareRenderer } = useShareToStories();
 
   const load = useCallback(async () => {

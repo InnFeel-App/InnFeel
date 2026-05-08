@@ -11,7 +11,6 @@ import { ensureDailyRandomNotification, registerForPushNotificationsAsync } from
 import { loadLocaleOverride } from "../src/i18n";
 import { initIAP, identifyIAP } from "../src/iap";
 import ErrorBoundary from "../src/components/ErrorBoundary";
-import OfflineBanner from "../src/components/OfflineBanner";
 
 /** Pull a friend invite code out of any deep-link / universal-link the OS
  *  hands us. Accepts:
@@ -121,8 +120,8 @@ export default function RootLayout() {
                 animation: "fade",
               }}
             />
-            {/* Global offline indicator — auto-shows when connectivity drops. */}
-            <OfflineBanner />
+            {/* OfflineBanner intentionally removed — caused render crashes
+                in some Expo Go configs. Will be re-added post-launch. */}
           </AuthProvider>
         </ErrorBoundary>
       </SafeAreaProvider>
