@@ -56,97 +56,122 @@ logger = logging.getLogger("innfeel")
 # =========================================================================
 @app.on_event("startup")
 async def startup():
-    await db.users.create_index("email", unique=True)
-    await db.users.create_index("user_id", unique=True)
-    await db.moods.create_index([("user_id", 1), ("day_key", 1)])
-    await db.moods.create_index("created_at")
-    await db.friendships.create_index([("user_id", 1), ("friend_id", 1)], unique=True)
-    await db.payment_transactions.create_index("session_id", unique=True)
-    await db.messages.create_index([("conversation_id", 1), ("at", 1)])
-    await db.conversations.create_index("participants")
-    await db.wellness_cache.create_index([("user_id", 1), ("emotion", 1), ("day_key", 1)], unique=True)
-    await db.activity.create_index([("user_id", 1), ("at", -1)])
-    await db.activity.create_index([("user_id", 1), ("read", 1)])
-    # Email verification tokens — TTL index for auto-cleanup
-    await db.email_verifications.create_index("user_id")
-    await db.email_verifications.create_index("expires_at", expireAfterSeconds=0)
+    """Schedule heavy DB work as a background task so the HTTP server starts
+    accepting connections IMMEDIATELY. Without this, FastAPI waits for every
+    `await` in here before binding port 8001, which makes Railway's health
+    checks fail on cold starts (~13 Mongo index creations + seed users +
+    legacy migration easily exceed 60s on a fresh Atlas connection).
+    """
+    import asyncio
+    asyncio.create_task(_bootstrap_database())
+    logger.info("Startup scheduled. HTTP server is accepting traffic.")
+
+
+async def _bootstrap_database():
+    """Best-effort init of indexes, seed users and migrations. Runs in the
+    background after the server is already serving requests, so a slow Atlas
+    cold start can't block the deploy from going live.
+    """
+    try:
+        await db.users.create_index("email", unique=True)
+        await db.users.create_index("user_id", unique=True)
+        await db.moods.create_index([("user_id", 1), ("day_key", 1)])
+        await db.moods.create_index("created_at")
+        await db.friendships.create_index([("user_id", 1), ("friend_id", 1)], unique=True)
+        await db.payment_transactions.create_index("session_id", unique=True)
+        await db.messages.create_index([("conversation_id", 1), ("at", 1)])
+        await db.conversations.create_index("participants")
+        await db.wellness_cache.create_index([("user_id", 1), ("emotion", 1), ("day_key", 1)], unique=True)
+        await db.activity.create_index([("user_id", 1), ("at", -1)])
+        await db.activity.create_index([("user_id", 1), ("read", 1)])
+        await db.email_verifications.create_index("user_id")
+        await db.email_verifications.create_index("expires_at", expireAfterSeconds=0)
+    except Exception as e:
+        logger.exception(f"Index creation failed (non-fatal): {e}")
 
     # One-time migration: rename legacy admin@innfeel.app → hello@innfeel.app
     # (Apple Custom Domain only allows 3 aliases: hello, support, noreply.)
-    legacy_admin = await db.users.find_one({"email": "admin@innfeel.app"})
-    if legacy_admin:
-        new_admin_exists = await db.users.find_one({"email": "hello@innfeel.app"})
-        if new_admin_exists and new_admin_exists.get("user_id") != legacy_admin.get("user_id"):
-            await db.users.delete_one({"user_id": legacy_admin["user_id"]})
-            logger.info("Removed legacy admin@innfeel.app (hello@innfeel.app already exists)")
-        else:
-            try:
-                await db.users.update_one(
-                    {"user_id": legacy_admin["user_id"]},
-                    {"$set": {"email": "hello@innfeel.app"}},
-                )
-                logger.info("Migrated admin@innfeel.app → hello@innfeel.app")
-            except Exception as e:
-                logger.warning(f"admin → hello rename race ({e}); deleting legacy row.")
+    try:
+        legacy_admin = await db.users.find_one({"email": "admin@innfeel.app"})
+        if legacy_admin:
+            new_admin_exists = await db.users.find_one({"email": "hello@innfeel.app"})
+            if new_admin_exists and new_admin_exists.get("user_id") != legacy_admin.get("user_id"):
                 await db.users.delete_one({"user_id": legacy_admin["user_id"]})
+                logger.info("Removed legacy admin@innfeel.app (hello@innfeel.app already exists)")
+            else:
+                try:
+                    await db.users.update_one(
+                        {"user_id": legacy_admin["user_id"]},
+                        {"$set": {"email": "hello@innfeel.app"}},
+                    )
+                    logger.info("Migrated admin@innfeel.app → hello@innfeel.app")
+                except Exception as e:
+                    logger.warning(f"admin → hello rename race ({e}); deleting legacy row.")
+                    await db.users.delete_one({"user_id": legacy_admin["user_id"]})
+    except Exception as e:
+        logger.exception(f"Legacy admin migration failed (non-fatal): {e}")
 
     # seed demo admin (hello@innfeel.app)
-    existing = await db.users.find_one({"email": "hello@innfeel.app"})
-    if not existing:
-        uid = f"user_{uuid.uuid4().hex[:12]}"
-        await db.users.insert_one({
-            "user_id": uid,
-            "email": "hello@innfeel.app",
-            "password_hash": hash_password("admin123"),
-            "name": "Admin",
-            "avatar_color": "#F472B6",
-            "pro": True,
-            "zen": True,
-            "pro_expires_at": now_utc() + timedelta(days=3650),
-            "is_admin": True,
-            "is_owner": True,
-            "friend_count": 0,
-            "streak": 0,
-            "created_at": now_utc(),
-            "email_verified_at": now_utc(),
-        })
-        logger.info("Seeded owner user (hello@innfeel.app) with full Zen access")
-    else:
-        # Ensure owner flags are set + Zen full access never expires (idempotent)
-        await db.users.update_one(
-            {"email": "hello@innfeel.app"},
-            {"$set": {
-                "is_admin": True,
-                "is_owner": True,
-                "pro": True,
-                "zen": True,
-                "pro_expires_at": now_utc() + timedelta(days=3650),
-                "email_verified_at": existing.get("email_verified_at") or now_utc(),
-            }},
-        )
-    # seed a couple of demo friends so feed is not empty
-    for (email, name, color, emotion) in [
-        ("luna@innfeel.app", "Luna", "#A78BFA", "nostalgia"),
-        ("rio@innfeel.app", "Rio", "#2DD4BF", "focus"),
-        ("sage@innfeel.app", "Sage", "#34D399", "peace"),
-    ]:
-        ex = await db.users.find_one({"email": email})
-        if not ex:
+    try:
+        existing = await db.users.find_one({"email": "hello@innfeel.app"})
+        if not existing:
             uid = f"user_{uuid.uuid4().hex[:12]}"
             await db.users.insert_one({
                 "user_id": uid,
-                "email": email,
-                "password_hash": hash_password("demo1234"),
-                "name": name,
-                "avatar_color": color,
-                "pro": False,
+                "email": "hello@innfeel.app",
+                "password_hash": hash_password("admin123"),
+                "name": "Admin",
+                "avatar_color": "#F472B6",
+                "pro": True,
+                "zen": True,
+                "pro_expires_at": now_utc() + timedelta(days=3650),
+                "is_admin": True,
+                "is_owner": True,
                 "friend_count": 0,
-                "streak": 1,
+                "streak": 0,
                 "created_at": now_utc(),
                 "email_verified_at": now_utc(),
             })
-        elif not ex.get("email_verified_at"):
-            await db.users.update_one({"email": email}, {"$set": {"email_verified_at": now_utc()}})
+            logger.info("Seeded owner user (hello@innfeel.app) with full Zen access")
+        else:
+            # Ensure owner flags are set + Zen full access never expires (idempotent)
+            await db.users.update_one(
+                {"email": "hello@innfeel.app"},
+                {"$set": {
+                    "is_admin": True,
+                    "is_owner": True,
+                    "pro": True,
+                    "zen": True,
+                    "pro_expires_at": now_utc() + timedelta(days=3650),
+                    "email_verified_at": existing.get("email_verified_at") or now_utc(),
+                }},
+            )
+        # seed a couple of demo friends so feed is not empty
+        for (email, name, color, emotion) in [
+            ("luna@innfeel.app", "Luna", "#A78BFA", "nostalgia"),
+            ("rio@innfeel.app", "Rio", "#2DD4BF", "focus"),
+            ("sage@innfeel.app", "Sage", "#34D399", "peace"),
+        ]:
+            ex = await db.users.find_one({"email": email})
+            if not ex:
+                uid = f"user_{uuid.uuid4().hex[:12]}"
+                await db.users.insert_one({
+                    "user_id": uid,
+                    "email": email,
+                    "password_hash": hash_password("demo1234"),
+                    "name": name,
+                    "avatar_color": color,
+                    "pro": False,
+                    "friend_count": 0,
+                    "streak": 1,
+                    "created_at": now_utc(),
+                    "email_verified_at": now_utc(),
+                })
+            elif not ex.get("email_verified_at"):
+                await db.users.update_one({"email": email}, {"$set": {"email_verified_at": now_utc()}})
+        logger.info("Seed/bootstrap complete.")
+    except Exception as e:
+        logger.exception(f"Seed/bootstrap failed (non-fatal): {e}")
 
 
 
