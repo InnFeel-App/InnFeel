@@ -15,7 +15,8 @@ import { useShareToStories } from "../../src/components/ShareToStories";
 import ShareAuraButton from "../../src/components/ShareAuraButton";
 import EmptyState from "../../src/components/EmptyState";
 import { notifyIfNew } from "../../src/notifications";
-import { useScreenCaptureGuard } from "../../src/hooks/useScreenCaptureGuard";
+// Screen capture guard removed — users need to screenshot any screen
+// (App Store paywall captures for review, bug reports, sharing flows, etc.).
 
 export default function Home() {
   const router = useRouter();
@@ -318,5 +319,8 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 3,
     backgroundColor: "#fff", paddingHorizontal: 10, paddingVertical: 7, borderRadius: 999,
   },
+  verifyCtaTxt: { color: "#050505", fontWeight: "800", fontSize: 12 },
+});
+,
   verifyCtaTxt: { color: "#050505", fontWeight: "800", fontSize: 12 },
 });
