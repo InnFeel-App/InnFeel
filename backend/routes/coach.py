@@ -149,6 +149,7 @@ async def _build_user_context(user: dict) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 class ChatIn(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
+    locale: Optional[str] = None  # ISO code (en, fr, es, it, de, pt, ar) — Claude replies in this language
 
 
 class ChatTurn(BaseModel):
@@ -254,6 +255,21 @@ async def coach_chat(data: ChatIn, user: dict = Depends(get_current_user)):
     # 3) Build the system prompt with the user's compact emotional context.
     ctx = await _build_user_context(user)
     full_system = f"{COACH_SYSTEM_PROMPT}\n\nContext for this conversation:\n{ctx}"
+
+    # Force Claude to reply in the user's UI language. Without this the model
+    # defaults to English regardless of what the user types in.
+    LOCALE_NAMES = {
+        "en": "English", "fr": "French", "es": "Spanish",
+        "it": "Italian", "de": "German", "pt": "Portuguese", "ar": "Arabic",
+    }
+    locale_code = (data.locale or "").lower().split("-")[0] if data.locale else ""
+    lang_name = LOCALE_NAMES.get(locale_code)
+    if lang_name:
+        full_system += (
+            f"\n\nIMPORTANT: Always reply in {lang_name}. "
+            f"Do not switch languages even if the user writes in another language. "
+            f"Use the warm, natural register a native {lang_name} speaker would use."
+        )
 
     # 4) Re-feed the last MAX_HISTORY_TURNS turns to the LLM for continuity.
     cursor = db.coach_messages.find({"user_id": user["user_id"]}).sort("created_at", -1).limit(MAX_HISTORY_TURNS * 2)

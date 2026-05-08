@@ -485,7 +485,9 @@ export default function MoodCreate({ inTabsLayout = false }: { inTabsLayout?: bo
         const w = await api<any>(`/wellness/${emotion}`);
         setWellness(w);
       } catch {
-        router.replace("/(tabs)/home");
+        // Wellness fetch failed — close the screen the same way as the sheet.
+        if (router.canGoBack()) router.back();
+        else router.replace("/(tabs)/home");
       }
     } catch (e: any) {
       Alert.alert("Oops", e.message || "Could not share your aura");
@@ -831,7 +833,14 @@ export default function MoodCreate({ inTabsLayout = false }: { inTabsLayout?: bo
         visible={!!wellness}
         data={wellness}
         userName={user?.name}
-        onClose={() => { setWellness(null); router.replace("/(tabs)/home"); }}
+        onClose={() => {
+          setWellness(null);
+          // Prefer `back()` so we never flash through the index splash screen
+          // — the WellnessSheet always opens after a `push("/mood-create")`,
+          // so there's a stack entry to pop. Falls back to a tab nav if not.
+          if (router.canGoBack()) router.back();
+          else router.replace("/(tabs)/home");
+        }}
         onShare={() => share({
           kind: "mood",
           // Required so the backend can build the IG Reel for THIS aura

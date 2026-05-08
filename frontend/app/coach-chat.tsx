@@ -9,6 +9,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { api } from "../src/api";
 import { useAuth } from "../src/auth";
+import { currentLocale } from "../src/i18n";
 import { COLORS } from "../src/theme";
 
 /**
@@ -104,7 +105,7 @@ export default function CoachScreen() {
     try {
       const r = await api<{ reply: string; tier: any; quota_left: number; turn_id: string }>("/coach/chat", {
         method: "POST",
-        body: { text: body },
+        body: { text: body, locale: currentLocale() },
       });
       setTurns((prev) => [
         ...prev,
