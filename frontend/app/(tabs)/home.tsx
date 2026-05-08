@@ -321,6 +321,3 @@ const styles = StyleSheet.create({
   },
   verifyCtaTxt: { color: "#050505", fontWeight: "800", fontSize: 12 },
 });
-,
-  verifyCtaTxt: { color: "#050505", fontWeight: "800", fontSize: 12 },
-});
