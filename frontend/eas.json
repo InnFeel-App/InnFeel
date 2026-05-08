@@ -43,8 +43,8 @@
     "production": {
       "ios": {
         "appleId": "support@innfeel.app",
-        "ascAppId": "REPLACE_WITH_APPLE_APP_ID",
-        "appleTeamId": "REPLACE_WITH_TEAM_ID"
+        "ascAppId": "6767582470",
+        "appleTeamId": "C2322UV76G"
       },
       "android": {
         "serviceAccountKeyPath": "./play-service-account.json",

@@ -97,8 +97,7 @@
           "microphonePermission": "Record a voice note for your daily aura."
         }
       ],
-      "expo-video",
-      "react-native-purchases"
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true
