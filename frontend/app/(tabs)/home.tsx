@@ -29,6 +29,8 @@ export default function Home() {
   const [todayMood, setTodayMood] = useState<any>(null);
   const [feed, setFeed] = useState<{ locked: boolean; items: any[] }>({ locked: true, items: [] });
   const [refreshing, setRefreshing] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const { online } = useNetworkStatus();
   const { share, Renderer: ShareRenderer } = useShareToStories();
 
   const load = useCallback(async () => {
@@ -37,8 +39,11 @@ export default function Home() {
       setTodayMood(today.mood);
       const f = await api<any>("/moods/feed");
       setFeed(f);
+      setLoadFailed(false);
     } catch (e) {
-      // ignore
+      // Distinguish "feed is empty" from "we couldn't fetch it" so the empty
+      // state can offer Retry instead of "make friends".
+      setLoadFailed(true);
     }
   }, []);
 
