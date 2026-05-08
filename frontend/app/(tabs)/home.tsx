@@ -23,10 +23,9 @@ export default function Home() {
   const { user } = useAuth();
   // Re-renders the screen when the user switches the language.
   useI18n();
-  // Block screenshots of friends' auras — this screen only. Admins bypass so they can
-  // triage bug reports. Anywhere else in the app screenshots stay enabled so users can
-  // share error states with support.
-  useScreenCaptureGuard(!!user?.is_admin);
+  // Screen capture guard intentionally removed — users must be able to
+  // screenshot any screen (App Store paywall captures for review,
+  // bug reports, sharing flows, App Store reviewer testing, etc.).
   const [todayMood, setTodayMood] = useState<any>(null);
   const [feed, setFeed] = useState<{ locked: boolean; items: any[] }>({ locked: true, items: [] });
   const [refreshing, setRefreshing] = useState(false);
