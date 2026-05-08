@@ -854,16 +854,28 @@ async def root():
 async def health():
     """
     Lightweight liveness probe used by Railway's deploy health checks and any
-    uptime monitor (e.g. Better Stack, UptimeRobot). Pings Mongo so we don't
-    serve 200 OK while the DB is unreachable.
+    uptime monitor (e.g. Better Stack, UptimeRobot).
+
+    Returns 200 OK as long as the FastAPI process is alive — does NOT touch
+    Mongo here on purpose. Railway's healthcheck runs immediately after the
+    container boots, before our startup() index/seed work finishes (Atlas
+    on a cold cluster takes ~5-15 s for the first connection). Coupling the
+    healthcheck to a live DB query made every redeploy fail spuriously.
+    A separate `/api/health/db` endpoint exposes the deeper check for
+    observability tooling without putting it on the deploy critical path.
     """
+    return {"ok": True}
+
+
+@api.get("/health/db")
+async def health_db():
+    """Deeper readiness probe: also pings Mongo. Use this for uptime monitors."""
     try:
-        # `ping` is the cheapest admin command — round-trips in <5ms locally.
         await db.command("ping")
-        db_ok = True
+        return {"ok": True, "db": True}
     except Exception:
-        db_ok = False
-    return {"ok": db_ok, "db": db_ok}
+        # 503 so monitors can fire alerts; the basic /health stays 200.
+        raise HTTPException(status_code=503, detail="db unreachable")
 
 
 
