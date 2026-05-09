@@ -9,8 +9,7 @@
       "distribution": "internal",
       "ios": {
         "simulator": true
-      },
-      "channel": "development"
+      }
     },
     "preview": {
       "distribution": "internal",
@@ -20,8 +19,7 @@
       },
       "android": {
         "buildType": "apk"
-      },
-      "channel": "preview"
+      }
     },
     "production": {
       "distribution": "store",
@@ -32,7 +30,6 @@
       "android": {
         "buildType": "app-bundle"
       },
-      "channel": "production",
       "env": {
         "EXPO_PUBLIC_BACKEND_URL": "https://api.innfeel.app"
       }
