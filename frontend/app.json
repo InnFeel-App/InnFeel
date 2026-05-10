@@ -85,13 +85,6 @@
         }
       ],
       [
-        "expo-notifications",
-        {
-          "icon": "./assets/images/icon.png",
-          "color": "#EC4899"
-        }
-      ],
-      [
         "expo-av",
         {
           "microphonePermission": "Record a voice note for your daily aura."
