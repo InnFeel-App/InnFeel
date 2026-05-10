@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>InnFeel — Your daily aura, in color</title>
+<meta name="description" content="InnFeel is a daily mood-sharing app. Share your aura, connect with close friends, get AI wellness insights — in less than a minute a day." />
+<meta property="og:title" content="InnFeel — Your daily aura, in color" />
+<meta property="og:description" content="A simple wellness routine, an intimate social circle, an AI coach who listens. No likes, no algorithm — just you." />
+<meta property="og:image" content="https://innfeel.app/og.png" />
+<meta property="og:url" content="https://innfeel.app" />
+<meta name="theme-color" content="#0B0B0F" />
+<link rel="icon" type="image/png" href="/favicon.png" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0B0B0F;
+    --bg-2: #15151D;
+    --fg: #FFFFFF;
+    --muted: rgba(255, 255, 255, 0.65);
+    --pink: #EC4899;
+    --purple: #8B5CF6;
+    --blue: #3B82F6;
+    --gradient: linear-gradient(135deg, #EC4899 0%, #8B5CF6 50%, #3B82F6 100%);
+  }
+  html, body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  a { color: inherit; text-decoration: none; }
+  .container { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  /* HERO */
+  header {
+    padding: 24px 0;
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(11, 11, 15, 0.85);
+    backdrop-filter: saturate(180%) blur(12px);
+    -webkit-backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  header .container { display: flex; justify-content: space-between; align-items: center; }
+  .logo { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+  nav a { color: var(--muted); margin-left: 24px; font-size: 14px; transition: color .15s; }
+  nav a:hover { color: var(--fg); }
+
+  .hero {
+    padding: 96px 0 80px;
+    text-align: center;
+    position: relative;
+  }
+  .hero::before {
+    content: "";
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse at top, rgba(236, 72, 153, 0.18) 0%, transparent 60%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .hero > * { position: relative; z-index: 1; }
+  .hero h1 {
+    font-size: clamp(40px, 7vw, 72px);
+    font-weight: 800;
+    letter-spacing: -2px;
+    line-height: 1.05;
+    margin-bottom: 20px;
+  }
+  .hero h1 span {
+    background: var(--gradient);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .hero .tag {
+    font-size: clamp(16px, 2.5vw, 20px);
+    color: var(--muted);
+    max-width: 640px;
+    margin: 0 auto 40px;
+  }
+  .cta-row { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 14px 28px;
+    border-radius: 14px;
+    font-weight: 600;
+    font-size: 15px;
+    transition: transform .15s, opacity .15s;
+    cursor: pointer;
+    border: none;
+  }
+  .btn:hover { transform: translateY(-2px); }
+  .btn-primary {
+    background: var(--gradient);
+    color: white;
+    box-shadow: 0 8px 24px rgba(236, 72, 153, 0.35);
+  }
+  .btn-secondary {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--fg);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  /* FEATURES */
+  .features { padding: 80px 0; }
+  .features h2 {
+    font-size: clamp(28px, 5vw, 44px);
+    font-weight: 700;
+    letter-spacing: -1px;
+    margin-bottom: 56px;
+    text-align: center;
+  }
+  .grid {
+    display: grid;
+    gap: 20px;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  }
+  .card {
+    background: var(--bg-2);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 20px;
+    padding: 32px;
+    transition: border-color .2s, transform .2s;
+  }
+  .card:hover { border-color: rgba(236, 72, 153, 0.35); transform: translateY(-4px); }
+  .card .icon {
+    width: 48px; height: 48px;
+    border-radius: 14px;
+    background: var(--gradient);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+    margin-bottom: 18px;
+  }
+  .card h3 { font-size: 18px; font-weight: 600; margin-bottom: 10px; }
+  .card p { color: var(--muted); font-size: 14px; line-height: 1.6; }
+
+  /* MANIFESTO */
+  .manifesto {
+    padding: 96px 0;
+    text-align: center;
+    background: linear-gradient(180deg, transparent, rgba(139, 92, 246, 0.06));
+  }
+  .manifesto blockquote {
+    max-width: 720px;
+    margin: 0 auto;
+    font-size: clamp(22px, 3vw, 30px);
+    font-weight: 500;
+    line-height: 1.4;
+    letter-spacing: -0.5px;
+  }
+  .manifesto blockquote::before { content: "“"; font-size: 56px; color: var(--pink); display: block; line-height: 1; opacity: .55; }
+  .manifesto cite { display: block; margin-top: 24px; color: var(--muted); font-size: 14px; font-style: normal; }
+
+  /* FOOTER */
+  footer {
+    padding: 56px 0 40px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    color: var(--muted);
+    font-size: 14px;
+  }
+  footer .container { display: flex; flex-wrap: wrap; gap: 24px; justify-content: space-between; align-items: center; }
+  footer a { transition: color .15s; }
+  footer a:hover { color: var(--fg); }
+  .footer-links a { margin-right: 18px; }
+  .footer-copy { font-size: 13px; color: rgba(255, 255, 255, 0.4); }
+
+  @media (max-width: 600px) {
+    nav { display: none; }
+    .hero { padding: 64px 0 56px; }
+    .features, .manifesto { padding: 56px 0; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="container">
+    <div class="logo">InnFeel</div>
+    <nav>
+      <a href="#features">Features</a>
+      <a href="#about">About</a>
+      <a href="/privacy.html">Privacy</a>
+      <a href="/terms.html">Terms</a>
+      <a href="mailto:hello@innfeel.app">Contact</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="container">
+    <h1>Your <span>aura,</span><br />in less than a minute.</h1>
+    <p class="tag">A daily wellness ritual. An intimate social circle. An AI coach who listens. No likes, no algorithm — just you and the people who matter.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://testflight.apple.com/" id="testflight-cta">Join the iOS Beta</a>
+      <a class="btn btn-secondary" href="#features">Discover the app</a>
+    </div>
+  </div>
+</section>
+
+<section class="features" id="features">
+  <div class="container">
+    <h2>One minute a day. Real connection.</h2>
+    <div class="grid">
+      <div class="card">
+        <div class="icon">🌈</div>
+        <h3>Daily Aura</h3>
+        <p>Each day, share your mood through a color, a word, a photo, a sound or a video. A 60-second ritual that grounds you.</p>
+      </div>
+      <div class="card">
+        <div class="icon">👥</div>
+        <h3>Close Friends only</h3>
+        <p>No public feed, no random followers. Share your aura with the small circle of people you actually trust.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🤖</div>
+        <h3>AI Wellness Coach</h3>
+        <p>Talk in your own language about how you feel. The Coach listens, helps you reframe, and never judges.</p>
+      </div>
+      <div class="card">
+        <div class="icon">📊</div>
+        <h3>Patterns & Insights</h3>
+        <p>Visualize your emotional rhythm over weeks. Discover what lifts you up, what drains you, and grow at your own pace.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🧘</div>
+        <h3>Guided Meditations</h3>
+        <p>Audio-guided sessions to refocus, breathe, and re-center — anywhere, anytime.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🔥</div>
+        <h3>Streaks & Mood Cards</h3>
+        <p>Celebrate your consistency. Collect cards. Protect your streak with freezes when life gets busy.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="manifesto" id="about">
+  <div class="container">
+    <blockquote>
+      We don't need another app in our lives.<br />
+      We need a real moment for ourselves —<br />
+      and a true connection with those who matter.
+    </blockquote>
+    <cite>— InnFeel manifesto</cite>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <div class="footer-links">
+      <a href="/privacy.html">Privacy Policy</a>
+      <a href="/terms.html">Terms of Service</a>
+      <a href="mailto:hello@innfeel.app">Contact</a>
+      <a href="mailto:support@innfeel.app">Support</a>
+    </div>
+    <div class="footer-copy">© 2026 InnFeel. Made with care.</div>
+  </div>
+</footer>
+
+</body>
+</html>
