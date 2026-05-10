@@ -77,7 +77,7 @@ The legal pages mention these — make sure they exist (Resend or Cloudflare Ema
 
 - `hello@innfeel.app` — General inquiries
 - `support@innfeel.app` — User support  
-- `privacy@innfeel.app` — GDPR/CCPA requests (legally required)
+- `support@innfeel.app` — Handles GDPR/CCPA/privacy requests + general support (legally required)
 - `feedback@innfeel.app` — Beta feedback (optional)
 
 In Cloudflare → Email → Email Routing, you can forward all of these to your real personal inbox in 2 minutes.
