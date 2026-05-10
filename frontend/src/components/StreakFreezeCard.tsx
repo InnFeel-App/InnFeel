@@ -28,8 +28,8 @@ import { currentLocale, useI18n } from "../i18n";
  * ───────────────────
  * The backend `/streak/bundle/purchase` endpoint is currently a
  * placeholder — it grants the freezes without verifying a real payment
- * receipt. Real IAP (RevenueCat / Stripe) will be wired in once the user
- * finishes `/app/memory/STRIPE_SETUP_GUIDE.md`. The client flow here is
+ * receipt. Real IAP (RevenueCat) will be wired in once the user
+ * finishes the IAP setup. The client flow here is
  * production-ready: only one call-site needs to swap from a direct POST
  * to "IAP checkout → verify receipt → POST" later.
  */
@@ -325,7 +325,7 @@ export default function StreakFreezeCard({ onChange }: { onChange?: () => void }
     if (acting) return;
     setActing(true);
     try {
-      // NOTE: When RevenueCat / Stripe IAP is wired in, replace this single
+      // NOTE: When RevenueCat consumable IAP is wired in, replace this single
       // API call with: iap.purchaseProduct("streak_freeze_bundle") →
       // verify receipt server-side → only THEN POST /bundle/purchase.
       const res: any = await api("/streak/bundle/purchase", { method: "POST" });

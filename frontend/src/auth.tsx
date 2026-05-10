@@ -45,8 +45,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const u = await api<User>("/auth/me");
       setUser(u);
-    } catch {
-      setUser(null);
+    } catch (e: any) {
+      // Only nuke the user state on a *real* auth failure (401/403).
+      // For transient network errors (timeout during a heavy upload, brief
+      // offline, backend cold-start), KEEP the previous user so the app
+      // doesn't briefly redirect to /onboarding (which used to flash after
+      // posting a video aura — the upload would compete with /auth/me).
+      const status = e?.status ?? e?.response?.status;
+      const msg = String(e?.message || "").toLowerCase();
+      const isAuthError =
+        status === 401 ||
+        status === 403 ||
+        msg.includes("unauthor") ||
+        msg.includes("forbidden");
+      if (isAuthError) {
+        setUser(null);
+      }
+      // else: silently keep the previous user — they'll get a fresh refresh
+      // on the next mount or successful API call.
     }
   }, []);
 

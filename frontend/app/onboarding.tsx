@@ -26,11 +26,7 @@ export default function Onboarding() {
       <RadialAura color={slide.color} />
       <SafeAreaView style={{ flex: 1 }}>
         <View style={styles.header}>
-          <Image
-            source={require("../assets/images/icon.png")}
-            style={styles.logo}
-            resizeMode="contain"
-          />
+          <View style={{ flex: 1 }} />
           <TouchableOpacity testID="onboarding-skip" onPress={() => router.replace("/(auth)/login")}>
             <Text style={styles.skip}>{t("cta.skip")}</Text>
           </TouchableOpacity>

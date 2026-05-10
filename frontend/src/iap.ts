@@ -2,11 +2,11 @@
  * RevenueCat IAP wrapper (iOS + Android native builds).
  *
  * Critical: this module SAFELY degrades on:
- *  - Web (no IAP at all — falls back to Stripe)
+ *  - Web (no IAP at all — purchases are mobile-only)
  *  - Expo Go (native module absent — returns null)
  *  - Missing API keys (returns null without throwing)
  *
- * Consumers should treat a null return as "not available" and fall back to Stripe.
+ * Consumers should treat a null return as "not available" (mobile-only feature).
  */
 import { Platform } from "react-native";
 import Constants from "expo-constants";

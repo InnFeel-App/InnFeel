@@ -42,7 +42,9 @@ export async function api<T = any>(
     const msg =
       (data && (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail))) ||
       `Request failed (${res.status})`;
-    throw new Error(msg);
+    const err: Error & { status?: number } = new Error(msg);
+    err.status = res.status;
+    throw err;
   }
   return data as T;
 }

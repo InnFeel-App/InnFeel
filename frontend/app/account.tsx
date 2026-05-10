@@ -204,7 +204,7 @@ export default function Account() {
             <Text style={[styles.sectionTitle, { color: "#EF4444", marginTop: 28 }]}>Danger zone</Text>
             <View style={[styles.card, { borderColor: "rgba(239,68,68,0.25)", backgroundColor: "rgba(239,68,68,0.05)" }]}>
               <Text style={styles.dangerText}>
-                Deleting your account is permanent. All your auras, messages, reactions and friendships will be erased. If you have an active paid subscription, remember to cancel it separately in your App Store, Play Store or Stripe account — deleting your InnFeel account will NOT cancel or refund your subscription.
+                Deleting your account is permanent. All your auras, messages, reactions and friendships will be erased. If you have an active paid subscription, remember to cancel it separately in your App Store or Play Store account — deleting your InnFeel account will NOT cancel or refund your subscription.
               </Text>
               <TextInput
                 testID="delete-password-input"

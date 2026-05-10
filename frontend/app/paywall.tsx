@@ -309,7 +309,7 @@ export default function Paywall() {
     if (!selectedPackage) return;
     setLoading(true);
     try {
-      // TODO(stripe-iap): when the Zen offering is wired in RevenueCat,
+      // TODO: when the Zen offering is wired in RevenueCat,
       // this branch will route users to the correct product automatically.
       // For now if a Zen-tagged package isn't available we fall through
       // to the Pro pkg and warn the user (zenSoon).
@@ -342,37 +342,15 @@ export default function Paywall() {
     } finally { setLoading(false); }
   };
 
-  // Stripe web fallback — kept for parity with the previous flow. It
-  // currently only sells Pro; Zen wiring will be added with the Stripe
-  // setup playbook (memory/STRIPE_SETUP_GUIDE.md).
+  // Native IAP only (Apple / Google Play). No web payments.
+  // On non-native platforms (web preview / Expo Go), inform the user that
+  // purchases are only available in the installed iOS/Android app.
   const upgrade = async () => {
     if (useIAP) return upgradeIAP();
-    setLoading(true);
-    try {
-      const origin = process.env.EXPO_PUBLIC_BACKEND_URL || "";
-      const res = await api<{ url: string; session_id: string }>("/payments/checkout", {
-        method: "POST",
-        body: { origin_url: origin, tier },
-      });
-      await WebBrowser.openBrowserAsync(res.url);
-      let paid = false;
-      for (let i = 0; i < 10; i++) {
-        try {
-          const s = await api<{ payment_status: string }>(`/payments/status/${res.session_id}`);
-          if (s.payment_status === "paid") { paid = true; break; }
-        } catch {}
-        await new Promise((r) => setTimeout(r, 2000));
-      }
-      if (paid) {
-        await refresh();
-        Alert.alert(T("purchasedTitle"), tier === "zen" ? T("zenSoon") : T("purchasedDesc"));
-        router.replace("/(tabs)/profile");
-      } else {
-        Alert.alert(T("paymentNotConfirmed"), T("paymentNotConfirmedDesc"));
-      }
-    } catch (e: any) {
-      Alert.alert(T("purchaseFailed"), e?.message || T("purchaseFailed"));
-    } finally { setLoading(false); }
+    Alert.alert(
+      T("purchaseFailed"),
+      "In-app purchases are only available in the iOS or Android app. Please install InnFeel from the App Store or Google Play to upgrade."
+    );
   };
 
   const devToggle = async () => {
