@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Image, Alert, KeyboardAvoidingView, Platform, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Image, Alert, KeyboardAvoidingView, Platform, ActivityIndicator, Animated, Easing } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
@@ -174,17 +174,35 @@ export default function MoodCreate({ inTabsLayout = false }: { inTabsLayout?: bo
   // common footgun reported by users: opening the Create tab, filling a
   // fresh form, hitting Save, and silently overwriting their previous
   // aura without realizing it. The backend now also returns 409 in that
-  // case as a belt-and-suspenders guard (see routes/moods.create_mood).
+  // case as a belt-and-suspenders guard (see routes.moods.create_mood).
+  //
+  // UX softening: instead of an abrupt router.replace (which felt jarring
+  // in beta testing — users wondered if the tap had registered), we fade
+  // in a centered banner explaining the situation for ~1.6s, THEN redirect.
+  // The banner uses i18n keys "mood.alreadyPosted.title/subtitle".
+  const [redirectBanner, setRedirectBanner] = useState(false);
+  const bannerOpacity = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (isEdit) return; // edit flow is the intended path for re-posting
     let alive = true;
+    let timeoutId: any = null;
     (async () => {
       try {
         const r = await api<{ mood: any }>("/moods/today");
         if (!alive) return;
         if (r?.mood) {
-          // Replace, not push — we don't want a back-button trap on Create.
-          router.replace("/(tabs)/home");
+          setRedirectBanner(true);
+          Animated.timing(bannerOpacity, {
+            toValue: 1,
+            duration: 220,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }).start();
+          // Hold the banner ~1.6s then replace. `replace` avoids a back-
+          // button trap on Create.
+          timeoutId = setTimeout(() => {
+            if (alive) router.replace("/(tabs)/home");
+          }, 1600);
         }
       } catch {
         // If the check itself fails (network / 401 during boot), just let
@@ -193,6 +211,7 @@ export default function MoodCreate({ inTabsLayout = false }: { inTabsLayout?: bo
     })();
     return () => {
       alive = false;
+      if (timeoutId) clearTimeout(timeoutId);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEdit]);
@@ -534,6 +553,31 @@ export default function MoodCreate({ inTabsLayout = false }: { inTabsLayout?: bo
   return (
     <View style={styles.container} testID="mood-create-screen">
       <RadialAura color={auraColor} />
+
+      {/* "Already posted today" friendly banner — see the redirect useEffect
+          above. Fades in for ~1.6s before we router.replace to home.
+          Rendered as a non-blocking overlay so we don't have to teardown
+          the rest of the form mid-mount. Centered, pill-shaped, with the
+          aura glyph and the i18n title/subtitle. */}
+      {redirectBanner && (
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.redirectBanner, { opacity: bannerOpacity }]}
+          accessibilityLiveRegion="polite"
+          accessibilityLabel={t("mood.alreadyPosted.title")}
+        >
+          <View style={styles.redirectBannerInner}>
+            <Text style={styles.redirectBannerEmoji}>🌟</Text>
+            <Text style={styles.redirectBannerTitle}>
+              {t("mood.alreadyPosted.title")}
+            </Text>
+            <Text style={styles.redirectBannerSubtitle}>
+              {t("mood.alreadyPosted.subtitle")}
+            </Text>
+          </View>
+        </Animated.View>
+      )}
+
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <SafeAreaView style={{ flex: 1 }}>
           <ScreenHeader
@@ -901,6 +945,43 @@ export default function MoodCreate({ inTabsLayout = false }: { inTabsLayout?: bo
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#050505" },
+  // Centered "already posted today" overlay shown for ~1.6s before we
+  // router.replace to home. zIndex puts it above the form, pointerEvents
+  // none on the container lets the radial aura keep its visual presence.
+  redirectBanner: {
+    position: "absolute",
+    top: 0, left: 0, right: 0, bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 100,
+    paddingHorizontal: 32,
+    backgroundColor: "rgba(5,5,5,0.55)",
+  },
+  redirectBannerInner: {
+    backgroundColor: "rgba(20,20,24,0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    paddingVertical: 28,
+    paddingHorizontal: 28,
+    borderRadius: 24,
+    alignItems: "center",
+    maxWidth: 320,
+  },
+  redirectBannerEmoji: { fontSize: 40, marginBottom: 12 },
+  redirectBannerTitle: {
+    color: "#fff",
+    fontSize: 17,
+    fontWeight: "700",
+    textAlign: "center",
+    marginBottom: 8,
+    letterSpacing: 0.2,
+  },
+  redirectBannerSubtitle: {
+    color: "rgba(255,255,255,0.65)",
+    fontSize: 14,
+    textAlign: "center",
+    lineHeight: 19,
+  },
   headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16 },
   closeBtn: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: COLORS.border },
   hdr: { color: "#fff", fontSize: 16, fontWeight: "600" },
