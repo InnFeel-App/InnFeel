@@ -111,7 +111,7 @@ async def list_friends(user: dict = Depends(get_current_user)):
         {"user_id": {"$in": ids}},
         {"_id": 0, "user_id": 1, "name": 1, "avatar_color": 1, "avatar_b64": 1, "avatar_key": 1, "streak": 1},
     ).to_list(500)
-    key = today_key()
+    key = today_key(tz=user.get("tz"))
     moods = await db.moods.find(
         {"user_id": {"$in": ids}, "day_key": key},
         {"_id": 0, "user_id": 1},

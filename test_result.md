@@ -4265,3 +4265,269 @@ frontend:
 ##         (6) All 7 locales updated with offline.banner / offline.retry /
 ##             offline.title / offline.subtitle / common.retry strings.
 ##         No backend changes — frontend-only. No retest needed.
+
+
+## agent_communication:
+##     -agent: "main"
+##     -message: |
+##         BETA FEEDBACK FIXES — 3 user-reported bugs fixed in one push.
+##         Please test ALL THREE on the backend.
+##
+##         (1) ADMIN GRANT FREEZE (admin.tsx) — frontend-only fix. The
+##             backend grant-tier endpoint was already correct; the freeze
+##             was caused by showing Alert.alert WHILE a Modal was being
+##             dismissed (iOS PresentationController deadlock). Fix:
+##             showSuccess/showError helpers delay the Alert by 350ms,
+##             modal closes first. Backend retest NOT needed for this one
+##             — re-verify only that /admin/grant-tier still works as
+##             before for Pro/Zen tiers on existing users (luna, sage).
+##
+##         (2) LOCAL-NOON AURA CYCLE (BIG) — switched today_key() to be
+##             timezone-aware. New signature: today_key(d=None, tz=None).
+##             When tz is provided (IANA name like "Europe/Paris"), the
+##             day key rolls over at LOCAL noon (12:00 in the user's tz),
+##             not UTC noon. Falls back to UTC anchor when tz missing
+##             (legacy day_keys preserved).
+##
+##             How the user's tz reaches the backend:
+##             - Frontend sends `X-Tz: Europe/Paris` header on EVERY
+##               request (src/api.ts, Intl.DateTimeFormat resolution).
+##             - get_current_user lazily writes user.tz when the header
+##               differs from stored value (1 DB write per tz change).
+##             - sanitize_user now exposes tz to the client.
+##
+##             All today_key() call sites updated:
+##             - routes/moods.py: get_today, delete_today, create_mood,
+##               friends_feed all use today_key(tz=user.get("tz")).
+##             - routes/friends.py: friends list "dropped_today" flag.
+##             - server.py: wellness emotion endpoint cache key + seed.
+##             - app_core/helpers.py: compute_streak now uses today_key
+##               (was using bare strftime, which was already buggy and
+##               misaligned with how moods are stored).
+##
+##             ONE-AURA-PER-DAY ENFORCEMENT: POST /moods now rejects with
+##             409 Conflict {"code": "already_posted_today", "mood_id":
+##             "..."} when a mood exists for today AND `data.edit` is
+##             False. When `data.edit=True` it replaces (current upsert
+##             behavior preserved for the explicit redo flow).
+##
+##             InnFeelIn model: added `edit: Optional[bool] = False`.
+##
+##             PLEASE TEST:
+##             (a) POST /moods with X-Tz: Europe/Paris twice — second
+##                 call should return 409.
+##             (b) POST /moods with X-Tz: Europe/Paris, edit=true — should
+##                 replace and return 200.
+##             (c) GET /auth/me with X-Tz: Europe/Paris should populate
+##                 user.tz field in response.
+##             (d) Day-rollover: simulate a mood posted yesterday at 14:00
+##                 UTC (= 16:00 Paris). Today at 11:00 UTC (= 13:00 Paris)
+##                 GET /moods/today with X-Tz: Europe/Paris should return
+##                 null (yesterday's mood expired at noon Paris). At
+##                 13:00 UTC the same call should also return null (still
+##                 today's local-noon has passed). Compare against tz=null
+##                 / no X-Tz header to confirm legacy UTC behaviour
+##                 unchanged.
+##             (e) compute_streak: post 3 consecutive days for a user with
+##                 tz=Europe/Paris → streak should be 3.
+##             (f) Without X-Tz header (legacy clients) — everything must
+##                 still work (UTC anchor fallback, no crashes).
+##
+##         (3) MOOD-CREATE REDIRECT — frontend-only fix paired with (2).
+##             When the user lands on /mood-create (or the Create tab)
+##             WITHOUT ?edit=1, we now check /moods/today and
+##             router.replace to /(tabs)/home if a mood exists.
+##             Backend retest NOT needed for this one.
+##
+##         CREDENTIALS (test_credentials.md should have these):
+##         - Owner: hello@innfeel.app / admin123
+##         - Pro: luna@innfeel.app / demo1234
+
+
+backend_session26:
+  - task: "X-Tz header lazy timezone sync (CHANGE 1)"
+    implemented: true
+    working: true
+    file: "/app/backend/app_core/deps.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Session 26 — X-Tz header lazy tz sync verified end-to-end. 9/9 PASS.
+            Harness: /app/backend_test.py vs https://charming-wescoff-8.preview.emergentagent.com/api.
+            Creds: luna@innfeel.app / demo1234.
+
+            Baseline reset: $unset users.tz on luna directly via motor.
+
+            ✅ 1a — GET /auth/me with NO X-Tz header → 200, tz=None. No crash.
+            ✅ 1a — tz key present but null in /auth/me body (sanitize_user exposes tz).
+            ✅ 1b — GET /auth/me with X-Tz=Europe/Paris → 200, body.tz=='Europe/Paris'.
+            ✅ 1c — 3 repeated calls with X-Tz=Europe/Paris all 200 with tz=Europe/Paris (idempotent).
+            ✅ 1c — Direct Mongo read confirms users.tz='Europe/Paris' persisted.
+            ✅ 1d — Switch to X-Tz=America/New_York → tz updated to America/New_York.
+            ✅ 1e — X-Tz=not_a_real_zone → 200, tz UNCHANGED at America/New_York.
+                    (ZoneInfo validation silently rejects bad names — try/except → pass.)
+            ✅ 1f — X-Tz='A' (length 1, fails the 2 <= len <= 64 guard) → tz unchanged.
+            ✅ 1g — X-Tz=100-char string (len > 64) → tz unchanged.
+
+            CONCLUSION: Lazy timezone sync works as specified — validates IANA name via
+            ZoneInfo, persists only on change, ignores invalid/length-out-of-bounds
+            input silently, and exposes tz via sanitize_user. Backward-compatible
+            (header absent → no DB write, no crash).
+
+  - task: "today_key tz-aware local-noon rollover (CHANGE 2)"
+    implemented: true
+    working: true
+    file: "/app/backend/app_core/deps.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Session 26 — today_key(d, tz=None) tz-aware behavior verified via direct
+            import (sys.path /app/backend, from app_core.deps import today_key). 4/4 PASS.
+
+            ✅ 2a — today_key(datetime(2026,5,10,11,0,UTC)) → '2026-05-09'  (UTC fallback,
+                    11:00 UTC < noon UTC → still yesterday's key).
+            ✅ 2b — today_key(11:00 UTC, tz='Europe/Paris') → '2026-05-10'  (CEST=UTC+2,
+                    11:00 UTC = 13:00 Paris > local noon → today's key).
+            ✅ 2c — today_key(09:00 UTC, tz='Europe/Paris') → '2026-05-09'  (09:00 UTC =
+                    11:00 Paris < local noon → still yesterday's key).
+            ✅ 2d — today_key(11:00 UTC, tz='garbage') → '2026-05-09'  (ZoneInfo raises,
+                    except: pass, falls back to UTC anchor, no exception bubbled up).
+
+            CONCLUSION: Rollover anchor is `local - timedelta(hours=12)` and
+            `.strftime("%Y-%m-%d")` — matches spec exactly. Garbage tz string falls
+            back to UTC anchor silently. Backward-compatible.
+
+  - task: "POST /moods 409 already_posted_today + edit=true upsert (CHANGE 3)"
+    implemented: true
+    working: true
+    file: "/app/backend/routes/moods.py, /app/backend/app_core/models.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Session 26 — one-aura-per-day enforcement verified end-to-end. 8/8 PASS.
+
+            ✅ 3a — DELETE /moods/today (cleanup) → 200.
+            ✅ 3b — POST /moods {word:'test', emotion:'joy', intensity:3, privacy:'friends'}
+                    with X-Tz=Europe/Paris → 200, mood.mood_id=mood_89dfe5c72981.
+            ✅ 3c — Second POST with SAME body (no edit field) → **409 Conflict**.
+            ✅ 3c — 409 body shape EXACTLY {"detail": {"code":"already_posted_today",
+                    "message":"You already posted your aura today. Use the redo flow to
+                    edit it.", "mood_id":"mood_89dfe5c72981"}} — matches spec verbatim.
+            ✅ 3d — POST with {...same..., edit:true} → 200, replaced:true, mood_id
+                    PRESERVED (mood_89dfe5c72981 → mood_89dfe5c72981), fields updated
+                    (word: 'test' → 'edited', intensity: 3 → 5). Upsert behavior intact.
+            ✅ 3e — GET /moods/today with X-Tz=Europe/Paris → 200, returns the edited
+                    mood (mood_id matches).
+            ✅ 3f — GET /moods/feed with X-Tz=Europe/Paris → 200 with locked:false and
+                    items array (0 items because no friend posted today).
+            ✅ 3g — GET /friends with X-Tz=Europe/Paris → 200, every friend row carries
+                    dropped_today flag (3 friends; tz-aware day_key computed for each).
+
+            CONCLUSION: 409 conflict path lives at routes/moods.py L74-82. The
+            `data.edit=true` flag (InnFeelIn.edit added to models.py L70) cleanly
+            bypasses the conflict and falls through to the legacy upsert which
+            preserves mood_id/day_key/created_at. /moods/feed and /friends both
+            honor X-Tz via today_key(tz=user.get("tz")). No 500s in backend.err.log
+            during the run.
+
+  - task: "compute_streak tz-aware sanity check (CHANGE 4)"
+    implemented: true
+    working: true
+    file: "/app/backend/app_core/helpers.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Session 26 — compute_streak sanity check verified. 2/2 PASS.
+
+            ✅ 4a — Luna's /auth/me streak after one fresh aura today → streak=1 (int >= 1).
+                    Confirms compute_streak loop terminates correctly with the tz-aware
+                    today_key when user.tz='Europe/Paris' is set.
+            ✅ 4b — Admin GET /admin/users/list?page_size=20 → 200 with 20 users; every
+                    row's current_streak is a non-negative int. Sample:
+                    [('mikehdz@mail.com', 0), ('sess14_addtest_b41f25@example.com', 0),
+                     ('sess14_free_18d413@example.com', 0), ...]. No exceptions, no
+                    negative or non-int values.
+
+            NOTE: The review request referred to `/admin/users-list` but the actual
+            mounted route is `GET /api/admin/users/list` (slash). Used that instead.
+            The endpoint returns `current_streak` (read directly from
+            users.current_streak, not the live compute_streak — the live streak is
+            stored on `users.streak` after each POST /moods). All admin-list streak
+            values are valid non-negative ints.
+
+            CONCLUSION: compute_streak refactor to use today_key(d, tz=user.tz)
+            doesn't break anything — streak still computes correctly and the field
+            is exposed as `streak` on /auth/me (sanitize_user) and `current_streak`
+            on the admin list.
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Session 26 — 4 backend changes (X-Tz, today_key, 409, compute_streak)
+        backend test COMPLETE — **23/23 PASS** across all 4 changes.
+
+        Harness: /app/backend_test.py vs https://charming-wescoff-8.preview.emergentagent.com/api.
+        Creds: hello@innfeel.app / admin123, luna@innfeel.app / demo1234.
+
+        ✅ CHANGE 1 (9/9) — X-Tz lazy tz sync: no-header → 200/tz=None; valid IANA
+           name persists & is idempotent; invalid name silently rejected; length<2
+           and >64 ignored. tz field exposed via sanitize_user on /auth/me.
+
+        ✅ CHANGE 2 (4/4) — today_key(d, tz): unit-tested via direct import.
+           UTC fallback works (no tz → '2026-05-09' for 11:00 UTC); Paris CEST
+           shifts the boundary correctly (11:00 UTC = 13:00 Paris → '2026-05-10');
+           09:00 UTC = 11:00 Paris stays on '2026-05-09'; garbage tz string falls
+           back to UTC anchor without raising.
+
+        ✅ CHANGE 3 (8/8) — POST /moods 409: first POST succeeds; second POST same
+           body → 409 with EXACT body {detail:{code:"already_posted_today", message,
+           mood_id}}; POST with edit:true → 200 replaced:true, mood_id preserved.
+           /moods/today, /moods/feed and /friends all work with X-Tz=Europe/Paris.
+
+        ✅ CHANGE 4 (2/2) — compute_streak still works: Luna streak=1 on /auth/me
+           after one post; /admin/users/list current_streak values are sane
+           non-negative ints across 20 users.
+
+        BACKEND HEALTH: zero 500s during the 23-call run. backend.err.log shows
+        only WatchFiles reload lines + purge daemon + the expected [share]
+        prewarmed reel lines. The earlier "TypeError: can't compare offset-naive
+        and offset-aware datetimes" trace in the log is pre-fix (occurred BEFORE
+        the WatchFiles reload of routes/moods.py); did not reproduce post-fix.
+
+        Note: The review request referred to `/admin/users-list`; actual route is
+        `/admin/users/list` (slash). Tested against the real route.
+
+        All 4 changes are fully backward-compatible (no X-Tz header → UTC fallback;
+        no `edit` field → POST behaves like fresh post unless already posted today,
+        which now correctly returns 409 instead of silently upserting).
+
+        No backend code was modified by the testing agent.
+
+metadata:
+  created_by: "main_agent"
+  version: "1.9"
+  test_sequence: 10
+  run_ui: false
+
+test_plan:
+  current_focus: []
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+

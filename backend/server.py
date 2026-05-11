@@ -1188,7 +1188,8 @@ async def wellness_for(emotion: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Unknown emotion")
     pack = WELLNESS[emotion]
     # Deterministic daily pick per user (fallback content)
-    seed = hashlib.sha1(f"{user['user_id']}_{emotion}_{today_key()}".encode()).hexdigest()
+    user_tz = user.get("tz")
+    seed = hashlib.sha1(f"{user['user_id']}_{emotion}_{today_key(tz=user_tz)}".encode()).hexdigest()
     idx = int(seed[:8], 16) % len(pack["quotes"])
     fallback_quote = pack["quotes"][idx]
     fallback_advice = pack["advice"]
@@ -1197,7 +1198,7 @@ async def wellness_for(emotion: str, user: dict = Depends(get_current_user)):
     quote = fallback_quote
     advice = fallback_advice
     source = "static"
-    day = today_key()
+    day = today_key(tz=user_tz)
     if EMERGENT_LLM_KEY:
         # Find today's mood for context (word, intensity)
         today_mood = await db.moods.find_one(

@@ -23,7 +23,7 @@ logger = logging.getLogger("innfeel")
 
 @router.get("/moods/today")
 async def get_today(user: dict = Depends(get_current_user)):
-    key = today_key()
+    key = today_key(tz=user.get("tz"))
     mood = await db.moods.find_one({"user_id": user["user_id"], "day_key": key}, {"_id": 0})
     if mood and isinstance(mood.get("created_at"), datetime):
         mood["created_at"] = mood["created_at"].isoformat()
@@ -39,7 +39,7 @@ async def delete_today(user: dict = Depends(get_current_user)):
     Also wipes derived daily data: today's wellness cache and today's LLM badge,
     so the next drop re-triggers a fresh wellness prompt.
     """
-    key = today_key()
+    key = today_key(tz=user.get("tz"))
     result = await db.moods.delete_one({"user_id": user["user_id"], "day_key": key})
     await db.wellness_cache.delete_many({"user_id": user["user_id"], "day_key": key})
     return {"ok": True, "deleted": result.deleted_count}
@@ -60,9 +60,26 @@ async def delete_mood(mood_id: str, user: dict = Depends(get_current_user)):
 
 @router.post("/moods")
 async def create_mood(data: InnFeelIn, user: dict = Depends(get_current_user)):
-    """Create OR replace today's aura (UPSERT — preserves mood_id/day_key/created_at/streak)."""
-    key = today_key()
+    """Create OR replace today's aura (UPSERT — preserves mood_id/day_key/created_at/streak).
+
+    UX rule (post-MVP feedback): a user can only post ONE aura per local day.
+    If an aura already exists for today, the client must explicitly opt-in
+    to "edit" mode (via `data.edit=True`) — otherwise we return 409 Conflict
+    so the UI can redirect to the redo/edit flow instead of silently
+    overwriting a fresh aura the user thought they were creating new.
+    """
+    key = today_key(tz=user.get("tz"))
     existing = await db.moods.find_one({"user_id": user["user_id"], "day_key": key})
+
+    if existing and not getattr(data, "edit", False):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "already_posted_today",
+                "message": "You already posted your aura today. Use the redo flow to edit it.",
+                "mood_id": existing.get("mood_id"),
+            },
+        )
 
     pro = is_pro(user)
     has_audio = bool(data.audio_b64 or data.audio_key)
@@ -153,7 +170,7 @@ async def create_mood(data: InnFeelIn, user: dict = Depends(get_current_user)):
 
 @router.get("/moods/feed")
 async def friends_feed(user: dict = Depends(get_current_user)):
-    key = today_key()
+    key = today_key(tz=user.get("tz"))
     mine = await db.moods.find_one({"user_id": user["user_id"], "day_key": key})
     if not mine:
         return {"locked": True, "items": []}

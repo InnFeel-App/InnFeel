@@ -63,6 +63,11 @@ class InnFeelIn(BaseModel):
     # time so the backend can compute their typical posting hour and personalize
     # the daily push reminder. Optional — falls back to noon when missing.
     local_hour: Optional[int] = Field(default=None, ge=0, le=23)
+    # If True, the client is explicitly editing today's existing aura via the
+    # redo flow. When False (default) and an aura already exists today, the
+    # endpoint returns 409 instead of silently overwriting — see
+    # `routes.moods.create_mood`.
+    edit: Optional[bool] = False
 
 
 class AvatarIn(BaseModel):

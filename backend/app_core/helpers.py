@@ -5,7 +5,7 @@ Keeping these in app_core avoids import cycles between individual route files.
 from datetime import timedelta
 from app_core import r2 as _r2
 from app_core.db import db
-from app_core.deps import now_utc
+from app_core.deps import now_utc, today_key
 
 
 def _attach_url(doc: dict, key_field: str, url_field: str) -> dict:
@@ -41,6 +41,8 @@ async def compute_streak(user_id: str) -> int:
 
     Freezes live in `users.streak_freezes` as a list of {day_key: "YYYY-MM-DD", ts: dt}.
     They're consumed on read (here) — if the day was already missed, we use a freeze.
+
+    Day boundaries follow the user's local-noon convention (see `today_key`).
     """
     cursor = db.moods.find({"user_id": user_id}, {"_id": 0, "day_key": 1}).sort("day_key", -1)
     rows = await cursor.to_list(400)
@@ -51,14 +53,17 @@ async def compute_streak(user_id: str) -> int:
     # Pull the user's used-freeze ledger so we don't double-spend.
     user_doc = await db.users.find_one(
         {"user_id": user_id},
-        {"_id": 0, "streak_freezes": 1, "streak_freezes_month": 1, "is_pro": 1, "pro_expires_at": 1, "plan": 1},
+        {"_id": 0, "streak_freezes": 1, "streak_freezes_month": 1, "is_pro": 1, "pro_expires_at": 1, "plan": 1, "tz": 1},
     ) or {}
     used_freezes: set[str] = {f.get("day_key") for f in (user_doc.get("streak_freezes") or []) if f.get("day_key")}
+    user_tz = user_doc.get("tz")
 
     streak = 0
     d = now_utc()
     for _ in range(400):
-        key = d.strftime("%Y-%m-%d")
+        # Use today_key so day boundaries match how moods are stored
+        # (local-noon rollover when tz is known).
+        key = today_key(d, tz=user_tz)
         if key in posted_days:
             streak += 1
         elif key in used_freezes:

@@ -7,20 +7,36 @@ from fastapi import HTTPException, Request, Response
 from .db import db
 from .config import JWT_SECRET, JWT_ALGORITHM, ACCESS_TOKEN_TTL_MINUTES, REFRESH_TOKEN_TTL_DAYS
 
+try:
+    from zoneinfo import ZoneInfo  # Python 3.9+
+except ImportError:  # pragma: no cover — defensive for very old Python
+    ZoneInfo = None  # type: ignore
+
 
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def today_key(d: Optional[datetime] = None) -> str:
+def today_key(d: Optional[datetime] = None, tz: Optional[str] = None) -> str:
     """Return the key for the current "aura day".
 
-    An aura day runs from 12:00 UTC to 12:00 UTC the next day — so an aura
-    posted at 2 PM Monday is still visible until noon Tuesday. This gives
-    users a full ~24h window, aligned with a noon daily reminder.
+    The aura day rolls over at **local noon** in the user's timezone:
+      - 11:59 local → still yesterday's key
+      - 12:00 local → today's key
+    This gives users a full ~24h window aligned with their local noon
+    reminder. If `tz` is omitted or invalid, falls back to UTC noon
+    (legacy behavior, preserves old day_keys).
     """
     d = d or now_utc()
-    # shift 12h back: so before noon UTC we're still "yesterday's day"
+    if tz and ZoneInfo is not None:
+        try:
+            local = d.astimezone(ZoneInfo(tz))
+            # Shift 12h back: anything before noon local is still "yesterday".
+            anchor = local - timedelta(hours=12)
+            return anchor.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+    # UTC fallback
     anchor = d - timedelta(hours=12)
     return anchor.strftime("%Y-%m-%d")
 
@@ -81,6 +97,24 @@ async def get_current_user(request: Request) -> dict:
         user = await db.users.find_one({"user_id": payload["sub"]}, {"_id": 0, "password_hash": 0})
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
+        # Lazy timezone sync — frontend sends `X-Tz: Europe/Paris` (IANA name)
+        # on every request. If it differs from what's stored, persist it.
+        # This keeps `today_key(tz=user["tz"])` aligned with the user's
+        # actual local clock (e.g. when they travel) without a dedicated
+        # endpoint round-trip. The validation is cheap: we only accept
+        # tz names that ZoneInfo can resolve.
+        tz_hdr = request.headers.get("x-tz") or request.headers.get("X-Tz")
+        if tz_hdr and isinstance(tz_hdr, str) and 2 <= len(tz_hdr) <= 64 and tz_hdr != user.get("tz"):
+            if ZoneInfo is not None:
+                try:
+                    ZoneInfo(tz_hdr)  # validate
+                    await db.users.update_one(
+                        {"user_id": user["user_id"]},
+                        {"$set": {"tz": tz_hdr}},
+                    )
+                    user["tz"] = tz_hdr
+                except Exception:
+                    pass  # invalid tz name — ignore silently
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
@@ -129,6 +163,7 @@ def sanitize_user(u: dict) -> dict:
         "is_owner": bool(u.get("is_owner", False)),
         "friend_count": u.get("friend_count", 0),
         "streak": u.get("streak", 0),
+        "tz": u.get("tz"),
         "created_at": u.get("created_at").isoformat() if isinstance(u.get("created_at"), datetime) else u.get("created_at"),
         "email_verified_at": u.get("email_verified_at").isoformat() if isinstance(u.get("email_verified_at"), datetime) else u.get("email_verified_at"),
     }

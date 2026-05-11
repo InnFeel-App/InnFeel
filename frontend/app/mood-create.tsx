@@ -167,6 +167,36 @@ export default function MoodCreate({ inTabsLayout = false }: { inTabsLayout?: bo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEdit]);
 
+  // Guard: one aura per local day. If the user navigates here in CREATE
+  // mode (no ?edit=1) but already has today's aura on the server, redirect
+  // them straight to home so they can decide whether to use the explicit
+  // "Refaire" flow (which sets ?edit=1 and prefills). This prevents the
+  // common footgun reported by users: opening the Create tab, filling a
+  // fresh form, hitting Save, and silently overwriting their previous
+  // aura without realizing it. The backend now also returns 409 in that
+  // case as a belt-and-suspenders guard (see routes/moods.create_mood).
+  useEffect(() => {
+    if (isEdit) return; // edit flow is the intended path for re-posting
+    let alive = true;
+    (async () => {
+      try {
+        const r = await api<{ mood: any }>("/moods/today");
+        if (!alive) return;
+        if (r?.mood) {
+          // Replace, not push — we don't want a back-button trap on Create.
+          router.replace("/(tabs)/home");
+        }
+      } catch {
+        // If the check itself fails (network / 401 during boot), just let
+        // the user proceed — the 409 on POST will still protect them.
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEdit]);
+
   const startRecording = async () => {
     try {
       const perm = await Audio.requestPermissionsAsync();
@@ -465,6 +495,13 @@ export default function MoodCreate({ inTabsLayout = false }: { inTabsLayout?: bo
           // B4 — Smart Reminders: send the user's current local hour so the backend
           // can learn their typical posting pattern and personalize the daily reminder.
           local_hour: new Date().getHours(),
+          // One-aura-per-day enforcement (B5). When `edit` is true the
+          // backend will REPLACE today's existing aura; when false (default)
+          // it returns 409 if one already exists, preventing accidental
+          // overwrite. The Create tab redirects to home before we ever get
+          // here when an aura exists — this flag is the explicit opt-in
+          // from the "Refaire" / redo flow.
+          edit: isEdit,
         },
       });
       let newMoodId: string | null = created?.mood?.mood_id || null;

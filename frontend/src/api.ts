@@ -3,6 +3,23 @@ import { setItem, getItem, removeItem } from "./storage";
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || "";
 const TOKEN_KEY = "innfeel_access_token";
 
+// Cached IANA timezone (e.g. "Europe/Paris"). Resolved once at module load
+// so it has near-zero overhead per request. Sent on every API call via the
+// `X-Tz` header; backend uses it to compute the user's local-noon day
+// boundary (so an aura posted in Paris rolls over at noon Paris, not noon
+// UTC). Re-resolved on each call would be wasteful — DST changes are rare
+// and the user can hard-refresh by relaunching the app.
+let CLIENT_TZ: string | null = null;
+try {
+  CLIENT_TZ =
+    (Intl as any)?.DateTimeFormat?.()?.resolvedOptions?.()?.timeZone || null;
+  if (CLIENT_TZ && (CLIENT_TZ.length < 2 || CLIENT_TZ.length > 64)) {
+    CLIENT_TZ = null;
+  }
+} catch {
+  CLIENT_TZ = null;
+}
+
 export async function saveToken(token: string) {
   await setItem(TOKEN_KEY, token);
 }
@@ -22,6 +39,7 @@ export async function api<T = any>(
     "Content-Type": "application/json",
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (CLIENT_TZ) headers["X-Tz"] = CLIENT_TZ;
   const res = await fetch(`${BASE}/api${path}`, {
     method: opts.method || "GET",
     headers,

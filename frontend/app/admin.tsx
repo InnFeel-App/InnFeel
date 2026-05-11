@@ -246,15 +246,33 @@ export default function AdminPanel() {
 
   const closeDetail = () => { setOpenUserId(null); setDetail(null); };
 
+  // iOS-safe Alert helpers. Showing `Alert.alert` while a native Modal is
+  // dismissing causes a presentation-controller deadlock that freezes the
+  // app. Deferring the alert by ~350ms (one iOS modal-dismiss animation)
+  // lets the modal finish unmounting before the alert tries to attach
+  // itself to the root view controller. We use this for every post-action
+  // success/error message inside the admin panel.
+  const showSuccess = (title: string, body?: string) => {
+    setTimeout(() => Alert.alert(title, body), 350);
+  };
+  const showError = (title: string, body?: string) => {
+    setTimeout(() => Alert.alert(title, body), 350);
+  };
+
   const copyId = async (uid: string) => {
     await Clipboard.setStringAsync(uid);
-    if (Platform.OS !== "web") Alert.alert("✓ Copied", `${uid}`);
-    else Alert.alert("Copied to clipboard");
+    if (Platform.OS !== "web") showSuccess("✓ Copied", `${uid}`);
+    else showSuccess("Copied to clipboard");
   };
 
   const doGrant = async () => {
     if (!grantOpen) return;
     setGrantLoading(true);
+    // Capture target info BEFORE we close the modal, otherwise the
+    // success message can't reference grantOpen anymore.
+    const targetEmail = grantOpen.email;
+    const tierLabel = grantTier.toUpperCase();
+    const days = grantDays;
     try {
       await api("/admin/grant-tier", {
         method: "POST",
@@ -265,13 +283,21 @@ export default function AdminPanel() {
           note: grantNote || null,
         },
       });
-      Alert.alert("✓ Granted", `${grantTier.toUpperCase()} for ${grantDays}d → ${grantOpen.email}`);
+      // CRITICAL — close the grant modal FIRST. Showing Alert.alert while
+      // a native Modal is still visible on iOS causes the iOS PresentingVC
+      // chain to deadlock (the alert tries to present from a controller
+      // that's already being dismissed). The UI freezes until the user
+      // backgrounds the app. Fix: dismiss modal, then defer Alert by ~350ms
+      // (the iOS modal-dismiss animation duration).
       setGrantOpen(null);
       setGrantNote("");
       await Promise.all([fetchStats(), fetchUsers(false)]);
       if (openUserId) await openDetail(openUserId);
+      showSuccess("✓ Granted", `${tierLabel} for ${days}d → ${targetEmail}`);
     } catch (e: any) {
-      Alert.alert("Grant failed", e?.message || String(e));
+      // For failures, the modal stays open so the user can retry — but
+      // still defer the Alert in case the keyboard/picker was up.
+      showError("Grant failed", e?.message || String(e));
     } finally {
       setGrantLoading(false);
     }
@@ -294,8 +320,9 @@ export default function AdminPanel() {
               });
               await Promise.all([fetchStats(), fetchUsers(false)]);
               if (openUserId) await openDetail(openUserId);
+              showSuccess("✓ Revoked", email);
             } catch (e: any) {
-              Alert.alert("Revoke failed", e?.message || String(e));
+              showError("Revoke failed", e?.message || String(e));
             }
           },
         },
@@ -318,9 +345,9 @@ export default function AdminPanel() {
                 body: { user_id: uid },
               });
               if (openUserId) await openDetail(openUserId);
-              Alert.alert("✓ Quota reset");
+              showSuccess("✓ Quota reset");
             } catch (e: any) {
-              Alert.alert("Reset failed", e?.message || String(e));
+              showError("Reset failed", e?.message || String(e));
             }
           },
         },
@@ -346,9 +373,9 @@ export default function AdminPanel() {
               });
               await Promise.all([fetchStats(), fetchUsers(false)]);
               if (openUserId) await openDetail(openUserId);
-              Alert.alert("✓ Promoted", `${email} is now an admin.`);
+              showSuccess("✓ Promoted", `${email} is now an admin.`);
             } catch (e: any) {
-              Alert.alert("Promote failed", e?.message || String(e));
+              showError("Promote failed", e?.message || String(e));
             }
           },
         },
@@ -374,9 +401,9 @@ export default function AdminPanel() {
               });
               await Promise.all([fetchStats(), fetchUsers(false)]);
               if (openUserId) await openDetail(openUserId);
-              Alert.alert("✓ Demoted", `${email} is no longer an admin.`);
+              showSuccess("✓ Demoted", `${email} is no longer an admin.`);
             } catch (e: any) {
-              Alert.alert("Demote failed", e?.message || String(e));
+              showError("Demote failed", e?.message || String(e));
             }
           },
         },
@@ -390,9 +417,9 @@ export default function AdminPanel() {
         method: "POST",
         body: { email },
       });
-      Alert.alert("✓ Email sent", email);
+      showSuccess("✓ Email sent", email);
     } catch (e: any) {
-      Alert.alert("Email failed", e?.message || String(e));
+      showError("Email failed", e?.message || String(e));
     }
   };
 
